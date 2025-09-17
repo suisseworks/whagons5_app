@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -24,6 +27,29 @@ class _LoginPageState extends State<LoginPage> {
     Navigator.of(context).pushReplacementNamed('/main');
   }
 
+  Future<void> _signInWithGoogle() async {
+    try {
+      final googleUser = await GoogleSignIn().signIn();
+      print('hi there');
+      if (googleUser == null) return; // cancelled
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+      await FirebaseAuth.instance.signInWithCredential(credential);
+      if (mounted) {
+        Navigator.of(context).pushReplacementNamed('/main');
+      }
+    } catch (e) {
+      print('error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Google sign-in failed: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -38,6 +64,13 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Center(
+                    child: SvgPicture.asset(
+                      'assets/WhagonsTitle.svg',
+                      height: 44,
+                    ),
+                  ),
+                  const SizedBox(height: 32),
                   Text(
                     'Welcome back',
                     style: Theme.of(context).textTheme.headlineMedium,
@@ -95,6 +128,25 @@ class _LoginPageState extends State<LoginPage> {
                     child: ElevatedButton(
                       onPressed: _submit,
                       child: const Text('Log in'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 48,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.black87,
+                        backgroundColor: Colors.white,
+                        side: BorderSide(color: Colors.grey.shade300),
+                        shape: const StadiumBorder(),
+                      ),
+                      icon: SvgPicture.asset(
+                        'assets/GoogleLogo.svg',
+                        height: 24,
+                        width: 24,
+                      ),
+                      onPressed: _signInWithGoogle,
+                      label: const Text('Sign in with Google'),
                     ),
                   ),
                 ],

@@ -45,5 +45,63 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+
+	<!-- Google Sign-In URL Schemes -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.578623964983-06ekrieen5u7o6fcj9879oqsobp123mv</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- Allow opening Google Sign-In apps -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>google</string>
+		<string>com.google</string>
+		<string>com.googleusercontent.apps.578623964983-06ekrieen5u7o6fcj9879oqsobp123mv</string>
+	</array>
+
+	<!-- ATS to allow Google auth endpoints in SFSafariViewController/WebView -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>google.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSTemporaryExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+			<key>googleapis.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSTemporaryExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+			<key>gstatic.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSTemporaryExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSTemporaryExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+		</dict>
+	</dict>
 </dict>
 </plist>
