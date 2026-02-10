@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   PanResponder,
   Alert,
   Dimensions,
+  RefreshControl,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -17,12 +18,15 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
+import { useData } from '../context/DataContext';
 import { RootStackParamList, TaskItem } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
 import { AppDrawer } from '../components/AppDrawer';
+import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 type MainScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Main'>;
 
@@ -55,9 +59,15 @@ export const MainScreen: React.FC = () => {
     setSelectedWorkspace,
   } = useTasks();
 
+  const { isSyncing, refresh, syncError } = useData();
+
   const [selectedNav, setSelectedNav] = useState(0);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
+
+  const onRefresh = useCallback(async () => {
+    await refresh();
+  }, [refresh]);
   
   const drawerTranslateX = useRef(new Animated.Value(-SCREEN_WIDTH)).current;
 
@@ -161,6 +171,34 @@ export const MainScreen: React.FC = () => {
     <SwipeableTaskItem item={item} />
   );
 
+  const renderListHeader = () => {
+    const syncLabel = syncError ? 'Offline' : isSyncing ? 'Syncing' : 'Updated';
+    const syncColor = syncError ? '#D08F36' : isSyncing ? primaryColor : colors.textSecondary;
+
+    return (
+      <View style={styles.listHeader}>
+        <View>
+          <Text style={[styles.listTitle, { color: colors.text }]}>Today</Text>
+          <Text style={[styles.listSubtitle, { color: colors.textSecondary }]}>
+            {tasks.length} tasks
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.syncPill,
+            {
+              borderColor: `${syncColor}40`,
+              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+            },
+          ]}
+        >
+          <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
+          <Text style={[styles.syncText, { color: syncColor }]}>{syncLabel}</Text>
+        </View>
+      </View>
+    );
+  };
+
   const renderContent = () => {
     if (selectedNav === 0) {
       return (
@@ -169,7 +207,16 @@ export const MainScreen: React.FC = () => {
           renderItem={renderTaskItem}
           keyExtractor={(item, index) => item.id || String(index)}
           contentContainerStyle={styles.listContent}
+          ListHeaderComponent={renderListHeader}
           ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={isSyncing}
+              onRefresh={onRefresh}
+              tintColor={primaryColor}
+              colors={[primaryColor]}
+            />
+          }
         />
       );
     }
@@ -187,16 +234,20 @@ export const MainScreen: React.FC = () => {
       <View style={styles.placeholderContainer}>
         <MaterialIcons name={data.icon as any} size={64} color="#BDBDBD" />
         <Text style={[styles.placeholderTitle, { color: colors.text }]}>{data.title}</Text>
-        <Text style={styles.placeholderSubtitle}>{data.subtitle}</Text>
-        <Text style={styles.comingSoon}>Coming soon</Text>
+        <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>{data.subtitle}</Text>
+        <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>Coming soon</Text>
       </View>
     );
   };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+      <LinearGradient
+        colors={[colors.background, isDarkMode ? '#121615' : '#EFE8DD']}
+        style={StyleSheet.absoluteFillObject}
+      />
       {/* App Bar */}
-      <View style={[styles.appBar, { backgroundColor: colors.background }]}>
+      <View style={[styles.appBar, { borderBottomColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#E8E1D6' }]}>
         <TouchableOpacity
           style={styles.menuButton}
           onPress={() => setDrawerVisible(true)}
@@ -205,13 +256,19 @@ export const MainScreen: React.FC = () => {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.workspaceSelector}
+          style={[
+            styles.workspaceSelector,
+            {
+              borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.12)' : '#E6E0D7',
+              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+            },
+          ]}
           onPress={() => setWorkspaceMenuVisible(true)}
         >
           <Text style={[styles.workspaceText, { color: colors.text }]}>
             {selectedWorkspace}
           </Text>
-          <MaterialIcons name="keyboard-arrow-down" size={24} color={colors.text} />
+          <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
         </TouchableOpacity>
 
         <View style={styles.appBarActions}>
@@ -219,14 +276,14 @@ export const MainScreen: React.FC = () => {
             style={styles.iconButton}
             onPress={() => Alert.alert('Filters', 'Filters coming soon')}
           >
-            <MaterialIcons name="filter-list" size={24} color={colors.text} />
+            <MaterialIcons name="filter-list" size={22} color={colors.textSecondary} />
           </TouchableOpacity>
 
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => setDrawerVisible(true)}
           >
-            <MaterialIcons name="account-circle" size={24} color={colors.text} />
+            <MaterialIcons name="account-circle" size={24} color={colors.textSecondary} />
             {notificationCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -255,7 +312,15 @@ export const MainScreen: React.FC = () => {
       </View>
 
       {/* Bottom Navigation */}
-      <View style={styles.bottomBar}>
+      <View
+        style={[
+          styles.bottomBar,
+          {
+            backgroundColor: colors.surface,
+            borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
+          },
+        ]}
+      >
         <View style={styles.bottomBarContent}>
           {navItems.map((item, index) => (
             <TouchableOpacity
@@ -266,8 +331,8 @@ export const MainScreen: React.FC = () => {
               <View style={styles.navIconContainer}>
                 <MaterialIcons
                   name={item.icon}
-                  size={24}
-                  color={selectedNav === index ? primaryColor : (item.color || colors.text)}
+                  size={22}
+                  color={selectedNav === index ? primaryColor : (item.color || colors.textSecondary)}
                 />
                 {index === 2 && (
                   <View style={styles.boardsBadge}>
@@ -275,6 +340,14 @@ export const MainScreen: React.FC = () => {
                   </View>
                 )}
               </View>
+              <Text
+                style={[
+                  styles.navLabel,
+                  { color: selectedNav === index ? primaryColor : colors.textSecondary },
+                ]}
+              >
+                {item.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -319,7 +392,8 @@ export const MainScreen: React.FC = () => {
           activeOpacity={1}
           onPress={() => setWorkspaceMenuVisible(false)}
         >
-          <View style={styles.workspaceMenu}>
+          <View style={[styles.workspaceMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7' }]}
+          >
             {workspaces.map((workspace, index) => (
               <TouchableOpacity
                 key={index}
@@ -332,7 +406,8 @@ export const MainScreen: React.FC = () => {
                 <Text
                   style={[
                     styles.workspaceMenuText,
-                    workspace === selectedWorkspace && { color: primaryColor, fontWeight: '600' },
+                    { color: colors.text },
+                    workspace === selectedWorkspace && { color: primaryColor, fontFamily: fontFamilies.bodySemibold },
                   ]}
                 >
                   {workspace}
@@ -353,8 +428,10 @@ const styles = StyleSheet.create({
   appBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 72,
-    paddingHorizontal: 8,
+    height: 64,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    backgroundColor: 'transparent',
   },
   menuButton: {
     padding: 8,
@@ -363,10 +440,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     marginLeft: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.6)',
   },
   workspaceText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
   appBarActions: {
     flex: 1,
@@ -382,29 +464,64 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 2,
     top: 2,
-    backgroundColor: '#F44336',
+    backgroundColor: '#E2573C',
     borderRadius: 9,
     minWidth: 18,
     height: 18,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
-    borderColor: '#F6F2E8',
+    borderColor: '#F4F1EA',
   },
   notificationBadgeText: {
     color: '#FFFFFF',
     fontSize: 10,
-    fontWeight: '700',
+    fontFamily: fontFamilies.bodyBold,
   },
   bannerContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
   content: {
     flex: 1,
   },
   listContent: {
-    padding: 16,
+    padding: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  listHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  listTitle: {
+    fontSize: fontSizes.xl,
+    fontFamily: fontFamilies.displaySemibold,
+  },
+  listSubtitle: {
+    marginTop: 2,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  syncPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(255, 255, 255, 0.7)',
+  },
+  syncDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6,
+  },
+  syncText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
   },
   taskItemContainer: {
     position: 'relative',
@@ -416,22 +533,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    borderRadius: 12,
+    borderRadius: radius.lg,
   },
   swipeBackgroundRight: {
     left: 0,
     right: '50%',
-    backgroundColor: '#E8F5E9',
+    backgroundColor: '#E1EFE6',
   },
   swipeBackgroundLeft: {
     right: 0,
     left: '50%',
     justifyContent: 'flex-end',
-    backgroundColor: '#E3F2FD',
+    backgroundColor: '#E2EDF0',
   },
   swipeText: {
     marginHorizontal: 8,
-    fontSize: 14,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
     color: '#4CAF50',
   },
   placeholderContainer: {
@@ -442,44 +560,51 @@ const styles = StyleSheet.create({
   },
   placeholderTitle: {
     marginTop: 16,
-    fontSize: 24,
-    fontWeight: '600',
+    fontSize: fontSizes.xl,
+    fontFamily: fontFamilies.displaySemibold,
   },
   placeholderSubtitle: {
     marginTop: 8,
-    fontSize: 16,
+    fontSize: fontSizes.md,
     color: '#757575',
     textAlign: 'center',
+    fontFamily: fontFamilies.bodyRegular,
   },
   comingSoon: {
     marginTop: 16,
-    fontSize: 12,
+    fontSize: fontSizes.xs,
     fontStyle: 'italic',
     color: '#9E9E9E',
+    fontFamily: fontFamilies.bodyMedium,
   },
   bottomBar: {
-    backgroundColor: '#FFFFFF',
-    height: 68,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
+    height: 72,
+    borderRadius: radius.lg,
+    marginHorizontal: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    ...shadows.lifted,
   },
   bottomBarContent: {
     flexDirection: 'row',
     alignItems: 'center',
     height: '100%',
-    paddingHorizontal: 20,
+    paddingLeft: 16,
+    paddingRight: 88,
+    justifyContent: 'space-between',
   },
   navItem: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
   },
   navIconContainer: {
     position: 'relative',
+  },
+  navLabel: {
+    marginTop: 4,
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
   },
   boardsBadge: {
     position: 'absolute',
@@ -497,22 +622,18 @@ const styles = StyleSheet.create({
   boardsBadgeText: {
     color: '#FFFFFF',
     fontSize: 10,
-    fontWeight: '700',
+    fontFamily: fontFamilies.bodyBold,
   },
   fab: {
     position: 'absolute',
-    right: 16,
-    bottom: 36,
+    right: 20,
+    bottom: 46,
     width: 56,
     height: 56,
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    ...shadows.lifted,
   },
   drawerOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -540,21 +661,19 @@ const styles = StyleSheet.create({
   },
   workspaceMenu: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
+    borderRadius: radius.md,
+    borderWidth: 1,
     paddingVertical: 8,
     minWidth: 180,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 8,
+    ...shadows.subtle,
   },
   workspaceMenuItem: {
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
   workspaceMenuText: {
-    fontSize: 16,
+    fontSize: fontSizes.md,
     color: '#212121',
+    fontFamily: fontFamilies.bodyMedium,
   },
 });

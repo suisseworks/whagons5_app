@@ -6,6 +6,7 @@ import { CustomChip } from './CustomChip';
 import { AssigneeAvatars } from './AssigneeAvatars';
 import { priorityColor, statusColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
+import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 interface TaskCardProps {
   task: TaskItem;
@@ -16,14 +17,17 @@ interface TaskCardProps {
 export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPress }) => {
   const { colors, isDarkMode } = useTheme();
   const cardPadding = compact ? 10 : 14;
+  const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
+  const mutedText = isDarkMode ? 'rgba(244, 241, 234, 0.7)' : '#6C746F';
 
   return (
     <TouchableOpacity
       style={[
         styles.card,
         {
-          backgroundColor: isDarkMode ? colors.surface : '#FFFFFF',
+          backgroundColor: colors.surface,
           borderLeftColor: statusColor(task.status),
+          borderColor,
           padding: cardPadding,
           paddingLeft: 12,
         },
@@ -35,7 +39,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
           {task.title}
         </Text>
-        <MaterialIcons name="more-vert" size={24} color="#757575" />
+        <MaterialIcons name="more-vert" size={22} color={mutedText} />
       </View>
 
       <View style={[styles.row, { marginTop: compact ? 6 : 8 }]}>
@@ -59,8 +63,8 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
       {!compact && (
         <View style={[styles.row, styles.footer]}>
           <View style={styles.timeRow}>
-            <MaterialIcons name="schedule" size={16} color="#757575" />
-            <Text style={styles.timeText}>Created {task.createdAt}</Text>
+            <MaterialIcons name="schedule" size={14} color={mutedText} />
+            <Text style={[styles.timeText, { color: mutedText }]}>Created {task.createdAt}</Text>
           </View>
           <View style={styles.spacer} />
           {task.approval && (
@@ -81,13 +85,10 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 12,
-    borderLeftWidth: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    borderRadius: radius.lg,
+    borderLeftWidth: 4,
+    borderWidth: 1,
+    ...shadows.subtle,
   },
   header: {
     flexDirection: 'row',
@@ -96,8 +97,8 @@ const styles = StyleSheet.create({
   },
   title: {
     flex: 1,
-    fontSize: 16,
-    fontWeight: '700',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
   },
   row: {
     flexDirection: 'row',
@@ -105,10 +106,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   tagsRow: {
-    marginTop: 8,
+    marginTop: 10,
   },
   footer: {
-    marginTop: 4,
+    marginTop: 6,
   },
   timeRow: {
     flexDirection: 'row',
@@ -116,8 +117,8 @@ const styles = StyleSheet.create({
   },
   timeText: {
     marginLeft: 6,
-    fontSize: 12,
-    color: '#616161',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
   },
   spacer: {
     flex: 1,

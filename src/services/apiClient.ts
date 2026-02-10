@@ -1,17 +1,28 @@
 import { TaskModel } from '../models/types';
+import { buildBaseUrl } from '../config/api';
 
 interface ApiClientConfig {
   baseUrl: string;
   authToken?: string;
+  subdomain?: string;
 }
 
 export class ApiClient {
   private baseUrl: string;
   private authToken?: string;
+  private subdomain?: string;
 
   constructor(config: ApiClientConfig) {
     this.baseUrl = config.baseUrl;
     this.authToken = config.authToken;
+    this.subdomain = config.subdomain;
+  }
+
+  /** Reconfigure the client with a new subdomain + token. */
+  configure(subdomain: string, token: string): void {
+    this.subdomain = subdomain;
+    this.authToken = token;
+    this.baseUrl = buildBaseUrl(subdomain);
   }
 
   private getHeaders(): Record<string, string> {
@@ -122,7 +133,8 @@ export class ApiClient {
   }
 }
 
-// Default API client instance
+// Default API client instance.
+// Call apiClient.configure(subdomain, token) after login.
 export const apiClient = new ApiClient({
-  baseUrl: 'https://api.whagons.com', // Replace with actual API URL
+  baseUrl: buildBaseUrl(),
 });

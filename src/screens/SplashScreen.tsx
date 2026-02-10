@@ -6,17 +6,20 @@ import {
   Animated,
   TouchableWithoutFeedback,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
+import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+import { useAuth } from '../context/AuthContext';
 
 type SplashScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Splash'>;
 
 export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<SplashScreenNavigationProp>();
+  const { isLoading: authLoading, token } = useAuth();
   const navigatedRef = useRef(false);
   const scaleAnim = useRef(new Animated.Value(0)).current;
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -24,10 +27,12 @@ export const SplashScreen: React.FC = () => {
   const goNext = () => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
+    // Route to Main if already authenticated, Login otherwise
+    const destination = token ? 'Main' : 'Login';
     navigation.dispatch(
       CommonActions.reset({
         index: 0,
-        routes: [{ name: 'Main' }],
+        routes: [{ name: destination }],
       })
     );
   };
@@ -47,16 +52,20 @@ export const SplashScreen: React.FC = () => {
         useNativeDriver: true,
       }),
     ]).start();
-
-    // Auto-navigate after delay
-    const timer = setTimeout(goNext, 2200);
-    return () => clearTimeout(timer);
   }, []);
+
+  // Navigate once auth state is loaded
+  useEffect(() => {
+    if (!authLoading) {
+      const timer = setTimeout(goNext, 1200);
+      return () => clearTimeout(timer);
+    }
+  }, [authLoading, token]);
 
   return (
     <TouchableWithoutFeedback onPress={goNext}>
       <LinearGradient
-        colors={['#061E1B', '#0A3B30', '#0FB292']}
+        colors={['#121614', '#1C2420', '#2F6F6D']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.container}
@@ -77,7 +86,7 @@ export const SplashScreen: React.FC = () => {
           >
             <View style={styles.logoWrapper}>
               <View style={styles.logoCircle}>
-                <MaterialCommunityIcons name="truck-delivery" size={64} color="#FFFFFF" />
+                <Image source={require('../../assets/whagons-check.png')} style={styles.logoImage} />
               </View>
               <Text style={styles.title}>Whagons</Text>
               <Text style={styles.subtitle}>Coordinating work, together.</Text>
@@ -111,7 +120,7 @@ const styles = StyleSheet.create({
   topGlow: {
     top: -80,
     left: -40,
-    backgroundColor: 'rgba(100, 255, 218, 0.15)',
+    backgroundColor: 'rgba(199, 123, 67, 0.2)',
   },
   bottomGlow: {
     bottom: -60,
@@ -119,7 +128,7 @@ const styles = StyleSheet.create({
     width: 220,
     height: 220,
     borderRadius: 110,
-    backgroundColor: 'rgba(105, 240, 174, 0.15)',
+    backgroundColor: 'rgba(63, 143, 140, 0.2)',
   },
   content: {
     alignItems: 'center',
@@ -133,33 +142,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     paddingVertical: 28,
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 24,
+    borderRadius: radius.xl,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.14)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 18 },
-    shadowOpacity: 0.25,
-    shadowRadius: 32,
-    elevation: 10,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    ...shadows.lifted,
   },
   logoCircle: {
     padding: 16,
-    borderRadius: 50,
+    borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
   },
+  logoImage: {
+    width: 64,
+    height: 64,
+    resizeMode: 'contain',
+  },
   title: {
     marginTop: 18,
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: fontSizes.xl,
+    fontFamily: fontFamilies.displaySemibold,
     color: '#FFFFFF',
     letterSpacing: 0.5,
   },
   subtitle: {
     marginTop: 8,
-    fontSize: 16,
-    fontWeight: '400',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
     color: 'rgba(255, 255, 255, 0.7)',
     letterSpacing: 0.2,
   },
@@ -177,6 +187,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
     color: 'rgba(255, 255, 255, 0.7)',
     letterSpacing: 0.3,
-    fontSize: 14,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
   },
 });

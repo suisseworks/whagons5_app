@@ -14,6 +14,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { NotificationItem } from '../models/types';
 import { formatTimestamp } from '../utils/helpers';
+import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 const initialNotifications: NotificationItem[] = [
   {
@@ -65,7 +66,7 @@ const initialNotifications: NotificationItem[] = [
 
 export const NotificationsScreen: React.FC = () => {
   const navigation = useNavigation();
-  const { colors, primaryColor } = useTheme();
+  const { colors, primaryColor, isDarkMode } = useTheme();
   const { setNotificationCount } = useTasks();
   const [notifications, setNotifications] = useState<NotificationItem[]>(initialNotifications);
 
@@ -90,7 +91,11 @@ export const NotificationsScreen: React.FC = () => {
     <TouchableOpacity
       style={[
         styles.notificationCard,
-        !item.isRead && styles.notificationCardUnread,
+        { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' },
+        !item.isRead && {
+          backgroundColor: isDarkMode ? 'rgba(63, 143, 140, 0.18)' : '#EAF1F1',
+          borderColor: isDarkMode ? 'rgba(63, 143, 140, 0.3)' : '#D7E7E4',
+        },
       ]}
       onPress={() => handleNotificationPress(item)}
     >
@@ -108,10 +113,12 @@ export const NotificationsScreen: React.FC = () => {
           </Text>
           {!item.isRead && <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />}
         </View>
-        <Text style={styles.notificationMessage} numberOfLines={2}>
+        <Text style={[styles.notificationMessage, { color: colors.textSecondary }]} numberOfLines={2}>
           {item.message}
         </Text>
-        <Text style={styles.notificationTime}>{formatTimestamp(item.timestamp)}</Text>
+        <Text style={[styles.notificationTime, { color: colors.textSecondary }]}>
+          {formatTimestamp(item.timestamp)}
+        </Text>
       </View>
     </TouchableOpacity>
   );
@@ -159,8 +166,8 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
     color: '#FFFFFF',
   },
   listContent: {
@@ -169,25 +176,20 @@ const styles = StyleSheet.create({
   },
   notificationCard: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.lg,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E0E0E0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 4,
-    elevation: 1,
+    borderColor: '#E6E1D7',
+    ...shadows.subtle,
   },
   notificationCardUnread: {
-    backgroundColor: '#E3F2FD',
-    borderColor: '#BBDEFB',
+    backgroundColor: '#EAF1F1',
+    borderColor: '#D7E7E4',
   },
   iconContainer: {
     width: 48,
     height: 48,
-    borderRadius: 24,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -202,12 +204,12 @@ const styles = StyleSheet.create({
   },
   notificationTitle: {
     flex: 1,
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
   },
   notificationTitleUnread: {
-    fontWeight: '700',
+    fontFamily: fontFamilies.bodyBold,
   },
   unreadDot: {
     width: 8,
@@ -217,14 +219,14 @@ const styles = StyleSheet.create({
   },
   notificationMessage: {
     marginTop: 4,
-    fontSize: 14,
-    color: '#616161',
+    fontSize: fontSizes.sm,
     lineHeight: 20,
+    fontFamily: fontFamilies.bodyRegular,
   },
   notificationTime: {
     marginTop: 6,
-    fontSize: 12,
-    color: '#9E9E9E',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
   },
   emptyContainer: {
     flex: 1,
@@ -234,13 +236,14 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     marginTop: 16,
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#757575',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+    color: '#6C746F',
   },
   emptySubtitle: {
     marginTop: 8,
-    fontSize: 14,
-    color: '#9E9E9E',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    color: '#8B8E84',
   },
 });

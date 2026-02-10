@@ -9,13 +9,17 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { MaterialIcons } from '@expo/vector-icons';
+import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
+import { useAuth } from '../context/AuthContext';
 import { RootStackParamList } from '../models/types';
 import { quotes, inspirationalImages, getDailyIndex } from '../utils/helpers';
+import { clearAllData } from '../store/database';
+import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -25,8 +29,9 @@ interface AppDrawerProps {
 
 export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
-  const { isDarkMode, toggleDarkMode, primaryColor } = useTheme();
+  const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
   const { compactCards, toggleCompactCards, notificationCount } = useTasks();
+  const { logout, user } = useAuth();
 
   const quoteIndex = getDailyIndex(quotes.length);
   const imageIndex = getDailyIndex(inspirationalImages.length);
@@ -48,21 +53,53 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
     navigation.navigate('Themes');
   };
 
+  const handleLogout = async () => {
+    onClose();
+    await clearAllData();
+    await logout();
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 0,
+        routes: [{ name: 'Login' }],
+      }),
+    );
+  };
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView>
         {/* Header */}
-        <View style={styles.header}>
+        <LinearGradient
+          colors={[colors.primary, colors.secondary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.header}
+        >
           <View style={styles.headerContent}>
-            <MaterialCommunityIcons name="truck-delivery" size={32} color="#FFFFFF" />
-            <Text style={styles.headerTitle}>Whagons</Text>
+            <View style={styles.logoBadge}>
+              <Image source={require('../../assets/whagons-check.png')} style={styles.logoImage} />
+            </View>
+            <View>
+              <Text style={styles.headerTitle}>Whagons</Text>
+              <Text style={styles.headerSubtitle}>Field operations</Text>
+            </View>
           </View>
-        </View>
+          {user && (
+            <Text style={styles.headerUser}>{user.name ?? user.email}</Text>
+          )}
+        </LinearGradient>
 
         {/* Menu Items */}
-        <TouchableOpacity style={styles.menuItem} onPress={handleNotifications}>
+        <TouchableOpacity
+          style={[
+            styles.menuItem,
+            styles.menuItemElevated,
+            { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.9)' : 'rgba(255, 255, 255, 0.9)' },
+          ]}
+          onPress={handleNotifications}
+        >
           <View style={styles.menuIconContainer}>
-            <MaterialIcons name="notifications-none" size={24} color="#616161" />
+            <MaterialIcons name="notifications-none" size={22} color={colors.textSecondary} />
             {notificationCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>
@@ -71,7 +108,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
               </View>
             )}
           </View>
-          <Text style={styles.menuText}>Notifications</Text>
+          <Text style={[styles.menuText, { color: colors.text }]}>Notifications</Text>
           {notificationCount > 0 && (
             <View style={styles.countBadge}>
               <Text style={styles.countBadgeText}>{notificationCount}</Text>
@@ -82,18 +119,18 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         <View style={styles.divider} />
 
         <TouchableOpacity style={styles.menuItem} onPress={handleSettings}>
-          <MaterialIcons name="person-outline" size={24} color="#616161" />
-          <Text style={styles.menuText}>Profile</Text>
+          <MaterialIcons name="person-outline" size={22} color={colors.textSecondary} />
+          <Text style={[styles.menuText, { color: colors.text }]}>Profile</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.menuItem} onPress={handleThemes}>
-          <MaterialIcons name="palette" size={24} color="#616161" />
-          <Text style={styles.menuText}>Themes</Text>
+          <MaterialIcons name="palette" size={22} color={colors.textSecondary} />
+          <Text style={[styles.menuText, { color: colors.text }]}>Themes</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.menuItem} onPress={handleSettings}>
-          <MaterialIcons name="settings" size={24} color="#616161" />
-          <Text style={styles.menuText}>Settings</Text>
+          <MaterialIcons name="settings" size={22} color={colors.textSecondary} />
+          <Text style={[styles.menuText, { color: colors.text }]}>Settings</Text>
         </TouchableOpacity>
 
         <View style={styles.divider} />
@@ -102,10 +139,10 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         <View style={styles.switchItem}>
           <MaterialIcons
             name={isDarkMode ? 'dark-mode' : 'light-mode'}
-            size={24}
-            color="#616161"
+            size={22}
+            color={colors.textSecondary}
           />
-          <Text style={styles.menuText}>Dark Mode</Text>
+          <Text style={[styles.menuText, { color: colors.text }]}>Dark Mode</Text>
           <Switch
             value={isDarkMode}
             onValueChange={toggleDarkMode}
@@ -117,10 +154,10 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         <View style={styles.switchItem}>
           <MaterialIcons
             name={compactCards ? 'view-agenda' : 'view-day'}
-            size={24}
-            color="#616161"
+            size={22}
+            color={colors.textSecondary}
           />
-          <Text style={styles.menuText}>Compact Cards</Text>
+          <Text style={[styles.menuText, { color: colors.text }]}>Compact Cards</Text>
           <Switch
             value={compactCards}
             onValueChange={toggleCompactCards}
@@ -129,14 +166,24 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
           />
         </View>
 
+        <View style={styles.divider} />
+
+        {/* Logout */}
+        <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
+          <MaterialIcons name="logout" size={24} color="#F44336" />
+          <Text style={[styles.menuText, { color: '#F44336' }]}>Log out</Text>
+        </TouchableOpacity>
+
         {/* Inspirational Section */}
         <View style={styles.inspirationalSection}>
           <View style={styles.imageContainer}>
             <Image source={{ uri: selectedImage }} style={styles.inspirationalImage} />
             <View style={styles.imageGradient} />
           </View>
-          <Text style={styles.quoteText}>"{selectedQuote.text}"</Text>
-          <Text style={styles.authorText}>— {selectedQuote.author}</Text>
+          <Text style={[styles.quoteText, { color: colors.textSecondary }]}>
+            "{selectedQuote.text}"
+          </Text>
+          <Text style={[styles.authorText, { color: colors.textSecondary }]}>— {selectedQuote.author}</Text>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -146,29 +193,60 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
   },
   header: {
-    backgroundColor: '#14B7A3',
-    padding: 20,
-    paddingTop: 24,
-    paddingBottom: 24,
+    padding: spacing.lg,
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
   },
   headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
   },
+  logoBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  logoImage: {
+    width: 28,
+    height: 28,
+    resizeMode: 'contain',
+  },
   headerTitle: {
-    marginLeft: 12,
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
     color: '#FFFFFF',
+  },
+  headerSubtitle: {
+    marginTop: 2,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
+    color: 'rgba(255, 255, 255, 0.75)',
+    letterSpacing: 0.3,
+  },
+  headerUser: {
+    marginTop: 10,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
+    color: 'rgba(255, 255, 255, 0.78)',
   },
   menuItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 14,
     paddingHorizontal: 20,
+  },
+  menuItemElevated: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: radius.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    ...shadows.subtle,
   },
   menuIconContainer: {
     position: 'relative',
@@ -189,13 +267,13 @@ const styles = StyleSheet.create({
   badgeText: {
     color: '#FFFFFF',
     fontSize: 9,
-    fontWeight: '700',
+    fontFamily: fontFamilies.bodyBold,
   },
   menuText: {
     flex: 1,
     marginLeft: 16,
-    fontSize: 16,
-    color: '#212121',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
   },
   countBadge: {
     backgroundColor: '#F44336',
@@ -205,12 +283,12 @@ const styles = StyleSheet.create({
   },
   countBadgeText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyBold,
   },
   divider: {
     height: 1,
-    backgroundColor: '#E0E0E0',
+    backgroundColor: 'rgba(0, 0, 0, 0.06)',
     marginVertical: 8,
   },
   switchItem: {
@@ -223,7 +301,7 @@ const styles = StyleSheet.create({
     margin: 16,
   },
   imageContainer: {
-    borderRadius: 12,
+    borderRadius: radius.lg,
     overflow: 'hidden',
     height: 160,
   },
@@ -237,15 +315,14 @@ const styles = StyleSheet.create({
   },
   quoteText: {
     marginTop: 12,
-    fontSize: 14,
+    fontSize: fontSizes.sm,
     fontStyle: 'italic',
-    color: '#616161',
+    fontFamily: fontFamilies.bodyRegular,
     lineHeight: 20,
   },
   authorText: {
     marginTop: 6,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#757575',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
   },
 });

@@ -39,12 +39,12 @@ export const getLightTheme = (themeName: ThemeName): ThemeColors => {
       };
     default: // default theme
       return {
-        primary: '#14B7A3',
-        secondary: '#0FB292',
-        background: '#F6F2E8',
+        primary: '#C77B43',
+        secondary: '#2F6F6D',
+        background: '#F4F1EA',
         surface: '#FFFFFF',
-        text: '#000000DE',
-        textSecondary: '#00000099',
+        text: '#1E2321',
+        textSecondary: '#5F6B66',
       };
   }
 };
@@ -80,12 +80,12 @@ export const getDarkTheme = (themeName: ThemeName): ThemeColors => {
       };
     default: // default theme
       return {
-        primary: '#14B7A3',
-        secondary: '#0FB292',
-        background: '#1A1F1E',
-        surface: '#2C3432',
-        text: '#FFFFFF',
-        textSecondary: '#FFFFFFB3',
+        primary: '#D28A54',
+        secondary: '#3F8F8C',
+        background: '#151817',
+        surface: '#1F2422',
+        text: '#F4F1EA',
+        textSecondary: '#C9C3B9',
       };
   }
 };
@@ -99,7 +99,7 @@ export const getPrimaryColor = (themeName: ThemeName): string => {
     case 'forest':
       return '#4CAF50';
     default:
-      return '#14B7A3';
+      return '#C77B43';
   }
 };
 
@@ -108,7 +108,7 @@ export const themeMetadata = [
   {
     id: 'default' as ThemeName,
     name: 'Default',
-    description: 'Classic teal theme',
+    description: 'Industrial copper tones',
     icon: 'palette',
   },
   {

@@ -8,22 +8,24 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/whagons-check.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0A3B30"
+      "backgroundColor": "#121614"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.whagons.app"
+      "bundleIdentifier": "com.whagons.whagons",
+      "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A3B30"
       },
-      "package": "com.whagons.app",
+      "package": "com.whagons.whagons",
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "googleServicesFile": "./google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -36,7 +38,10 @@
           "photosPermission": "The app accesses your photos to let you attach images to tasks.",
           "cameraPermission": "The app accesses your camera to let you take photos for tasks."
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "@react-native-google-signin/google-signin"
     ]
   }
 }

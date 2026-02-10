@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { fontFamilies, fontSizes, radius } from '../config/designTokens';
 
 interface CustomChipProps {
   label: string;
@@ -22,11 +23,11 @@ export const CustomChip: React.FC<CustomChipProps> = ({
 const styles = StyleSheet.create({
   chip: {
     paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 12,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
   },
   label: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
   },
 });

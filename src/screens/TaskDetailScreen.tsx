@@ -19,6 +19,7 @@ import { RootStackParamList, Comment, ChecklistItem } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
 import { priorityColor, statusColor, getInitials } from '../utils/helpers';
+import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 type TaskDetailRouteProp = RouteProp<RootStackParamList, 'TaskDetail'>;
 
@@ -26,8 +27,9 @@ export const TaskDetailScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
-  const { colors, primaryColor } = useTheme();
+  const { colors, primaryColor, isDarkMode } = useTheme();
   const { setActiveTask, markTaskDone } = useTasks();
+  const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
   const [activeTab, setActiveTab] = useState<'details' | 'checklist' | 'comments'>('details');
   const [commentText, setCommentText] = useState('');
@@ -125,7 +127,8 @@ export const TaskDetailScreen: React.FC = () => {
       </View>
 
       {/* Details Card */}
-      <View style={styles.card}>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
+      >
         <DetailRow icon="location-on" label="Location" value={task.spot} />
         <View style={styles.divider} />
         <DetailRow icon="schedule" label="Created" value={task.createdAt} />
@@ -144,10 +147,11 @@ export const TaskDetailScreen: React.FC = () => {
       </View>
 
       {/* Assignees Card */}
-      <View style={styles.card}>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
+      >
         <View style={styles.cardHeader}>
-          <MaterialIcons name="people-outline" size={20} color="#616161" />
-          <Text style={styles.cardTitle}>Assignees</Text>
+          <MaterialIcons name="people-outline" size={20} color={colors.textSecondary} />
+          <Text style={[styles.cardTitle, { color: colors.text }]}>Assignees</Text>
         </View>
         <View style={styles.chipsRow}>
           {task.assignees.map((name, index) => (
@@ -155,18 +159,19 @@ export const TaskDetailScreen: React.FC = () => {
               <View style={styles.assigneeAvatar}>
                 <Text style={styles.assigneeInitial}>{getInitials(name)}</Text>
               </View>
-              <Text style={styles.assigneeName}>{name}</Text>
+              <Text style={[styles.assigneeName, { color: colors.text }]}>{name}</Text>
             </View>
           ))}
         </View>
       </View>
 
       {/* Tags Card */}
-      {task.tags.length > 0 && (
-        <View style={styles.card}>
+        {task.tags.length > 0 && (
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
+        >
           <View style={styles.cardHeader}>
-            <MaterialIcons name="label-outline" size={20} color="#616161" />
-            <Text style={styles.cardTitle}>Tags</Text>
+            <MaterialIcons name="label-outline" size={20} color={colors.textSecondary} />
+            <Text style={[styles.cardTitle, { color: colors.text }]}>Tags</Text>
           </View>
           <View style={styles.chipsRow}>
             {task.tags.map((tag, index) => (
@@ -179,14 +184,18 @@ export const TaskDetailScreen: React.FC = () => {
       )}
 
       {/* Attachments Card */}
-      <View style={styles.card}>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
+      >
         <View style={styles.cardHeaderRow}>
           <View style={styles.cardHeader}>
-            <MaterialIcons name="photo-library" size={20} color="#616161" />
-            <Text style={styles.cardTitle}>Attachments</Text>
+            <MaterialIcons name="photo-library" size={20} color={colors.textSecondary} />
+            <Text style={[styles.cardTitle, { color: colors.text }]}>Attachments</Text>
             {attachedImages.length > 0 && (
-              <View style={styles.attachmentCount}>
-                <Text style={styles.attachmentCountText}>{attachedImages.length}</Text>
+              <View style={[styles.attachmentCount, { backgroundColor: `${primaryColor}1A` }]}
+              >
+                <Text style={[styles.attachmentCountText, { color: primaryColor }]}>
+                  {attachedImages.length}
+                </Text>
               </View>
             )}
           </View>
@@ -199,7 +208,7 @@ export const TaskDetailScreen: React.FC = () => {
           <View style={styles.emptyAttachments}>
             <MaterialIcons name="add-a-photo" size={48} color="#E0E0E0" />
             <Text style={styles.emptyText}>No attachments yet</Text>
-            <TouchableOpacity style={styles.addPhotoButton} onPress={showImageOptions}>
+            <TouchableOpacity style={[styles.addPhotoButton, { borderColor: primaryColor }]} onPress={showImageOptions}>
               <MaterialIcons name="add" size={20} color={primaryColor} />
               <Text style={[styles.addPhotoText, { color: primaryColor }]}>Add Photo</Text>
             </TouchableOpacity>
@@ -222,16 +231,17 @@ export const TaskDetailScreen: React.FC = () => {
       </View>
 
       {/* Timestamps Card */}
-      <View style={[styles.card, styles.timestampsCard]}>
+      <View style={[styles.card, styles.timestampsCard, { borderColor: cardBorder, backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.6)' : 'rgba(255, 255, 255, 0.6)' }]}
+      >
         <View style={styles.timestampRow}>
-          <MaterialIcons name="schedule" size={16} color="#757575" />
-          <Text style={styles.timestampLabel}>Created:</Text>
-          <Text style={styles.timestampValue}>{task.createdAt}</Text>
+          <MaterialIcons name="schedule" size={16} color={colors.textSecondary} />
+          <Text style={[styles.timestampLabel, { color: colors.textSecondary }]}>Created:</Text>
+          <Text style={[styles.timestampValue, { color: colors.text }]}>{task.createdAt}</Text>
         </View>
-        <View style={[styles.timestampRow, { marginTop: 8 }]}>
-          <MaterialIcons name="update" size={16} color="#757575" />
-          <Text style={styles.timestampLabel}>Last updated:</Text>
-          <Text style={styles.timestampValue}>{task.createdAt}</Text>
+        <View style={[styles.timestampRow, { marginTop: 8 }]}> 
+          <MaterialIcons name="update" size={16} color={colors.textSecondary} />
+          <Text style={[styles.timestampLabel, { color: colors.textSecondary }]}>Last updated:</Text>
+          <Text style={[styles.timestampValue, { color: colors.text }]}>{task.createdAt}</Text>
         </View>
       </View>
     </ScrollView>
@@ -243,7 +253,7 @@ export const TaskDetailScreen: React.FC = () => {
         {checklistItems.map((item, index) => (
           <TouchableOpacity
             key={index}
-            style={styles.checklistItem}
+            style={[styles.checklistItem, { backgroundColor: colors.surface, borderColor: cardBorder }]}
             onPress={() => handleToggleChecklistItem(index)}
           >
             <MaterialIcons
@@ -254,6 +264,7 @@ export const TaskDetailScreen: React.FC = () => {
             <Text
               style={[
                 styles.checklistText,
+                { color: colors.text },
                 item.completed && styles.checklistTextCompleted,
               ]}
             >
@@ -264,6 +275,13 @@ export const TaskDetailScreen: React.FC = () => {
       </ScrollView>
 
       <View style={styles.bottomAction}>
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFillObject,
+            { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
+          ]}
+        />
         <TouchableOpacity
           style={[styles.actionButton, { backgroundColor: primaryColor }]}
           onPress={handleAddChecklistItem}
@@ -287,11 +305,11 @@ export const TaskDetailScreen: React.FC = () => {
               </View>
               <View style={styles.commentContent}>
                 <View style={styles.commentHeader}>
-                  <Text style={styles.commentAuthor}>{comment.author}</Text>
-                  <Text style={styles.commentTime}>{comment.time}</Text>
+                  <Text style={[styles.commentAuthor, { color: colors.text }]}>{comment.author}</Text>
+                  <Text style={[styles.commentTime, { color: colors.textSecondary }]}>{comment.time}</Text>
                 </View>
-                <View style={styles.commentBubble}>
-                  <Text style={styles.commentText}>{comment.text}</Text>
+                <View style={[styles.commentBubble, { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#FFFFFF' }]}>
+                  <Text style={[styles.commentText, { color: colors.text }]}>{comment.text}</Text>
                 </View>
               </View>
             </View>
@@ -299,11 +317,17 @@ export const TaskDetailScreen: React.FC = () => {
         })}
       </ScrollView>
 
-      <View style={styles.commentInputContainer}>
+      <View style={[styles.commentInputContainer, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}>
         <TextInput
-          style={styles.commentInput}
+          style={[
+            styles.commentInput,
+            {
+              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
+              color: colors.text,
+            },
+          ]}
           placeholder="Add a comment..."
-          placeholderTextColor="#9E9E9E"
+          placeholderTextColor={colors.textSecondary}
           value={commentText}
           onChangeText={setCommentText}
           onSubmitEditing={handleAddComment}
@@ -358,7 +382,12 @@ export const TaskDetailScreen: React.FC = () => {
 
       {/* Action Buttons - Only show in details tab */}
       {activeTab === 'details' && (
-        <View style={styles.actionButtonsContainer}>
+        <View
+          style={[
+            styles.actionButtonsContainer,
+            { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
+          ]}
+        >
           <TouchableOpacity
             style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
             onPress={handleStartWorking}
@@ -395,13 +424,13 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
   },
   tabBar: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
+    borderBottomColor: '#E6E1D7',
   },
   tab: {
     flex: 1,
@@ -411,19 +440,19 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#757575',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#7A817C',
   },
   tabContent: {
     flex: 1,
   },
   tabContentContainer: {
-    padding: 16,
+    padding: spacing.md,
   },
   taskTitle: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: fontSizes.xl,
+    fontFamily: fontFamilies.displaySemibold,
     marginBottom: 16,
   },
   statusRow: {
@@ -431,10 +460,11 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.lg,
     padding: 16,
     marginBottom: 16,
+    borderWidth: 1,
+    ...shadows.subtle,
   },
   cardHeaderRow: {
     flexDirection: 'row',
@@ -448,13 +478,13 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212121',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
   },
   divider: {
     height: 1,
-    backgroundColor: '#E0E0E0',
+    backgroundColor: '#E6E1D7',
     marginVertical: 12,
   },
   chipsRow: {
@@ -464,7 +494,7 @@ const styles = StyleSheet.create({
   assigneeChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F3EEE4',
     borderRadius: 20,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -480,14 +510,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   assigneeInitial: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#212121',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyBold,
+    color: '#1E2321',
   },
   assigneeName: {
     marginLeft: 8,
-    fontSize: 14,
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
   },
   attachmentCount: {
     marginLeft: 8,
@@ -497,9 +528,9 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   attachmentCountText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#14B7A3',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#C77B43',
   },
   emptyAttachments: {
     alignItems: 'center',
@@ -507,8 +538,9 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     marginTop: 8,
-    fontSize: 14,
-    color: '#9E9E9E',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#8B8E84',
   },
   addPhotoButton: {
     flexDirection: 'row',
@@ -522,8 +554,8 @@ const styles = StyleSheet.create({
   },
   addPhotoText: {
     marginLeft: 4,
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
   imagesGrid: {
     flexDirection: 'row',
@@ -551,9 +583,7 @@ const styles = StyleSheet.create({
     padding: 4,
   },
   timestampsCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.5)',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
   },
   timestampRow: {
     flexDirection: 'row',
@@ -561,24 +591,19 @@ const styles = StyleSheet.create({
   },
   timestampLabel: {
     marginLeft: 8,
-    fontSize: 12,
-    color: '#757575',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
   },
   timestampValue: {
     marginLeft: 4,
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#424242',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
   },
   actionButtonsContainer: {
     flexDirection: 'row',
     padding: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 5,
+    backgroundColor: 'transparent',
+    ...shadows.subtle,
   },
   actionButton: {
     flex: 1,
@@ -586,7 +611,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
-    borderRadius: 12,
+    borderRadius: radius.md,
   },
   startButton: {
     marginRight: 12,
@@ -598,32 +623,30 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     marginLeft: 8,
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
     color: '#FFFFFF',
   },
   bottomAction: {
     padding: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 5,
+    backgroundColor: 'transparent',
+    position: 'relative',
+    ...shadows.subtle,
   },
   checklistItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
     marginTop: 8,
     padding: 16,
-    borderRadius: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
   },
   checklistText: {
     marginLeft: 12,
-    fontSize: 16,
-    color: '#212121',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
   },
   checklistTextCompleted: {
     textDecorationLine: 'line-through',
@@ -645,8 +668,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   commentAvatarText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
     color: '#FFFFFF',
   },
   commentContent: {
@@ -658,44 +681,43 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   commentAuthor: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
   },
   commentTime: {
     marginLeft: 8,
-    fontSize: 12,
-    color: '#757575',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#8B8E84',
   },
   commentBubble: {
     marginTop: 4,
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.md,
     padding: 12,
   },
   commentText: {
-    fontSize: 14,
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    color: '#1E2321',
   },
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 5,
+    backgroundColor: 'transparent',
+    ...shadows.subtle,
   },
   commentInput: {
     flex: 1,
-    backgroundColor: '#F6F2E8',
-    borderRadius: 24,
+    backgroundColor: '#F3EEE4',
+    borderRadius: radius.pill,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    fontSize: 14,
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
   },
   sendButton: {
     marginLeft: 8,

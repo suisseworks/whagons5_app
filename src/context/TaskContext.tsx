@@ -1,249 +1,112 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { TaskItem } from '../models/types';
+/**
+ * TaskContext – Bridges the synced data from DataContext into the existing
+ * TaskItem interface that all the UI components consume.
+ *
+ * If synced data is available (user is logged in + sync completed),
+ * tasks are derived from DataContext. Otherwise the original static
+ * data is used as a fallback so the UI never shows an empty screen
+ * before the first sync.
+ */
 
-// Initial tasks data (same as Flutter app)
-const initialTasks: TaskItem[] = [
-  {
-    id: '1',
-    title: 'Check HVAC filters',
-    spot: 'Building A',
-    priority: 'High',
-    status: 'Open',
-    assignees: ['Alex', 'Mia'],
-    createdAt: 'Today 8:15 AM',
-    tags: ['HVAC', 'Preventive'],
-    approval: 'Awaiting lead',
+import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react';
+import { TaskItem } from '../models/types';
+import { useData, SyncedTask } from './DataContext';
+
+// ---------------------------------------------------------------------------
+// Helpers – map synced backend data → UI TaskItem
+// ---------------------------------------------------------------------------
+
+function mapPriority(
+  priorityId: number | null | undefined,
+  priorityMap: Map<number, { name: string; color?: string | null }>,
+): TaskItem['priority'] {
+  if (!priorityId) return 'Medium';
+  const p = priorityMap.get(priorityId);
+  if (!p) return 'Medium';
+  const name = p.name.toLowerCase();
+  if (name.includes('high') || name.includes('alta')) return 'High';
+  if (name.includes('low') || name.includes('baja')) return 'Low';
+  return 'Medium';
+}
+
+function mapStatus(
+  statusId: number | null | undefined,
+  statusMap: Map<number, { name: string; final?: boolean; initial?: boolean }>,
+): TaskItem['status'] {
+  if (!statusId) return 'Open';
+  const s = statusMap.get(statusId);
+  if (!s) return 'Open';
+  const name = s.name.toLowerCase();
+  if (s.final || name.includes('done') || name.includes('complet') || name.includes('cerr')) return 'Done';
+  if (name.includes('progress') || name.includes('curso')) return 'In progress';
+  if (name.includes('block') || name.includes('bloq')) return 'Blocked';
+  if (name.includes('schedul') || name.includes('program')) return 'Scheduled';
+  return 'Open';
+}
+
+function formatDate(dateStr?: string | null): string {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const isYesterday = d.toDateString() === yesterday.toDateString();
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+    if (isToday) return `Today ${time}`;
+    if (isYesterday) return `Yesterday ${time}`;
+    return d.toLocaleDateString();
+  } catch {
+    return dateStr;
+  }
+}
+
+function mapTaskToItem(
+  task: SyncedTask,
+  spotMap: Map<number, string>,
+  priorityMap: Map<number, { name: string; color?: string | null }>,
+  statusMap: Map<number, { name: string; final?: boolean; initial?: boolean }>,
+  assigneeMap: Map<number, string[]>, // taskId → list of user names
+  tagMap: Map<number, string[]>,      // taskId → list of tag names
+): TaskItem {
+  return {
+    id: String(task.id),
+    title: task.name || 'Untitled',
+    spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
+    priority: mapPriority(task.priority_id, priorityMap),
+    status: mapStatus(task.status_id, statusMap),
+    assignees: assigneeMap.get(task.id) ?? [],
+    createdAt: formatDate(task.created_at),
+    tags: tagMap.get(task.id) ?? [],
+    approval: null,
     sla: null,
-  },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Static fallback data (shown before first sync)
+// ---------------------------------------------------------------------------
+
+const staticTasks: TaskItem[] = [
   {
-    id: '2',
-    title: 'Inspect fire extinguishers',
-    spot: 'Floor 3',
-    priority: 'High',
-    status: 'In progress',
-    assignees: ['Sam'],
-    createdAt: 'Today 7:50 AM',
-    tags: ['Safety'],
-    approval: null,
-    sla: 'SLA 4h',
-  },
-  {
-    id: '3',
-    title: 'Clean lobby glass',
-    spot: 'Main Lobby',
-    priority: 'Low',
-    status: 'Open',
-    assignees: ['Leo', 'Cam'],
-    createdAt: 'Yesterday 5:10 PM',
-    tags: ['Cleaning'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '4',
-    title: 'Test emergency lights',
-    spot: 'Basement',
-    priority: 'High',
-    status: 'Blocked',
-    assignees: ['Priya'],
-    createdAt: 'Today 6:40 AM',
-    tags: ['Safety', 'Electrical'],
-    approval: null,
-    sla: 'SLA breached',
-  },
-  {
-    id: '5',
-    title: 'Replace hallway bulbs',
-    spot: 'Floor 2',
+    id: '0',
+    title: 'Syncing data...',
+    spot: '',
     priority: 'Medium',
     status: 'Open',
-    assignees: ['Tom'],
-    createdAt: 'Today 9:05 AM',
-    tags: ['Electrical'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '6',
-    title: 'Service elevator A',
-    spot: 'Shaft 1',
-    priority: 'High',
-    status: 'Scheduled',
-    assignees: ['Alex', 'Priya'],
-    createdAt: 'Yesterday 4:30 PM',
-    tags: ['Elevator'],
-    approval: 'Ops approval',
-    sla: null,
-  },
-  {
-    id: '7',
-    title: 'Calibrate thermostats',
-    spot: 'Offices',
-    priority: 'Medium',
-    status: 'In progress',
-    assignees: ['Mia'],
-    createdAt: 'Today 8:45 AM',
-    tags: ['HVAC'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '8',
-    title: 'Patch wall paint',
-    spot: 'Conference Room',
-    priority: 'Low',
-    status: 'Open',
-    assignees: ['Cam'],
-    createdAt: 'Yesterday 3:20 PM',
-    tags: ['Paint'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '9',
-    title: 'Check water pressure',
-    spot: 'Roof Tank',
-    priority: 'Medium',
-    status: 'Open',
-    assignees: ['Leo'],
-    createdAt: 'Today 9:20 AM',
-    tags: ['Plumbing'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '10',
-    title: 'Clean AC ducts',
-    spot: 'Wing C',
-    priority: 'High',
-    status: 'Scheduled',
-    assignees: ['Sam', 'Priya'],
-    createdAt: 'Yesterday 2:00 PM',
-    tags: ['HVAC', 'Deep clean'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '11',
-    title: 'Replace air filter',
-    spot: 'Server Room',
-    priority: 'High',
-    status: 'In progress',
-    assignees: ['Alex'],
-    createdAt: 'Today 7:30 AM',
-    tags: ['HVAC', 'Critical'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '12',
-    title: 'Grease door hinges',
-    spot: 'Storage',
-    priority: 'Low',
-    status: 'Done',
-    assignees: ['Cam'],
-    createdAt: 'Yesterday 11:40 AM',
-    tags: ['General'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '13',
-    title: 'Inspect sprinklers',
-    spot: 'Floor 4',
-    priority: 'High',
-    status: 'Open',
-    assignees: ['Tom', 'Leo'],
-    createdAt: 'Today 8:05 AM',
-    tags: ['Safety'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '14',
-    title: 'Tile repair',
-    spot: 'Restroom East',
-    priority: 'Medium',
-    status: 'Scheduled',
-    assignees: ['Priya'],
-    createdAt: 'Yesterday 1:55 PM',
-    tags: ['Repairs'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '15',
-    title: 'Check smoke detectors',
-    spot: 'Dorm Wing',
-    priority: 'High',
-    status: 'Open',
-    assignees: ['Sam'],
-    createdAt: 'Today 9:10 AM',
-    tags: ['Safety', 'Electrical'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '16',
-    title: 'Refill janitorial stock',
-    spot: 'Supply Closet',
-    priority: 'Low',
-    status: 'Open',
-    assignees: ['Mia'],
-    createdAt: 'Today 8:55 AM',
-    tags: ['Supplies'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '17',
-    title: 'Deep clean carpets',
-    spot: 'Lobby',
-    priority: 'Medium',
-    status: 'Scheduled',
-    assignees: ['Alex', 'Cam'],
-    createdAt: 'Yesterday 2:45 PM',
-    tags: ['Cleaning', 'Deep clean'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '18',
-    title: 'Window seal inspection',
-    spot: 'Floor 5',
-    priority: 'Medium',
-    status: 'Open',
-    assignees: ['Leo'],
-    createdAt: 'Today 7:20 AM',
-    tags: ['Inspection'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '19',
-    title: 'Test backup generator',
-    spot: 'Utility Yard',
-    priority: 'High',
-    status: 'Scheduled',
-    assignees: ['Tom', 'Priya'],
-    createdAt: 'Yesterday 5:00 PM',
-    tags: ['Power'],
-    approval: null,
-    sla: null,
-  },
-  {
-    id: '20',
-    title: 'Parking lines repaint',
-    spot: 'Parking Lot',
-    priority: 'Low',
-    status: 'Open',
-    assignees: ['Sam'],
-    createdAt: 'Today 6:55 AM',
-    tags: ['Paint'],
+    assignees: [],
+    createdAt: '',
+    tags: [],
     approval: null,
     sla: null,
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Context interface (unchanged from the original)
+// ---------------------------------------------------------------------------
 
 interface TaskContextType {
   tasks: TaskItem[];
@@ -265,56 +128,152 @@ interface TaskContextType {
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [tasks, setTasks] = useState<TaskItem[]>(initialTasks);
+  const { data } = useData();
+
   const [activeTask, setActiveTaskState] = useState<TaskItem | null>(null);
   const [compactCards, setCompactCards] = useState(false);
-  const [notificationCount, setNotificationCount] = useState(2);
+  const [notificationCount, setNotificationCount] = useState(0);
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
+  // Local overrides for optimistic mutations (keyed by task id)
+  const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
 
-  const workspaces = ['Everything', 'Shared', 'Workspace A', 'Workspace B', 'Workspace C'];
+  // Build lookup maps from synced reference data
+  const spotMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const s of data.spots) m.set(s.id, s.name);
+    return m;
+  }, [data.spots]);
 
-  const addTask = (task: TaskItem) => {
-    const newTask = { ...task, id: String(Date.now()) };
-    setTasks(prev => [newTask, ...prev]);
+  const priorityMap = useMemo(() => {
+    const m = new Map<number, { name: string; color?: string | null }>();
+    for (const p of data.priorities) m.set(p.id, { name: p.name, color: p.color });
+    return m;
+  }, [data.priorities]);
+
+  const statusMap = useMemo(() => {
+    const m = new Map<number, { name: string; final?: boolean; initial?: boolean }>();
+    for (const s of data.statuses) m.set(s.id, { name: s.name, final: s.final, initial: s.initial });
+    return m;
+  }, [data.statuses]);
+
+  const userMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const u of data.users) m.set(u.id, u.name);
+    return m;
+  }, [data.users]);
+
+  const tagNameMap = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const t of data.tags) m.set(t.id, t.name);
+    return m;
+  }, [data.tags]);
+
+  const assigneeMap = useMemo(() => {
+    const m = new Map<number, string[]>();
+    for (const tu of data.taskUsers) {
+      const list = m.get(tu.task_id) ?? [];
+      const name = userMap.get(tu.user_id);
+      if (name) list.push(name);
+      m.set(tu.task_id, list);
+    }
+    return m;
+  }, [data.taskUsers, userMap]);
+
+  const tagMap = useMemo(() => {
+    const m = new Map<number, string[]>();
+    for (const tt of data.taskTags) {
+      const list = m.get(tt.task_id) ?? [];
+      const name = tagNameMap.get(tt.tag_id);
+      if (name) list.push(name);
+      m.set(tt.task_id, list);
+    }
+    return m;
+  }, [data.taskTags, tagNameMap]);
+
+  // Build workspace list
+  const workspaces = useMemo(() => {
+    const names = data.workspaces.map((w) => w.name);
+    return ['Everything', ...names];
+  }, [data.workspaces]);
+
+  // Map synced tasks → TaskItem[]
+  const tasks = useMemo(() => {
+    if (data.tasks.length === 0) return staticTasks;
+
+    let mapped = data.tasks.map((t) =>
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap),
+    );
+
+    // Apply local overrides
+    if (localOverrides.size > 0) {
+      mapped = mapped.map((t) => {
+        const override = localOverrides.get(t.id ?? '');
+        return override ? { ...t, ...override } : t;
+      });
+    }
+
+    // Filter by workspace
+    if (selectedWorkspace !== 'Everything') {
+      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+      if (ws) {
+        const wsTaskIds = new Set(
+          data.tasks
+            .filter((t) => t.workspace_id === ws.id)
+            .map((t) => String(t.id)),
+        );
+        mapped = mapped.filter((t) => wsTaskIds.has(t.id ?? ''));
+      }
+    }
+
+    return mapped;
+  }, [data.tasks, data.workspaces, spotMap, priorityMap, statusMap, assigneeMap, tagMap, selectedWorkspace, localOverrides]);
+
+  // ---- Mutations (optimistic, client-side only for now) --------------------
+
+  const addTask = (_task: TaskItem) => {
+    // In the future, POST to API and re-sync
   };
 
   const updateTask = (index: number, task: TaskItem) => {
-    setTasks(prev => {
-      const newTasks = [...prev];
-      newTasks[index] = task;
-      return newTasks;
-    });
+    if (task.id) {
+      setLocalOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(task.id!, task);
+        return next;
+      });
+    }
   };
 
   const setActiveTask = (task: TaskItem | null, markDone = false) => {
-    if (markDone && activeTask) {
-      const activeIndex = tasks.findIndex(t => t.id === activeTask.id);
-      if (activeIndex !== -1) {
-        updateTask(activeIndex, { ...tasks[activeIndex], status: 'Done' });
-      }
+    if (markDone && activeTask?.id) {
+      setLocalOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(activeTask.id!, { status: 'Done' });
+        return next;
+      });
     }
     setActiveTaskState(task);
   };
 
-  const toggleCompactCards = () => {
-    setCompactCards(prev => !prev);
-  };
+  const toggleCompactCards = () => setCompactCards((p) => !p);
 
   const markTaskDone = (taskId: string) => {
-    const index = tasks.findIndex(t => t.id === taskId);
-    if (index !== -1) {
-      updateTask(index, { ...tasks[index], status: 'Done' });
-    }
-    if (activeTask?.id === taskId) {
-      setActiveTaskState(null);
-    }
+    setLocalOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(taskId, { status: 'Done' });
+      return next;
+    });
+    if (activeTask?.id === taskId) setActiveTaskState(null);
   };
 
   const assignTaskToYou = (taskId: string) => {
-    const index = tasks.findIndex(t => t.id === taskId);
-    if (index !== -1 && !tasks[index].assignees.includes('You')) {
-      const updatedAssignees = [...tasks[index].assignees, 'You'];
-      updateTask(index, { ...tasks[index], assignees: updatedAssignees });
+    const task = tasks.find((t) => t.id === taskId);
+    if (task && !task.assignees.includes('You')) {
+      setLocalOverrides((prev) => {
+        const next = new Map(prev);
+        next.set(taskId, { assignees: [...task.assignees, 'You'] });
+        return next;
+      });
     }
   };
 

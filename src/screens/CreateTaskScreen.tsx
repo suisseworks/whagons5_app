@@ -17,12 +17,13 @@ import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { TaskItem } from '../models/types';
 import { priorityColor } from '../utils/helpers';
+import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 const priorities = ['Low', 'Medium', 'High'] as const;
 
 export const CreateTaskScreen: React.FC = () => {
   const navigation = useNavigation();
-  const { colors, primaryColor } = useTheme();
+  const { colors, primaryColor, isDarkMode } = useTheme();
   const { addTask } = useTasks();
 
   const [title, setTitle] = useState('');
@@ -111,7 +112,8 @@ export const CreateTaskScreen: React.FC = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.background }]}>
+      <View style={[styles.header, { backgroundColor: colors.background }]}
+      >
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialIcons name="close" size={24} color={colors.text} />
         </TouchableOpacity>
@@ -121,32 +123,32 @@ export const CreateTaskScreen: React.FC = () => {
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Title */}
-        <Text style={styles.label}>Task Title</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Task Title</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
           placeholder="Enter task title"
-          placeholderTextColor="#9E9E9E"
+          placeholderTextColor={colors.textSecondary}
           value={title}
           onChangeText={setTitle}
         />
 
         {/* Location */}
-        <Text style={styles.label}>Location</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Location</Text>
         <TextInput
-          style={styles.input}
+          style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
           placeholder="Enter location"
-          placeholderTextColor="#9E9E9E"
+          placeholderTextColor={colors.textSecondary}
           value={spot}
           onChangeText={setSpot}
         />
 
         {/* Assignees */}
-        <Text style={styles.label}>Assignees</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Assignees</Text>
         <View style={styles.inputRow}>
           <TextInput
-            style={[styles.input, styles.inputFlex]}
+            style={[styles.input, styles.inputFlex, { backgroundColor: colors.surface, color: colors.text, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
             placeholder="Add an assignee"
-            placeholderTextColor="#9E9E9E"
+            placeholderTextColor={colors.textSecondary}
             value={assigneeInput}
             onChangeText={setAssigneeInput}
             onSubmitEditing={handleAddAssignee}
@@ -174,19 +176,20 @@ export const CreateTaskScreen: React.FC = () => {
         )}
 
         {/* Priority */}
-        <Text style={styles.label}>Priority</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Priority</Text>
         <TouchableOpacity
-          style={styles.dropdown}
+          style={[styles.dropdown, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
           onPress={() => setShowPriorityDropdown(!showPriorityDropdown)}
         >
           <View style={styles.priorityRow}>
             <View style={[styles.priorityDot, { backgroundColor: priorityColor(selectedPriority) }]} />
             <Text style={styles.dropdownText}>{selectedPriority}</Text>
           </View>
-          <MaterialIcons name="keyboard-arrow-down" size={24} color="#757575" />
+          <MaterialIcons name="keyboard-arrow-down" size={22} color={colors.textSecondary} />
         </TouchableOpacity>
         {showPriorityDropdown && (
-          <View style={styles.dropdownMenu}>
+          <View style={[styles.dropdownMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
+          >
             {priorities.map(priority => (
               <TouchableOpacity
                 key={priority}
@@ -197,19 +200,19 @@ export const CreateTaskScreen: React.FC = () => {
                 }}
               >
                 <View style={[styles.priorityDot, { backgroundColor: priorityColor(priority) }]} />
-                <Text style={styles.dropdownItemText}>{priority}</Text>
+                <Text style={[styles.dropdownItemText, { color: colors.text }]}>{priority}</Text>
               </TouchableOpacity>
             ))}
           </View>
         )}
 
         {/* Tags */}
-        <Text style={styles.label}>Tags</Text>
+        <Text style={[styles.label, { color: colors.text }]}>Tags</Text>
         <View style={styles.inputRow}>
           <TextInput
-            style={[styles.input, styles.inputFlex]}
+            style={[styles.input, styles.inputFlex, { backgroundColor: colors.surface, color: colors.text, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
             placeholder="Add a tag"
-            placeholderTextColor="#9E9E9E"
+            placeholderTextColor={colors.textSecondary}
             value={tagInput}
             onChangeText={setTagInput}
             onSubmitEditing={handleAddTag}
@@ -237,13 +240,14 @@ export const CreateTaskScreen: React.FC = () => {
         )}
 
         {/* Attachments */}
-        <Text style={styles.label}>Attachments</Text>
-        <View style={styles.attachmentsCard}>
+        <Text style={[styles.label, { color: colors.text }]}>Attachments</Text>
+        <View style={[styles.attachmentsCard, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
+        >
           {attachedImages.length === 0 ? (
             <View style={styles.emptyAttachments}>
               <MaterialIcons name="add-a-photo" size={48} color="#E0E0E0" />
               <Text style={styles.emptyText}>No attachments yet</Text>
-              <TouchableOpacity style={styles.addPhotoButton} onPress={showImageOptions}>
+              <TouchableOpacity style={[styles.addPhotoButton, { borderColor: primaryColor }]} onPress={showImageOptions}>
                 <MaterialIcons name="add" size={20} color={primaryColor} />
                 <Text style={[styles.addPhotoText, { color: primaryColor }]}>Add Photo</Text>
               </TouchableOpacity>
@@ -252,8 +256,8 @@ export const CreateTaskScreen: React.FC = () => {
             <>
               <View style={styles.attachmentsHeader}>
                 <View style={styles.attachmentsHeaderLeft}>
-                  <MaterialIcons name="photo-library" size={20} color="#616161" />
-                  <Text style={styles.attachmentsCount}>
+                  <MaterialIcons name="photo-library" size={20} color={colors.textSecondary} />
+                  <Text style={[styles.attachmentsCount, { color: colors.text }]}>
                     {attachedImages.length} photo{attachedImages.length !== 1 ? 's' : ''}
                   </Text>
                 </View>
@@ -280,7 +284,8 @@ export const CreateTaskScreen: React.FC = () => {
       </ScrollView>
 
       {/* Create Button */}
-      <View style={styles.footer}>
+      <View style={[styles.footer, { backgroundColor: colors.surface, borderTopColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
+      >
         <TouchableOpacity
           style={[styles.createButton, { backgroundColor: primaryColor }]}
           onPress={handleCreateTask}
@@ -305,29 +310,30 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    padding: spacing.md,
   },
   label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
     marginBottom: 8,
     marginTop: 20,
   },
   input: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    fontSize: 16,
-    color: '#212121',
+    fontSize: fontSizes.md,
+    color: '#1E2321',
+    fontFamily: fontFamilies.bodyMedium,
   },
   inputRow: {
     flexDirection: 'row',
@@ -340,7 +346,7 @@ const styles = StyleSheet.create({
   addButton: {
     width: 48,
     height: 48,
-    borderRadius: 12,
+    borderRadius: radius.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -352,7 +358,7 @@ const styles = StyleSheet.create({
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#F3EEE4',
     borderRadius: 16,
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -360,8 +366,9 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   chipText: {
-    fontSize: 14,
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
     marginRight: 4,
   },
   dropdown: {
@@ -369,7 +376,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
@@ -384,18 +392,16 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
   dropdownText: {
-    fontSize: 16,
-    color: '#212121',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
   },
   dropdownMenu: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.md,
+    borderWidth: 1,
     marginTop: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadows.subtle,
   },
   dropdownItem: {
     flexDirection: 'row',
@@ -404,12 +410,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   dropdownItemText: {
-    fontSize: 16,
-    color: '#212121',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
   },
   attachmentsCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.lg,
+    borderWidth: 1,
     padding: 16,
   },
   emptyAttachments: {
@@ -418,8 +426,9 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     marginTop: 8,
-    fontSize: 14,
-    color: '#9E9E9E',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#8B8E84',
   },
   addPhotoButton: {
     flexDirection: 'row',
@@ -433,8 +442,8 @@ const styles = StyleSheet.create({
   },
   addPhotoText: {
     marginLeft: 4,
-    fontSize: 14,
-    fontWeight: '500',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
   attachmentsHeader: {
     flexDirection: 'row',
@@ -448,9 +457,9 @@ const styles = StyleSheet.create({
   },
   attachmentsCount: {
     marginLeft: 8,
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
   },
   imagesGrid: {
     flexDirection: 'row',
@@ -479,23 +488,20 @@ const styles = StyleSheet.create({
   footer: {
     padding: 16,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 5,
+    borderTopWidth: 1,
+    ...shadows.subtle,
   },
   createButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 16,
-    borderRadius: 12,
+    borderRadius: radius.md,
   },
   createButtonText: {
     marginLeft: 8,
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
     color: '#FFFFFF',
   },
 });

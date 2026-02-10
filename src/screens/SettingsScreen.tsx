@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
+import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 export const SettingsScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -25,6 +26,11 @@ export const SettingsScreen: React.FC = () => {
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [autoBackup, setAutoBackup] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('English');
+
+  const cardStyle = [
+    styles.card,
+    { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' },
+  ];
 
   const showComingSoon = (feature: string) => {
     Alert.alert('Coming Soon', `${feature} coming soon`);
@@ -75,7 +81,7 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const SectionHeader = ({ title }: { title: string }) => (
-    <Text style={styles.sectionHeader}>{title}</Text>
+    <Text style={[styles.sectionHeader, { color: colors.textSecondary }]}>{title}</Text>
   );
 
   const ListTile = ({
@@ -96,10 +102,19 @@ export const SettingsScreen: React.FC = () => {
     iconColor?: string;
   }) => (
     <TouchableOpacity style={styles.listTile} onPress={onPress}>
-      <MaterialIcons name={icon} size={24} color={iconColor || '#616161'} />
+      <MaterialIcons name={icon} size={24} color={iconColor || colors.textSecondary} />
       <View style={styles.listTileContent}>
-        <Text style={[styles.listTileTitle, titleColor && { color: titleColor }]}>{title}</Text>
-        {subtitle && <Text style={styles.listTileSubtitle}>{subtitle}</Text>}
+        <Text
+          style={[
+            styles.listTileTitle,
+            { color: titleColor || colors.text },
+          ]}
+        >
+          {title}
+        </Text>
+        {subtitle && (
+          <Text style={[styles.listTileSubtitle, { color: colors.textSecondary }]}>{subtitle}</Text>
+        )}
       </View>
       {trailing}
     </TouchableOpacity>
@@ -121,11 +136,19 @@ export const SettingsScreen: React.FC = () => {
     enabled?: boolean;
   }) => (
     <View style={[styles.listTile, !enabled && styles.listTileDisabled]}>
-      <MaterialIcons name={icon} size={24} color={enabled ? '#616161' : '#BDBDBD'} />
+      <MaterialIcons name={icon} size={24} color={enabled ? colors.textSecondary : '#BDBDBD'} />
       <View style={styles.listTileContent}>
-        <Text style={[styles.listTileTitle, !enabled && styles.textDisabled]}>{title}</Text>
+        <Text style={[styles.listTileTitle, { color: colors.text }, !enabled && styles.textDisabled]}>{title}</Text>
         {subtitle && (
-          <Text style={[styles.listTileSubtitle, !enabled && styles.textDisabled]}>{subtitle}</Text>
+          <Text
+            style={[
+              styles.listTileSubtitle,
+              { color: colors.textSecondary },
+              !enabled && styles.textDisabled,
+            ]}
+          >
+            {subtitle}
+          </Text>
         )}
       </View>
       <Switch
@@ -152,14 +175,16 @@ export const SettingsScreen: React.FC = () => {
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Account Section */}
         <SectionHeader title="Account" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <TouchableOpacity style={styles.profileTile} onPress={() => showComingSoon('Profile editing')}>
-            <View style={styles.profileAvatar}>
+            <View style={[styles.profileAvatar, { backgroundColor: primaryColor }]}>
               <Text style={styles.profileInitials}>JD</Text>
             </View>
             <View style={styles.profileContent}>
-              <Text style={styles.profileName}>John Doe</Text>
-              <Text style={styles.profileSubtitle}>View and edit profile</Text>
+              <Text style={[styles.profileName, { color: colors.text }]}>John Doe</Text>
+              <Text style={[styles.profileSubtitle, { color: colors.textSecondary }]}>
+                View and edit profile
+              </Text>
             </View>
             <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />
           </TouchableOpacity>
@@ -183,7 +208,7 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Notifications Section */}
         <SectionHeader title="Notifications" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <SwitchTile
             icon="notifications"
             title="Enable Notifications"
@@ -231,7 +256,7 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Appearance Section */}
         <SectionHeader title="Appearance" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <SwitchTile
             icon={isDarkMode ? 'dark-mode' : 'light-mode'}
             title="Dark Mode"
@@ -259,7 +284,7 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Privacy & Security Section */}
         <SectionHeader title="Privacy & Security" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <SwitchTile
             icon="fingerprint"
             title="Biometric Login"
@@ -293,7 +318,7 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Data & Storage Section */}
         <SectionHeader title="Data & Storage" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <SwitchTile
             icon="backup"
             title="Auto Backup"
@@ -321,7 +346,7 @@ export const SettingsScreen: React.FC = () => {
 
         {/* Support Section */}
         <SectionHeader title="Support" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <ListTile
             icon="help-outline"
             title="Help Center"
@@ -353,7 +378,7 @@ export const SettingsScreen: React.FC = () => {
 
         {/* About Section */}
         <SectionHeader title="About" />
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <ListTile
             icon="info-outline"
             title="App Version"
@@ -377,7 +402,7 @@ export const SettingsScreen: React.FC = () => {
         </View>
 
         {/* Logout Button */}
-        <View style={[styles.card, { marginTop: 20 }]}>
+        <View style={[cardStyle, { marginTop: 20 }]}>
           <ListTile
             icon="logout"
             title="Logout"
@@ -405,8 +430,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
   },
   scrollView: {
     flex: 1,
@@ -415,8 +440,8 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   sectionHeader: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
     color: '#616161',
     letterSpacing: 0.5,
     marginBottom: 8,
@@ -425,8 +450,11 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    borderRadius: radius.lg,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E6E1D7',
+    ...shadows.subtle,
   },
   profileTile: {
     flexDirection: 'row',
@@ -443,8 +471,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   profileInitials: {
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyBold,
     color: '#FFFFFF',
   },
   profileContent: {
@@ -452,13 +480,14 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   profileName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#212121',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
   },
   profileSubtitle: {
-    fontSize: 14,
-    color: '#757575',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    color: '#6C746F',
     marginTop: 2,
   },
   listTile: {
@@ -475,13 +504,14 @@ const styles = StyleSheet.create({
     marginLeft: 16,
   },
   listTileTitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#212121',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
   },
   listTileSubtitle: {
-    fontSize: 13,
-    color: '#757575',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
+    color: '#6C746F',
     marginTop: 2,
   },
   textDisabled: {

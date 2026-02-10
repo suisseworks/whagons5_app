@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
 import { ThemeName } from '../models/types';
 import { themeMetadata, getLightTheme, getDarkTheme, getPrimaryColor } from '../config/themes';
+import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 export const ThemesScreen: React.FC = () => {
   const navigation = useNavigation();
@@ -120,8 +121,8 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
   },
   listContent: {
     padding: 16,
@@ -132,16 +133,12 @@ const styles = StyleSheet.create({
   },
   themeCard: {
     width: '48%',
-    borderRadius: 16,
+    borderRadius: radius.lg,
     padding: 16,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E0E0E0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    borderColor: '#E6E1D7',
+    ...shadows.subtle,
   },
   checkmarkContainer: {
     position: 'absolute',
@@ -151,19 +148,20 @@ const styles = StyleSheet.create({
   iconContainer: {
     width: 80,
     height: 80,
-    borderRadius: 16,
+    borderRadius: radius.md,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 8,
   },
   themeName: {
     marginTop: 16,
-    fontSize: 18,
-    fontWeight: '700',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
   },
   themeDescription: {
     marginTop: 4,
-    fontSize: 12,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
     textAlign: 'center',
   },
   colorDots: {
