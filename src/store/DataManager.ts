@@ -13,7 +13,7 @@
  *   const tasks = await dm.getTasks();    // read from local cache
  */
 
-import { buildBaseUrl, API_CONFIG } from '../config/api';
+import { buildBaseUrl, API_CONFIG, getTenantHeaders } from '../config/api';
 import * as DB from './database';
 
 // ---------------------------------------------------------------------------
@@ -291,6 +291,7 @@ export class DataManager {
           Accept: 'application/x-ndjson, application/json',
           'X-Requested-With': 'XMLHttpRequest',
           Authorization: `Bearer ${this.authToken}`,
+          ...getTenantHeaders(this.subdomain),
         },
         signal: controller.signal,
       });
@@ -396,6 +397,7 @@ export class DataManager {
       'Content-Type': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
       Authorization: `Bearer ${this.authToken}`,
+      ...getTenantHeaders(this.subdomain),
     };
   }
 

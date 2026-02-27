@@ -39,8 +39,8 @@
           "cameraPermission": "The app accesses your camera to let you take photos for tasks."
         }
       ],
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
+      "./node_modules/@react-native-firebase/app/app.plugin.js",
+      "./node_modules/@react-native-firebase/auth/app.plugin.js",
       "@react-native-google-signin/google-signin"
     ]
   }
