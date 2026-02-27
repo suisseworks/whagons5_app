@@ -183,11 +183,11 @@ export const MainScreen: React.FC = () => {
     return (
       <View style={styles.taskItemContainer}>
         {/* Swipe backgrounds */}
-        <View style={[styles.swipeBackground, styles.swipeBackgroundRight]}>
+        <View style={[styles.swipeBackground, styles.swipeBackgroundRight, isDarkMode && { backgroundColor: 'rgba(76, 175, 80, 0.15)' }]}>
           <MaterialIcons name="check" size={24} color="#4CAF50" />
           <Text style={styles.swipeText}>Mark done</Text>
         </View>
-        <View style={[styles.swipeBackground, styles.swipeBackgroundLeft]}>
+        <View style={[styles.swipeBackground, styles.swipeBackgroundLeft, isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' }]}>
           <Text style={[styles.swipeText, { color: '#2196F3' }]}>Assign</Text>
           <MaterialIcons name="person-add" size={24} color="#2196F3" />
         </View>

@@ -1,10 +1,10 @@
 export const fontFamilies = {
-  displaySemibold: 'Fraunces_600SemiBold',
-  displayBold: 'Fraunces_700Bold',
-  bodyRegular: 'Manrope_400Regular',
-  bodyMedium: 'Manrope_500Medium',
-  bodySemibold: 'Manrope_600SemiBold',
-  bodyBold: 'Manrope_700Bold',
+  displaySemibold: 'Montserrat_600SemiBold',
+  displayBold: 'Montserrat_700Bold',
+  bodyRegular: 'Montserrat_400Regular',
+  bodyMedium: 'Montserrat_500Medium',
+  bodySemibold: 'Montserrat_600SemiBold',
+  bodyBold: 'Montserrat_700Bold',
 };
 
 export const fontSizes = {
