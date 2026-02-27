@@ -11,10 +11,14 @@ import {
   Alert,
   Dimensions,
   RefreshControl,
+  TextInput,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -27,6 +31,14 @@ import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
 import { AppDrawer } from '../components/AppDrawer';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { getInitials } from '../utils/helpers';
+
+interface ColabMessage {
+  id: string;
+  author: string;
+  text: string;
+  time: string;
+}
 
 type MainScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Main'>;
 
@@ -45,6 +57,7 @@ const navItems: NavItem[] = [
 
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
+  const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const {
     tasks,
@@ -59,11 +72,37 @@ export const MainScreen: React.FC = () => {
     setSelectedWorkspace,
   } = useTasks();
 
-  const { isSyncing, refresh, syncError } = useData();
+  const { data, isSyncing, refresh, syncError } = useData();
 
   const [selectedNav, setSelectedNav] = useState(0);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
+  const [colabSpaceId, setColabSpaceId] = useState<number | null>(null);
+  const [colabMessages, setColabMessages] = useState<Map<number, ColabMessage[]>>(new Map());
+  const [colabInput, setColabInput] = useState('');
+  const chatScrollRef = useRef<ScrollView>(null);
+
+  const getSpaceMessages = (spaceId: number): ColabMessage[] => {
+    return colabMessages.get(spaceId) ?? [];
+  };
+
+  const handleSendMessage = () => {
+    if (!colabInput.trim() || colabSpaceId === null) return;
+    const msg: ColabMessage = {
+      id: String(Date.now()),
+      author: 'You',
+      text: colabInput.trim(),
+      time: 'Just now',
+    };
+    setColabMessages(prev => {
+      const next = new Map(prev);
+      const existing = next.get(colabSpaceId) ?? [];
+      next.set(colabSpaceId, [...existing, msg]);
+      return next;
+    });
+    setColabInput('');
+    setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
+  };
 
   const onRefresh = useCallback(async () => {
     await refresh();
@@ -199,6 +238,194 @@ export const MainScreen: React.FC = () => {
     );
   };
 
+  const renderColabSpaceChat = () => {
+    const space = data.workspaces.find(w => w.id === colabSpaceId);
+    if (!space) return null;
+    const messages = getSpaceMessages(space.id);
+    const cardBorder = isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7';
+
+    return (
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 0}
+      >
+        {/* Header */}
+        <View style={[styles.colabSpaceHeader, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' }]}>
+          <TouchableOpacity
+            style={styles.colabBackButton}
+            onPress={() => { setColabSpaceId(null); setColabInput(''); }}
+          >
+            <MaterialIcons name="arrow-back" size={22} color={colors.text} />
+          </TouchableOpacity>
+          <View
+            style={[
+              styles.colabSpaceHeaderIcon,
+              { backgroundColor: `${space.color || primaryColor}20` },
+            ]}
+          >
+            <MaterialIcons name="forum" size={18} color={space.color || primaryColor} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.colabSpaceHeaderTitle, { color: colors.text }]}>
+              {space.name}
+            </Text>
+            <Text style={[styles.colabSpaceHeaderSub, { color: colors.textSecondary }]}>
+              Space chat
+            </Text>
+          </View>
+        </View>
+
+        {/* Messages */}
+        <ScrollView
+          ref={chatScrollRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={[
+            styles.chatMessagesList,
+            messages.length === 0 && { flex: 1, justifyContent: 'center', alignItems: 'center' },
+          ]}
+          onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: false })}
+        >
+          {messages.length === 0 ? (
+            <View style={{ alignItems: 'center', padding: 32 }}>
+              <MaterialIcons name="chat-bubble-outline" size={48} color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D5CFC6'} />
+              <Text style={[styles.chatEmptyTitle, { color: colors.textSecondary }]}>
+                No messages yet
+              </Text>
+              <Text style={[styles.chatEmptySubtitle, { color: colors.textSecondary }]}>
+                Start the conversation with your team
+              </Text>
+            </View>
+          ) : (
+            messages.map((msg) => {
+              const isYou = msg.author === 'You';
+              return (
+                <View key={msg.id} style={styles.chatMessageItem}>
+                  <View style={[styles.chatAvatar, isYou && { backgroundColor: primaryColor }]}>
+                    <Text style={styles.chatAvatarText}>{getInitials(msg.author)}</Text>
+                  </View>
+                  <View style={styles.chatMessageContent}>
+                    <View style={styles.chatMessageHeader}>
+                      <Text style={[styles.chatAuthor, { color: colors.text }]}>{msg.author}</Text>
+                      <Text style={[styles.chatTime, { color: colors.textSecondary }]}>{msg.time}</Text>
+                    </View>
+                    <View style={[styles.chatBubble, { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#FFFFFF' }]}>
+                      <Text style={[styles.chatText, { color: colors.text }]}>{msg.text}</Text>
+                    </View>
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+
+        {/* Input */}
+        <View style={[styles.chatInputContainer, { backgroundColor: colors.surface, borderTopColor: cardBorder, paddingBottom: 16 + insets.bottom }]}>
+          <TextInput
+            style={[
+              styles.chatInput,
+              {
+                backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
+                color: colors.text,
+              },
+            ]}
+            placeholder="Message..."
+            placeholderTextColor={colors.textSecondary}
+            value={colabInput}
+            onChangeText={setColabInput}
+            onSubmitEditing={handleSendMessage}
+            returnKeyType="send"
+          />
+          <TouchableOpacity
+            style={[styles.chatSendButton, { backgroundColor: colabInput.trim() ? primaryColor : isDarkMode ? 'rgba(255,255,255,0.08)' : '#D5CFC6' }]}
+            onPress={handleSendMessage}
+            disabled={!colabInput.trim()}
+          >
+            <MaterialIcons name="send" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  };
+
+  const renderColabSpaceList = () => {
+    const spaceWorkspaces = data.workspaces;
+
+    return (
+      <FlatList
+        data={spaceWorkspaces}
+        keyExtractor={(item) => String(item.id)}
+        contentContainerStyle={styles.colabListContent}
+        ListHeaderComponent={
+          <View style={styles.colabListHeader}>
+            <Text style={[styles.listTitle, { color: colors.text }]}>Spaces</Text>
+            <Text style={[styles.listSubtitle, { color: colors.textSecondary }]}>
+              {spaceWorkspaces.length} {spaceWorkspaces.length === 1 ? 'space' : 'spaces'}
+            </Text>
+          </View>
+        }
+        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+        renderItem={({ item }) => (
+          <TouchableOpacity
+            style={[
+              styles.colabSpaceItem,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+              },
+            ]}
+            activeOpacity={0.7}
+            onPress={() => setColabSpaceId(item.id)}
+          >
+            <View
+              style={[
+                styles.colabSpaceIcon,
+                { backgroundColor: `${item.color || primaryColor}18` },
+              ]}
+            >
+              <MaterialIcons
+                name="forum"
+                size={22}
+                color={item.color || primaryColor}
+              />
+            </View>
+            <View style={styles.colabSpaceInfo}>
+              <Text style={[styles.colabSpaceName, { color: colors.text }]}>{item.name}</Text>
+              {item.description ? (
+                <Text
+                  style={[styles.colabSpaceDesc, { color: colors.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {item.description}
+                </Text>
+              ) : null}
+            </View>
+            <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
+          </TouchableOpacity>
+        )}
+        ListEmptyComponent={
+          <View style={styles.placeholderContainer}>
+            <MaterialIcons name="forum" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'} />
+            <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>
+              No spaces yet
+            </Text>
+            <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>
+              Spaces will appear here once they are created
+            </Text>
+          </View>
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncing}
+            onRefresh={onRefresh}
+            tintColor={primaryColor}
+            colors={[primaryColor]}
+          />
+        }
+      />
+    );
+  };
+
   const renderContent = () => {
     if (selectedNav === 0) {
       return (
@@ -221,20 +448,26 @@ export const MainScreen: React.FC = () => {
       );
     }
 
+    if (selectedNav === 1) {
+      if (colabSpaceId !== null) {
+        return renderColabSpaceChat();
+      }
+      return renderColabSpaceList();
+    }
+
     const placeholderData = [
-      { nav: 1, icon: 'chat-bubble-outline', title: 'Workspace Chat', subtitle: `Chat with your ${selectedWorkspace} team` },
       { nav: 2, icon: 'people-outline', title: 'Boards', subtitle: 'Communication boards coming soon' },
       { nav: 3, icon: 'cleaning-services', title: 'Cleaning', subtitle: 'Cleaning management coming soon' },
     ];
 
-    const data = placeholderData.find(d => d.nav === selectedNav);
-    if (!data) return null;
+    const phData = placeholderData.find(d => d.nav === selectedNav);
+    if (!phData) return null;
 
     return (
       <View style={styles.placeholderContainer}>
-        <MaterialIcons name={data.icon as any} size={64} color="#BDBDBD" />
-        <Text style={[styles.placeholderTitle, { color: colors.text }]}>{data.title}</Text>
-        <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>{data.subtitle}</Text>
+        <MaterialIcons name={phData.icon as any} size={64} color="#BDBDBD" />
+        <Text style={[styles.placeholderTitle, { color: colors.text }]}>{phData.title}</Text>
+        <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>{phData.subtitle}</Text>
         <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>Coming soon</Text>
       </View>
     );
@@ -311,55 +544,60 @@ export const MainScreen: React.FC = () => {
         {renderContent()}
       </View>
 
-      {/* Bottom Navigation */}
-      <View
-        style={[
-          styles.bottomBar,
-          {
-            backgroundColor: colors.surface,
-            borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
-          },
-        ]}
-      >
-        <View style={styles.bottomBarContent}>
-          {navItems.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.navItem}
-              onPress={() => setSelectedNav(index)}
-            >
-              <View style={styles.navIconContainer}>
-                <MaterialIcons
-                  name={item.icon}
-                  size={22}
-                  color={selectedNav === index ? primaryColor : (item.color || colors.textSecondary)}
-                />
-                {index === 2 && (
-                  <View style={styles.boardsBadge}>
-                    <Text style={styles.boardsBadgeText}>5</Text>
-                  </View>
-                )}
-              </View>
-              <Text
-                style={[
-                  styles.navLabel,
-                  { color: selectedNav === index ? primaryColor : colors.textSecondary },
-                ]}
-              >
-                {item.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* FAB */}
-        <TouchableOpacity
-          style={[styles.fab, { backgroundColor: primaryColor }]}
-          onPress={handleCreateTask}
+      {/* Bottom Navigation — hidden when inside a colab space chat */}
+      {!(selectedNav === 1 && colabSpaceId !== null) && (
+        <View
+          style={[
+            styles.bottomBar,
+            {
+              backgroundColor: colors.surface,
+              borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
+            },
+          ]}
         >
-          <MaterialIcons name="add" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+          <View style={styles.bottomBarContent}>
+            {navItems.map((item, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.navItem}
+                onPress={() => {
+                  setSelectedNav(index);
+                  if (index !== 1) setColabSpaceId(null);
+                }}
+              >
+                <View style={styles.navIconContainer}>
+                  <MaterialIcons
+                    name={item.icon}
+                    size={22}
+                    color={selectedNav === index ? primaryColor : (item.color || colors.textSecondary)}
+                  />
+                  {index === 2 && (
+                    <View style={styles.boardsBadge}>
+                      <Text style={styles.boardsBadgeText}>5</Text>
+                    </View>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    styles.navLabel,
+                    { color: selectedNav === index ? primaryColor : colors.textSecondary },
+                  ]}
+                >
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* FAB */}
+          <TouchableOpacity
+            style={[styles.fab, { backgroundColor: primaryColor }]}
+            onPress={handleCreateTask}
+          >
+            <MaterialIcons name="add" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Drawer Modal */}
       <Modal
@@ -675,5 +913,151 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: '#212121',
     fontFamily: fontFamilies.bodyMedium,
+  },
+  // Colab space list
+  colabListContent: {
+    padding: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  colabListHeader: {
+    marginBottom: spacing.sm,
+  },
+  colabSpaceItem: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    padding: 14,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+  },
+  colabSpaceIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+    marginRight: 14,
+  },
+  colabSpaceInfo: {
+    flex: 1,
+  },
+  colabSpaceName: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  colabSpaceDesc: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
+  },
+  // Colab space chat header
+  colabSpaceHeader: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.06)',
+  },
+  colabBackButton: {
+    padding: 6,
+    marginRight: 8,
+  },
+  colabSpaceHeaderIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: radius.sm,
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+    marginRight: 10,
+  },
+  colabSpaceHeaderTitle: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  colabSpaceHeaderSub: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 1,
+  },
+  // Colab chat messages
+  chatMessagesList: {
+    padding: spacing.md,
+  },
+  chatEmptyTitle: {
+    marginTop: 12,
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  chatEmptySubtitle: {
+    marginTop: 4,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    textAlign: 'center' as const,
+  },
+  chatMessageItem: {
+    flexDirection: 'row' as const,
+    marginBottom: 16,
+  },
+  chatAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#BDBDBD',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+  },
+  chatAvatarText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#FFFFFF',
+  },
+  chatMessageContent: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  chatMessageHeader: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+  },
+  chatAuthor: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  chatTime: {
+    marginLeft: 8,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  chatBubble: {
+    marginTop: 4,
+    borderRadius: radius.md,
+    padding: 12,
+  },
+  chatText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  chatInputContainer: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    padding: 16,
+    borderTopWidth: 1,
+    ...shadows.subtle,
+  },
+  chatInput: {
+    flex: 1,
+    borderRadius: radius.pill,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  chatSendButton: {
+    marginLeft: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
   },
 });
