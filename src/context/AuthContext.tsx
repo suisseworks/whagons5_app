@@ -22,7 +22,7 @@ import React, {
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { buildBaseUrl, buildLandlordUrl } from '../config/api';
+import { API_CONFIG, buildBaseUrl, buildLandlordUrl, getTenantHeaders } from '../config/api';
 import {
   signInWithGoogle as fbSignInWithGoogle,
   signInWithEmail as fbSignInWithEmail,
@@ -147,27 +147,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       // Step 1: POST to landlord
       const landlordUrl = buildLandlordUrl();
-      const resp = await fetch(`${landlordUrl}/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ token: firebaseIdToken }),
-      });
+      const loginUrl = `${landlordUrl}/login`;
+      console.log('[AUTH] ====== Backend Login Start ======');
+      console.log('[AUTH] API_CONFIG:', JSON.stringify(API_CONFIG));
+      console.log('[AUTH] Landlord login URL:', loginUrl);
+      console.log('[AUTH] Firebase token (first 20 chars):', firebaseIdToken.substring(0, 20) + '...');
 
-      // Step 2: Handle 225 – tenant redirect
-      if (resp.status === 225) {
-        const data = await resp.json();
-        const tenant: string = data.tenant; // e.g. "mycompany.localhost:8000"
-        if (!tenant) throw new Error('No tenant in 225 response');
-
-        // Extract subdomain prefix (everything before the first dot)
-        const domainPrefix = tenant.split('.')[0];
-
-        // Retry login on the tenant subdomain
-        const tenantUrl = buildBaseUrl(domainPrefix);
-        const tenantResp = await fetch(`${tenantUrl}/login`, {
+      let resp: Response;
+      try {
+        resp = await fetch(loginUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -175,19 +163,65 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           },
           body: JSON.stringify({ token: firebaseIdToken }),
         });
+        console.log('[AUTH] Landlord response status:', resp.status);
+        console.log('[AUTH] Landlord response headers:', JSON.stringify(Object.fromEntries(resp.headers.entries())));
+      } catch (fetchError: any) {
+        console.error('[AUTH] Landlord fetch FAILED:', fetchError?.message);
+        console.error('[AUTH] Fetch error type:', fetchError?.constructor?.name);
+        console.error('[AUTH] Fetch error details:', JSON.stringify(fetchError, Object.getOwnPropertyNames(fetchError)));
+        throw new Error(`Network request failed. Could not reach ${loginUrl}. Check that the backend is running and accessible. (${fetchError?.message})`);
+      }
+
+      // Step 2: Handle 225 – tenant redirect
+      if (resp.status === 225) {
+        const data = await resp.json();
+        console.log('[AUTH] 225 response data:', JSON.stringify(data));
+        const tenant: string = data.tenant; // e.g. "mycompany.localhost:8000"
+        if (!tenant) throw new Error('No tenant in 225 response');
+
+        // Extract subdomain prefix (everything before the first dot)
+        const domainPrefix = tenant.split('.')[0];
+        console.log('[AUTH] Tenant domain:', tenant, '-> prefix:', domainPrefix);
+
+        // Retry login on the tenant subdomain
+        const tenantUrl = buildBaseUrl(domainPrefix);
+        const tenantLoginUrl = `${tenantUrl}/login`;
+        console.log('[AUTH] Tenant login URL:', tenantLoginUrl);
+
+        let tenantResp: Response;
+        try {
+          tenantResp = await fetch(tenantLoginUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+              ...getTenantHeaders(domainPrefix),
+            },
+            body: JSON.stringify({ token: firebaseIdToken }),
+          });
+          console.log('[AUTH] Tenant response status:', tenantResp.status);
+        } catch (fetchError: any) {
+          console.error('[AUTH] Tenant fetch FAILED:', fetchError?.message);
+          console.error('[AUTH] Tenant fetch error details:', JSON.stringify(fetchError, Object.getOwnPropertyNames(fetchError)));
+          throw new Error(`Network request failed on tenant login. Could not reach ${tenantLoginUrl}. (${fetchError?.message})`);
+        }
 
         if (!tenantResp.ok) {
           const body = await tenantResp.text();
+          console.error('[AUTH] Tenant login error body:', body);
           throw new Error(`Tenant login failed (${tenantResp.status}): ${body}`);
         }
 
         const tenantData = await tenantResp.json();
+        console.log('[AUTH] Tenant login success, keys:', Object.keys(tenantData));
         const token: string =
           tenantData.token ?? tenantData.access_token ?? tenantData.data?.token;
         if (!token) throw new Error('No token in tenant login response');
 
         // Fetch user info
+        console.log('[AUTH] Fetching user info for subdomain:', domainPrefix);
         const user = await fetchUserInfo(domainPrefix, token);
+        console.log('[AUTH] User info received:', user?.email);
 
         // Persist
         await Promise.all([
@@ -196,12 +230,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user)),
         ]);
 
+        console.log('[AUTH] ====== Login Complete (tenant) ======');
         setState({ isLoading: false, token, subdomain: domainPrefix, user });
         return;
       }
 
       // Step 3: Handle 200 on landlord – user exists but may not have a tenant
       if (resp.ok) {
+        console.log('[AUTH] Landlord returned 200 (no tenant redirect)');
         const data = await resp.json();
         const token: string =
           data.token ?? data.access_token ?? data.data?.token;
@@ -221,9 +257,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Any other error
       const body = await resp.text();
+      console.error('[AUTH] Unexpected response:', resp.status, body);
       throw new Error(`Login failed (${resp.status}): ${body}`);
     } finally {
       loginInProgress.current = false;
+      console.log('[AUTH] ====== Backend Login End ======');
     }
   };
 
@@ -240,6 +278,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       headers: {
         Accept: 'application/json',
         Authorization: `Bearer ${token}`,
+        ...getTenantHeaders(subdomain),
       },
     });
 

@@ -1,5 +1,5 @@
 import { TaskModel } from '../models/types';
-import { buildBaseUrl } from '../config/api';
+import { buildBaseUrl, getTenantHeaders } from '../config/api';
 
 interface ApiClientConfig {
   baseUrl: string;
@@ -28,6 +28,7 @@ export class ApiClient {
   private getHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...getTenantHeaders(this.subdomain),
     };
     if (this.authToken) {
       headers['Authorization'] = `Bearer ${this.authToken}`;
