@@ -8,6 +8,7 @@ import { ThemeProvider } from './src/context/ThemeContext';
 import { AuthProvider } from './src/context/AuthContext';
 import { DataProvider } from './src/context/DataContext';
 import { TaskProvider } from './src/context/TaskContext';
+import { NotificationProvider } from './src/context/NotificationContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 
 export default function App() {
@@ -31,12 +32,14 @@ export default function App() {
       <SafeAreaProvider>
         <AuthProvider>
           <DataProvider>
-            <ThemeProvider>
-              <TaskProvider>
-                <StatusBar style="auto" />
-                <AppNavigator />
-              </TaskProvider>
-            </ThemeProvider>
+            <NotificationProvider>
+              <ThemeProvider>
+                <TaskProvider>
+                  <StatusBar style="auto" />
+                  <AppNavigator />
+                </TaskProvider>
+              </ThemeProvider>
+            </NotificationProvider>
           </DataProvider>
         </AuthProvider>
       </SafeAreaProvider>

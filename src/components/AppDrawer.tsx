@@ -15,6 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList } from '../models/types';
 import { quotes, inspirationalImages, getDailyIndex } from '../utils/helpers';
 import { clearAllData } from '../store/database';
@@ -29,8 +30,9 @@ interface AppDrawerProps {
 export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
-  const { compactCards, toggleCompactCards, notificationCount } = useTasks();
+  const { compactCards, toggleCompactCards } = useTasks();
   const { logout, user } = useAuth();
+  const { unreadCount: notificationCount } = useNotifications();
 
   const quoteIndex = getDailyIndex(quotes.length);
   const imageIndex = getDailyIndex(inspirationalImages.length);

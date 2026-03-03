@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,87 +11,67 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
-import { useTasks } from '../context/TaskContext';
-import { NotificationItem } from '../models/types';
+import { useNotifications, AppNotification } from '../context/NotificationContext';
 import { formatTimestamp } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
-
-const initialNotifications: NotificationItem[] = [
-  {
-    id: '1',
-    title: 'Task assigned to you',
-    message: 'Alex assigned "Check HVAC filters" to you',
-    timestamp: new Date(Date.now() - 15 * 60 * 1000),
-    isRead: false,
-    icon: 'assignment-turned-in',
-    color: '#2196F3',
-  },
-  {
-    id: '2',
-    title: 'SLA breach warning',
-    message: 'Task "Test emergency lights" is approaching SLA deadline',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    isRead: false,
-    icon: 'warning',
-    color: '#FF9800',
-  },
-  {
-    id: '3',
-    title: 'Task approved',
-    message: 'Your task "Service elevator A" has been approved',
-    timestamp: new Date(Date.now() - 5 * 60 * 60 * 1000),
-    isRead: true,
-    icon: 'check-circle',
-    color: '#4CAF50',
-  },
-  {
-    id: '4',
-    title: 'New comment',
-    message: 'Priya commented on "Inspect sprinklers"',
-    timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    isRead: true,
-    icon: 'comment',
-    color: '#9C27B0',
-  },
-  {
-    id: '5',
-    title: 'Task completed',
-    message: 'Sam marked "Grease door hinges" as done',
-    timestamp: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-    isRead: true,
-    icon: 'done-all',
-    color: '#009688',
-  },
-];
 
 export const NotificationsScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { setNotificationCount } = useTasks();
-  const [notifications, setNotifications] = useState<NotificationItem[]>(initialNotifications);
+  const {
+    notifications,
+    unreadCount,
+    markAsRead,
+    markAllAsRead,
+    clearAll,
+    hasPermission,
+  } = useNotifications();
 
+  // Mark all as read after a brief delay when viewing the screen
   useEffect(() => {
-    // Mark all as read after 500ms
-    const timer = setTimeout(() => {
-      setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
-      setNotificationCount(0);
-    }, 500);
-
-    return () => clearTimeout(timer);
+    if (unreadCount > 0) {
+      const timer = setTimeout(() => {
+        markAllAsRead();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
   }, []);
 
-  const handleNotificationPress = (notification: NotificationItem) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === notification.id ? { ...n, isRead: true } : n))
-    );
-    Alert.alert('Opening', notification.title);
+  const handleNotificationPress = (notification: AppNotification) => {
+    markAsRead(notification.id);
+
+    // Navigate based on notification type
+    const type = notification.type || notification.data?.type;
+    if (type === 'task' || type === 'assignment' || type === 'sla' || type === 'approval') {
+      // Could navigate to task detail if taskId is in data
+      Alert.alert(notification.title, notification.message);
+    } else if (type === 'message' || type === 'chat') {
+      // Could navigate to the relevant chat
+      Alert.alert(notification.title, notification.message);
+    } else {
+      Alert.alert(notification.title, notification.message);
+    }
   };
 
-  const renderNotification = ({ item }: { item: NotificationItem }) => (
+  const handleClearAll = () => {
+    Alert.alert(
+      'Clear All',
+      'Remove all notifications?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Clear', style: 'destructive', onPress: clearAll },
+      ],
+    );
+  };
+
+  const renderNotification = ({ item }: { item: AppNotification }) => (
     <TouchableOpacity
       style={[
         styles.notificationCard,
-        { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' },
+        {
+          backgroundColor: colors.surface,
+          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
+        },
         !item.isRead && {
           backgroundColor: isDarkMode ? 'rgba(63, 143, 140, 0.18)' : '#EAF1F1',
           borderColor: isDarkMode ? 'rgba(63, 143, 140, 0.3)' : '#D7E7E4',
@@ -106,14 +86,23 @@ export const NotificationsScreen: React.FC = () => {
       <View style={styles.notificationContent}>
         <View style={styles.notificationHeader}>
           <Text
-            style={[styles.notificationTitle, !item.isRead && styles.notificationTitleUnread]}
+            style={[
+              styles.notificationTitle,
+              { color: colors.text },
+              !item.isRead && styles.notificationTitleUnread,
+            ]}
             numberOfLines={1}
           >
             {item.title}
           </Text>
-          {!item.isRead && <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />}
+          {!item.isRead && (
+            <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
+          )}
         </View>
-        <Text style={[styles.notificationMessage, { color: colors.textSecondary }]} numberOfLines={2}>
+        <Text
+          style={[styles.notificationMessage, { color: colors.textSecondary }]}
+          numberOfLines={2}
+        >
           {item.message}
         </Text>
         <Text style={[styles.notificationTime, { color: colors.textSecondary }]}>
@@ -125,28 +114,65 @@ export const NotificationsScreen: React.FC = () => {
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
-      <MaterialIcons name="notifications-none" size={64} color="#BDBDBD" />
-      <Text style={styles.emptyTitle}>No notifications</Text>
-      <Text style={styles.emptySubtitle}>You're all caught up!</Text>
+      <MaterialIcons
+        name={hasPermission ? 'notifications-none' : 'notifications-off'}
+        size={64}
+        color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#BDBDBD'}
+      />
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>
+        {hasPermission ? 'No notifications' : 'Notifications disabled'}
+      </Text>
+      <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+        {hasPermission
+          ? "You're all caught up!"
+          : 'Enable notifications in Settings to receive alerts'}
+      </Text>
     </View>
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
+    <SafeAreaView
+      style={[styles.container, { backgroundColor: colors.background }]}
+      edges={['top', 'bottom']}
+    >
       {/* Header */}
       <View style={[styles.header, { backgroundColor: primaryColor }]}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Notifications</Text>
-        <View style={{ width: 24 }} />
+        {notifications.length > 0 ? (
+          <TouchableOpacity onPress={handleClearAll}>
+            <MaterialIcons name="delete-outline" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 24 }} />
+        )}
       </View>
+
+      {/* Unread badge */}
+      {unreadCount > 0 && (
+        <TouchableOpacity
+          style={[styles.unreadBanner, { backgroundColor: `${primaryColor}15` }]}
+          onPress={markAllAsRead}
+        >
+          <Text style={[styles.unreadBannerText, { color: primaryColor }]}>
+            {unreadCount} unread notification{unreadCount !== 1 ? 's' : ''}
+          </Text>
+          <Text style={[styles.unreadBannerAction, { color: primaryColor }]}>
+            Mark all read
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <FlatList
         data={notifications}
         renderItem={renderNotification}
         keyExtractor={item => item.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[
+          styles.listContent,
+          notifications.length === 0 && { flex: 1 },
+        ]}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         ListEmptyComponent={renderEmpty}
       />
@@ -170,6 +196,22 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.displaySemibold,
     color: '#FFFFFF',
   },
+  unreadBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  unreadBannerText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  unreadBannerAction: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    textDecorationLine: 'underline',
+  },
   listContent: {
     padding: 16,
     flexGrow: 1,
@@ -179,12 +221,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.lg,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E6E1D7',
     ...shadows.subtle,
-  },
-  notificationCardUnread: {
-    backgroundColor: '#EAF1F1',
-    borderColor: '#D7E7E4',
   },
   iconContainer: {
     width: 48,
@@ -206,7 +243,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#1E2321',
   },
   notificationTitleUnread: {
     fontFamily: fontFamilies.bodyBold,
@@ -238,12 +274,12 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
-    color: '#6C746F',
   },
   emptySubtitle: {
     marginTop: 8,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyRegular,
-    color: '#8B8E84',
+    textAlign: 'center',
+    paddingHorizontal: 32,
   },
 });

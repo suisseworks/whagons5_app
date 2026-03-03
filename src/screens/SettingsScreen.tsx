@@ -12,17 +12,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
+import { useNotifications } from '../context/NotificationContext';
+import { useAuth } from '../context/AuthContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 export const SettingsScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, primaryColor, isDarkMode, toggleDarkMode } = useTheme();
+  const { preferences, updatePreferences, hasPermission } = useNotifications();
+  const { user } = useAuth();
 
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [emailNotifications, setEmailNotifications] = useState(false);
-  const [pushNotifications, setPushNotifications] = useState(true);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [vibrationEnabled, setVibrationEnabled] = useState(true);
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [autoBackup, setAutoBackup] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('English');
@@ -178,10 +177,12 @@ export const SettingsScreen: React.FC = () => {
         <View style={cardStyle}>
           <TouchableOpacity style={styles.profileTile} onPress={() => showComingSoon('Profile editing')}>
             <View style={[styles.profileAvatar, { backgroundColor: primaryColor }]}>
-              <Text style={styles.profileInitials}>JD</Text>
+              <Text style={styles.profileInitials}>
+                {user?.name ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?'}
+              </Text>
             </View>
             <View style={styles.profileContent}>
-              <Text style={[styles.profileName, { color: colors.text }]}>John Doe</Text>
+              <Text style={[styles.profileName, { color: colors.text }]}>{user?.name || 'User'}</Text>
               <Text style={[styles.profileSubtitle, { color: colors.textSecondary }]}>
                 View and edit profile
               </Text>
@@ -192,7 +193,7 @@ export const SettingsScreen: React.FC = () => {
           <ListTile
             icon="email"
             title="Email"
-            subtitle="user@whagons.com"
+            subtitle={user?.email || 'Not set'}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Email settings')}
           />
@@ -212,45 +213,45 @@ export const SettingsScreen: React.FC = () => {
           <SwitchTile
             icon="notifications"
             title="Enable Notifications"
-            subtitle="Receive all notifications"
-            value={notificationsEnabled}
-            onValueChange={setNotificationsEnabled}
+            subtitle={hasPermission ? 'Receive all notifications' : 'Permission not granted'}
+            value={preferences.enabled}
+            onValueChange={(val) => updatePreferences({ enabled: val })}
           />
           <View style={styles.divider} />
           <SwitchTile
             icon="notifications-active"
             title="Push Notifications"
             subtitle="Alert on new tasks"
-            value={pushNotifications}
-            onValueChange={setPushNotifications}
-            enabled={notificationsEnabled}
+            value={preferences.pushEnabled}
+            onValueChange={(val) => updatePreferences({ pushEnabled: val })}
+            enabled={preferences.enabled}
           />
           <View style={styles.divider} />
           <SwitchTile
             icon="email"
             title="Email Notifications"
             subtitle="Daily task summary"
-            value={emailNotifications}
-            onValueChange={setEmailNotifications}
-            enabled={notificationsEnabled}
+            value={preferences.emailEnabled}
+            onValueChange={(val) => updatePreferences({ emailEnabled: val })}
+            enabled={preferences.enabled}
           />
           <View style={styles.divider} />
           <SwitchTile
             icon="volume-up"
             title="Sound"
             subtitle="Notification sounds"
-            value={soundEnabled}
-            onValueChange={setSoundEnabled}
-            enabled={notificationsEnabled}
+            value={preferences.soundEnabled}
+            onValueChange={(val) => updatePreferences({ soundEnabled: val })}
+            enabled={preferences.enabled}
           />
           <View style={styles.divider} />
           <SwitchTile
             icon="vibration"
             title="Vibration"
             subtitle="Vibrate on notifications"
-            value={vibrationEnabled}
-            onValueChange={setVibrationEnabled}
-            enabled={notificationsEnabled}
+            value={preferences.vibrationEnabled}
+            onValueChange={(val) => updatePreferences({ vibrationEnabled: val })}
+            enabled={preferences.enabled}
           />
         </View>
 

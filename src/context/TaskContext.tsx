@@ -112,14 +112,12 @@ interface TaskContextType {
   tasks: TaskItem[];
   activeTask: TaskItem | null;
   compactCards: boolean;
-  notificationCount: number;
   selectedWorkspace: string;
   workspaces: string[];
   addTask: (task: TaskItem) => void;
   updateTask: (index: number, task: TaskItem) => void;
   setActiveTask: (task: TaskItem | null, markDone?: boolean) => void;
   toggleCompactCards: () => void;
-  setNotificationCount: (count: number) => void;
   setSelectedWorkspace: (workspace: string) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
@@ -132,7 +130,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const [activeTask, setActiveTaskState] = useState<TaskItem | null>(null);
   const [compactCards, setCompactCards] = useState(false);
-  const [notificationCount, setNotificationCount] = useState(0);
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   // Local overrides for optimistic mutations (keyed by task id)
   const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
@@ -283,14 +280,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         tasks,
         activeTask,
         compactCards,
-        notificationCount,
         selectedWorkspace,
         workspaces,
         addTask,
         updateTask,
         setActiveTask,
         toggleCompactCards,
-        setNotificationCount,
         setSelectedWorkspace,
         markTaskDone,
         assignTaskToYou,
