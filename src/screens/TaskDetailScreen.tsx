@@ -8,13 +8,14 @@ import {
   TextInput,
   Image,
   Alert,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
-import { useTasks } from '../context/TaskContext';
+import { useTasks, StatusOption } from '../context/TaskContext';
 import { RootStackParamList, Comment, ChecklistItem } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
@@ -28,10 +29,14 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { setActiveTask, markTaskDone } = useTasks();
+  const { setActiveTask, getAllowedStatuses, changeTaskStatus } = useTasks();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
   const [activeTab, setActiveTab] = useState<'details' | 'checklist' | 'comments'>('details');
+  const [statusPickerVisible, setStatusPickerVisible] = useState(false);
+  // Track local status so changes reflect immediately on this screen
+  const [currentStatus, setCurrentStatus] = useState(task.status);
+  const [currentStatusColor, setCurrentStatusColor] = useState(task.statusColor);
   const [commentText, setCommentText] = useState('');
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
 
@@ -53,10 +58,11 @@ export const TaskDetailScreen: React.FC = () => {
     Alert.alert('Started', `Now working on "${task.title}"`);
   };
 
-  const handleMarkDone = () => {
-    markTaskDone(task.id || '');
-    navigation.goBack();
-    Alert.alert('Done', 'Task marked as done');
+  const handleStatusChange = (status: StatusOption) => {
+    changeTaskStatus(task.id || '', status);
+    setCurrentStatus(status.name);
+    setCurrentStatusColor(status.color);
+    setStatusPickerVisible(false);
   };
 
   const handleAddComment = () => {
@@ -121,8 +127,12 @@ export const TaskDetailScreen: React.FC = () => {
       <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
 
       <View style={styles.statusRow}>
-        <CustomChip label={task.status} color={statusColor(task.status)} />
-        <View style={{ width: 8 }} />
+        {currentStatus !== '' && (
+          <TouchableOpacity onPress={() => setStatusPickerVisible(true)} activeOpacity={0.7}>
+            <CustomChip label={currentStatus} color={statusColor(currentStatus, currentStatusColor)} />
+          </TouchableOpacity>
+        )}
+        {currentStatus !== '' && <View style={{ width: 8 }} />}
         <CustomChip label={task.priority} color={priorityColor(task.priority)} />
       </View>
 
@@ -396,15 +406,89 @@ export const TaskDetailScreen: React.FC = () => {
             <Text style={styles.actionButtonText}>Start Working</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.actionButton, styles.doneButton]}
-            onPress={handleMarkDone}
-          >
-            <MaterialIcons name="check-circle-outline" size={20} color="#43A047" />
-            <Text style={[styles.actionButtonText, { color: '#43A047' }]}>Mark Done</Text>
-          </TouchableOpacity>
+          {getAllowedStatuses(task).length > 0 && (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.doneButton, { borderColor: statusColor(currentStatus, currentStatusColor) }]}
+              onPress={() => setStatusPickerVisible(true)}
+            >
+              <MaterialIcons name="swap-horiz" size={20} color={statusColor(currentStatus, currentStatusColor)} />
+              <Text style={[styles.actionButtonText, { color: statusColor(currentStatus, currentStatusColor) }]}>
+                Status
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
+
+      {/* Status Picker Modal */}
+      <Modal
+        visible={statusPickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setStatusPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setStatusPickerVisible(false)}
+        >
+          <View
+            style={[
+              styles.statusPickerSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: cardBorder,
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
+              Change Status
+            </Text>
+            <View style={styles.statusPickerList}>
+              {getAllowedStatuses(task).map((s) => {
+                const isCurrentStatus = currentStatus === s.name;
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[
+                      styles.statusPickerItem,
+                      {
+                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
+                      },
+                      isCurrentStatus && {
+                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                      },
+                    ]}
+                    onPress={() => handleStatusChange(s)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.statusPickerDot,
+                        { backgroundColor: s.color || '#9E9E9E' },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusPickerItemText,
+                        { color: colors.text },
+                        isCurrentStatus && { fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                    >
+                      {s.name}
+                    </Text>
+                    {isCurrentStatus && (
+                      <MaterialIcons name="check" size={20} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -619,7 +703,6 @@ const styles = StyleSheet.create({
   doneButton: {
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#43A047',
   },
   actionButtonText: {
     marginLeft: 8,
@@ -726,5 +809,55 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  statusPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'flex-end' as const,
+  },
+  statusPickerSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingTop: 12,
+    paddingBottom: 32,
+    paddingHorizontal: 20,
+    ...shadows.subtle,
+  },
+  statusPickerHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1CBC0',
+    alignSelf: 'center' as const,
+    marginBottom: 16,
+  },
+  statusPickerTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+    marginBottom: 16,
+  },
+  statusPickerList: {
+    gap: 2,
+  },
+  statusPickerItem: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    borderBottomWidth: 1,
+  },
+  statusPickerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 12,
+  },
+  statusPickerItemText: {
+    flex: 1,
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
   },
 });

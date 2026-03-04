@@ -73,6 +73,25 @@ export interface SyncedCategory {
   id: number;
   name: string;
   color?: string | null;
+  status_transition_group_id?: number | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedStatusTransitionGroup {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_default?: boolean;
+  is_active?: boolean;
+  [key: string]: unknown;
+}
+
+export interface SyncedStatusTransition {
+  id: number;
+  status_transition_group_id: number;
+  from_status: number;
+  to_status: number;
+  initial?: boolean;
   [key: string]: unknown;
 }
 
@@ -121,6 +140,8 @@ export interface SyncedData {
   statuses: SyncedStatus[];
   priorities: SyncedPriority[];
   categories: SyncedCategory[];
+  statusTransitionGroups: SyncedStatusTransitionGroup[];
+  statusTransitions: SyncedStatusTransition[];
   spots: SyncedSpot[];
   users: SyncedUser[];
   teams: SyncedTeam[];
@@ -148,6 +169,8 @@ const EMPTY_DATA: SyncedData = {
   statuses: [],
   priorities: [],
   categories: [],
+  statusTransitionGroups: [],
+  statusTransitions: [],
   spots: [],
   users: [],
   teams: [],
@@ -193,6 +216,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         statuses,
         priorities,
         categories,
+        statusTransitionGroups,
+        statusTransitions,
         spots,
         users,
         teams,
@@ -205,6 +230,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedStatus>('wh_statuses'),
         DB.getAllRows<SyncedPriority>('wh_priorities'),
         DB.getAllRows<SyncedCategory>('wh_categories'),
+        DB.getAllRows<SyncedStatusTransitionGroup>('wh_status_transition_groups'),
+        DB.getAllRows<SyncedStatusTransition>('wh_status_transitions'),
         DB.getAllRows<SyncedSpot>('wh_spots'),
         DB.getAllRows<SyncedUser>('wh_users'),
         DB.getAllRows<SyncedTeam>('wh_teams'),
@@ -218,6 +245,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         statuses,
         priorities,
         categories,
+        statusTransitionGroups,
+        statusTransitions,
         spots,
         users,
         teams,

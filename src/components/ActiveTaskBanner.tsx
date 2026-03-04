@@ -8,12 +8,14 @@ import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens
 
 interface ActiveTaskBannerProps {
   task: TaskItem;
+  doneLabel?: string;
   onDone: () => void;
   onClear: () => void;
 }
 
 export const ActiveTaskBanner: React.FC<ActiveTaskBannerProps> = ({
   task,
+  doneLabel,
   onDone,
   onClear,
 }) => {
@@ -26,7 +28,7 @@ export const ActiveTaskBanner: React.FC<ActiveTaskBannerProps> = ({
         styles.container,
         {
           backgroundColor: colors.surface,
-          borderLeftColor: statusColor(task.status),
+          borderLeftColor: statusColor(task.status, task.statusColor),
           borderColor,
         },
       ]}
@@ -38,9 +40,11 @@ export const ActiveTaskBanner: React.FC<ActiveTaskBannerProps> = ({
           {task.title}
         </Text>
       </View>
-      <TouchableOpacity onPress={onDone} style={styles.button}>
-        <Text style={[styles.buttonText, { color: primaryColor }]}>Done</Text>
-      </TouchableOpacity>
+      {doneLabel && (
+        <TouchableOpacity onPress={onDone} style={styles.button}>
+          <Text style={[styles.buttonText, { color: primaryColor }]}>{doneLabel}</Text>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity onPress={onClear} style={styles.closeButton}>
         <MaterialIcons name="close" size={22} color={colors.textSecondary} />
       </TouchableOpacity>

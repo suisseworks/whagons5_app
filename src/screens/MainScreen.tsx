@@ -15,7 +15,7 @@ import {
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -29,6 +29,7 @@ import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
 import { AppDrawer } from '../components/AppDrawer';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 
 type MainScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Main'>;
 
@@ -54,18 +55,32 @@ export const MainScreen: React.FC = () => {
     compactCards,
     selectedWorkspace,
     workspaces,
+    workspaceObjects,
+    finalStatus,
+    getAllowedStatuses,
     setActiveTask,
-    markTaskDone,
+    changeTaskStatus,
     assignTaskToYou,
     setSelectedWorkspace,
   } = useTasks();
 
   const { isSyncing, refresh, syncError } = useData();
+
+  // Build workspace lookup by name for icon/color access
+  const workspaceLookup = useMemo(() => {
+    const map = new Map<string, { icon?: string | null; color?: string | null }>();
+    for (const ws of workspaceObjects) {
+      map.set(ws.name, { icon: ws.icon, color: ws.color });
+    }
+    return map;
+  }, [workspaceObjects]);
   const { unreadCount: notificationCount } = useNotifications();
 
   const [selectedNav, setSelectedNav] = useState(0);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
+  const [statusPickerVisible, setStatusPickerVisible] = useState(false);
+  const [statusPickerTask, setStatusPickerTask] = useState<TaskItem | null>(null);
   const [colabInChat, setColabInChat] = useState(false);
 
   const onRefresh = useCallback(async () => {
@@ -105,9 +120,17 @@ export const MainScreen: React.FC = () => {
   };
 
   const handleSwipeRight = (task: TaskItem) => {
-    // Mark as done
-    markTaskDone(task.id || '');
-    Alert.alert('Done', 'Marked as done');
+    // Open status picker
+    setStatusPickerTask(task);
+    setStatusPickerVisible(true);
+  };
+
+  const handleStatusSelect = (status: { id: number; name: string; color: string | null }) => {
+    if (statusPickerTask?.id) {
+      changeTaskStatus(statusPickerTask.id, status);
+    }
+    setStatusPickerVisible(false);
+    setStatusPickerTask(null);
   };
 
   const SwipeableTaskItem = ({ item }: { item: TaskItem }) => {
@@ -147,9 +170,9 @@ export const MainScreen: React.FC = () => {
     return (
       <View style={styles.taskItemContainer}>
         {/* Swipe backgrounds */}
-        <View style={[styles.swipeBackground, styles.swipeBackgroundRight, isDarkMode && { backgroundColor: 'rgba(76, 175, 80, 0.15)' }]}>
-          <MaterialIcons name="check" size={24} color="#4CAF50" />
-          <Text style={styles.swipeText}>Mark done</Text>
+        <View style={[styles.swipeBackground, styles.swipeBackgroundRight, isDarkMode && { backgroundColor: 'rgba(156, 163, 175, 0.15)' }]}>
+          <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
+          <Text style={[styles.swipeText, { color: primaryColor }]}>Status</Text>
         </View>
         <View style={[styles.swipeBackground, styles.swipeBackgroundLeft, isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' }]}>
           <Text style={[styles.swipeText, { color: '#2196F3' }]}>Assign</Text>
@@ -275,6 +298,21 @@ export const MainScreen: React.FC = () => {
           ]}
           onPress={() => setWorkspaceMenuVisible(true)}
         >
+          {(() => {
+            const selWs = workspaceLookup.get(selectedWorkspace);
+            const selColor = selWs?.color || DEFAULT_WORKSPACE_COLOR;
+            const { name: selIconName, solid: selSolid } = parseWorkspaceIcon(selWs?.icon);
+            const isEverything = selectedWorkspace === 'Everything';
+            return (
+              <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : selColor, marginRight: 6 }]}>
+                {isEverything ? (
+                  <MaterialIcons name="layers" size={12} color="#FFFFFF" />
+                ) : (
+                  <FontAwesome5 name={selIconName} size={11} color="#FFFFFF" solid={selSolid} />
+                )}
+              </View>
+            );
+          })()}
           <Text style={[styles.workspaceText, { color: colors.text }]}>
             {selectedWorkspace}
           </Text>
@@ -310,6 +348,7 @@ export const MainScreen: React.FC = () => {
         <View style={styles.bannerContainer}>
           <ActiveTaskBanner
             task={activeTask}
+            doneLabel={finalStatus?.name}
             onDone={() => setActiveTask(null, true)}
             onClear={() => setActiveTask(null)}
           />
@@ -408,26 +447,127 @@ export const MainScreen: React.FC = () => {
         >
           <View style={[styles.workspaceMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7' }]}
           >
-            {workspaces.map((workspace, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.workspaceMenuItem}
-                onPress={() => {
-                  setSelectedWorkspace(workspace);
-                  setWorkspaceMenuVisible(false);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.workspaceMenuText,
-                    { color: colors.text },
-                    workspace === selectedWorkspace && { color: primaryColor, fontFamily: fontFamilies.bodySemibold },
-                  ]}
+            {workspaces.map((workspace, index) => {
+              const wsData = workspaceLookup.get(workspace);
+              const wsColor = wsData?.color || DEFAULT_WORKSPACE_COLOR;
+              const { name: iconName, solid } = parseWorkspaceIcon(wsData?.icon);
+              const isEverything = workspace === 'Everything';
+              const isSelected = workspace === selectedWorkspace;
+
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.workspaceMenuItem}
+                  onPress={() => {
+                    setSelectedWorkspace(workspace);
+                    setWorkspaceMenuVisible(false);
+                  }}
                 >
-                  {workspace}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <View style={styles.workspaceMenuItemRow}>
+                    <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : wsColor }]}>
+                      {isEverything ? (
+                        <MaterialIcons name="layers" size={12} color="#FFFFFF" />
+                      ) : (
+                        <FontAwesome5 name={iconName} size={11} color="#FFFFFF" solid={solid} />
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.workspaceMenuText,
+                        { color: colors.text },
+                        isSelected && { color: primaryColor, fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                    >
+                      {workspace}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Status Picker Modal */}
+      <Modal
+        visible={statusPickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setStatusPickerVisible(false);
+          setStatusPickerTask(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setStatusPickerVisible(false);
+            setStatusPickerTask(null);
+          }}
+        >
+          <View
+            style={[
+              styles.statusPickerSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
+              Change Status
+            </Text>
+            {statusPickerTask && (
+              <Text
+                style={[styles.statusPickerSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {statusPickerTask.title}
+              </Text>
+            )}
+            <View style={styles.statusPickerList}>
+              {(statusPickerTask ? getAllowedStatuses(statusPickerTask) : []).map((s) => {
+                const isCurrentStatus = statusPickerTask?.status === s.name;
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[
+                      styles.statusPickerItem,
+                      {
+                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
+                      },
+                      isCurrentStatus && {
+                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                      },
+                    ]}
+                    onPress={() => handleStatusSelect(s)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.statusPickerDot,
+                        { backgroundColor: s.color || '#9E9E9E' },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusPickerItemText,
+                        { color: colors.text },
+                        isCurrentStatus && { fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                    >
+                      {s.name}
+                    </Text>
+                    {isCurrentStatus && (
+                      <MaterialIcons name="check" size={20} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -552,7 +692,7 @@ const styles = StyleSheet.create({
   swipeBackgroundRight: {
     left: 0,
     right: '50%',
-    backgroundColor: '#E1EFE6',
+    backgroundColor: '#EDE9E1',
   },
   swipeBackgroundLeft: {
     right: 0,
@@ -564,7 +704,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#4CAF50',
   },
   placeholderContainer: {
     flex: 1,
@@ -683,11 +822,78 @@ const styles = StyleSheet.create({
   },
   workspaceMenuItem: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
+  },
+  workspaceMenuItemRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 10,
+  },
+  workspaceIconBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   workspaceMenuText: {
     fontSize: fontSizes.md,
     color: '#212121',
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  statusPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'flex-end' as const,
+  },
+  statusPickerSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingTop: 12,
+    paddingBottom: 32,
+    paddingHorizontal: 20,
+    ...shadows.subtle,
+  },
+  statusPickerHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1CBC0',
+    alignSelf: 'center' as const,
+    marginBottom: 16,
+  },
+  statusPickerTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+    marginBottom: 4,
+  },
+  statusPickerSubtitle: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    marginBottom: 16,
+  },
+  statusPickerList: {
+    gap: 2,
+  },
+  statusPickerItem: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    borderBottomWidth: 1,
+  },
+  statusPickerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 12,
+  },
+  statusPickerItemText: {
+    flex: 1,
+    fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
   },
 });

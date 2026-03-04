@@ -8,9 +8,9 @@
  * before the first sync.
  */
 
-import React, { createContext, useContext, useState, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useMemo, useCallback, ReactNode } from 'react';
 import { TaskItem } from '../models/types';
-import { useData, SyncedTask } from './DataContext';
+import { useData, SyncedTask, SyncedWorkspace } from './DataContext';
 
 // ---------------------------------------------------------------------------
 // Helpers – map synced backend data → UI TaskItem
@@ -29,19 +29,15 @@ function mapPriority(
   return 'Medium';
 }
 
-function mapStatus(
+function resolveStatus(
   statusId: number | null | undefined,
-  statusMap: Map<number, { name: string; final?: boolean; initial?: boolean }>,
-): TaskItem['status'] {
-  if (!statusId) return 'Open';
+  statusMap: Map<number, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
+  initialStatus: { name: string; color: string | null } | null,
+): { name: string; color: string | null } {
+  if (!statusId) return initialStatus ?? { name: '', color: null };
   const s = statusMap.get(statusId);
-  if (!s) return 'Open';
-  const name = s.name.toLowerCase();
-  if (s.final || name.includes('done') || name.includes('complet') || name.includes('cerr')) return 'Done';
-  if (name.includes('progress') || name.includes('curso')) return 'In progress';
-  if (name.includes('block') || name.includes('bloq')) return 'Blocked';
-  if (name.includes('schedul') || name.includes('program')) return 'Scheduled';
-  return 'Open';
+  if (!s) return initialStatus ?? { name: '', color: null };
+  return { name: s.name, color: s.color ?? null };
 }
 
 function formatDate(dateStr?: string | null): string {
@@ -67,16 +63,21 @@ function mapTaskToItem(
   task: SyncedTask,
   spotMap: Map<number, string>,
   priorityMap: Map<number, { name: string; color?: string | null }>,
-  statusMap: Map<number, { name: string; final?: boolean; initial?: boolean }>,
+  statusMap: Map<number, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
   assigneeMap: Map<number, string[]>, // taskId → list of user names
   tagMap: Map<number, string[]>,      // taskId → list of tag names
+  initialStatus: { name: string; color: string | null } | null,
 ): TaskItem {
+  const status = resolveStatus(task.status_id, statusMap, initialStatus);
   return {
     id: String(task.id),
     title: task.name || 'Untitled',
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
     priority: mapPriority(task.priority_id, priorityMap),
-    status: mapStatus(task.status_id, statusMap),
+    status: status.name,
+    statusColor: status.color,
+    statusId: task.status_id ?? null,
+    categoryId: task.category_id ?? null,
     assignees: assigneeMap.get(task.id) ?? [],
     createdAt: formatDate(task.created_at),
     tags: tagMap.get(task.id) ?? [],
@@ -95,7 +96,7 @@ const staticTasks: TaskItem[] = [
     title: 'Syncing data...',
     spot: '',
     priority: 'Medium',
-    status: 'Open',
+    status: '',
     assignees: [],
     createdAt: '',
     tags: [],
@@ -108,17 +109,31 @@ const staticTasks: TaskItem[] = [
 // Context interface (unchanged from the original)
 // ---------------------------------------------------------------------------
 
+export interface StatusOption {
+  id: number;
+  name: string;
+  color: string | null;
+  initial?: boolean;
+  final?: boolean;
+}
+
 interface TaskContextType {
   tasks: TaskItem[];
   activeTask: TaskItem | null;
   compactCards: boolean;
   selectedWorkspace: string;
   workspaces: string[];
+  workspaceObjects: SyncedWorkspace[];
+  statuses: StatusOption[];
+  initialStatus: { name: string; color: string | null } | null;
+  finalStatus: { name: string; color: string | null } | null;
+  getAllowedStatuses: (task: TaskItem) => StatusOption[];
   addTask: (task: TaskItem) => void;
   updateTask: (index: number, task: TaskItem) => void;
   setActiveTask: (task: TaskItem | null, markDone?: boolean) => void;
   toggleCompactCards: () => void;
   setSelectedWorkspace: (workspace: string) => void;
+  changeTaskStatus: (taskId: string, status: StatusOption) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
 }
@@ -148,8 +163,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [data.priorities]);
 
   const statusMap = useMemo(() => {
-    const m = new Map<number, { name: string; final?: boolean; initial?: boolean }>();
-    for (const s of data.statuses) m.set(s.id, { name: s.name, final: s.final, initial: s.initial });
+    const m = new Map<number, { name: string; color?: string | null; final?: boolean; initial?: boolean }>();
+    for (const s of data.statuses) m.set(s.id, { name: s.name, color: s.color, final: s.final, initial: s.initial });
     return m;
   }, [data.statuses]);
 
@@ -187,18 +202,91 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.taskTags, tagNameMap]);
 
-  // Build workspace list
+  // Build workspace list (names for backward compat) + full objects
   const workspaces = useMemo(() => {
     const names = data.workspaces.map((w) => w.name);
     return ['Everything', ...names];
   }, [data.workspaces]);
+
+  const workspaceObjects = useMemo(() => {
+    return data.workspaces;
+  }, [data.workspaces]);
+
+  // Expose all statuses as a flat list for the status picker
+  const statuses: StatusOption[] = useMemo(() => {
+    return data.statuses.map((s) => ({
+      id: s.id,
+      name: s.name,
+      color: s.color ?? null,
+      initial: s.initial,
+      final: s.final,
+    }));
+  }, [data.statuses]);
+
+  // Resolve the initial (default) and final (done) statuses from backend data
+  const initialStatus = useMemo(() => {
+    for (const s of data.statuses) {
+      if (s.initial) return { name: s.name, color: s.color ?? null };
+    }
+    return null;
+  }, [data.statuses]);
+
+  const finalStatus = useMemo(() => {
+    for (const s of data.statuses) {
+      if (s.final) return { name: s.name, color: s.color ?? null };
+    }
+    return null;
+  }, [data.statuses]);
+
+  // Category → transition group mapping
+  const categoryTransitionGroupMap = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const c of data.categories) {
+      if (c.status_transition_group_id) m.set(c.id, c.status_transition_group_id);
+    }
+    return m;
+  }, [data.categories]);
+
+  // Transition lookup: (groupId, fromStatusId) → Set<toStatusId>
+  const transitionMap = useMemo(() => {
+    const m = new Map<string, Set<number>>();
+    for (const t of data.statusTransitions) {
+      const key = `${t.status_transition_group_id}:${t.from_status}`;
+      let set = m.get(key);
+      if (!set) {
+        set = new Set();
+        m.set(key, set);
+      }
+      set.add(t.to_status);
+    }
+    return m;
+  }, [data.statusTransitions]);
+
+  // Given a task, return the list of statuses it can transition to
+  const getAllowedStatuses = useCallback((task: TaskItem): StatusOption[] => {
+    const categoryId = task.categoryId;
+    const statusId = task.statusId;
+
+    // If no category or no current status, can't look up transitions
+    if (!categoryId || !statusId) return statuses;
+
+    const groupId = categoryTransitionGroupMap.get(categoryId);
+    if (!groupId) return statuses; // no transition group → show all
+
+    const key = `${groupId}:${statusId}`;
+    const allowedIds = transitionMap.get(key);
+    if (!allowedIds || allowedIds.size === 0) return statuses; // no transitions defined → show all
+
+    // Include the current status + all allowed target statuses
+    return statuses.filter((s) => s.id === statusId || allowedIds.has(s.id));
+  }, [statuses, categoryTransitionGroupMap, transitionMap]);
 
   // Map synced tasks → TaskItem[]
   const tasks = useMemo(() => {
     if (data.tasks.length === 0) return staticTasks;
 
     let mapped = data.tasks.map((t) =>
-      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap),
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus),
     );
 
     // Apply local overrides
@@ -223,7 +311,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return mapped;
-  }, [data.tasks, data.workspaces, spotMap, priorityMap, statusMap, assigneeMap, tagMap, selectedWorkspace, localOverrides]);
+  }, [data.tasks, data.workspaces, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, selectedWorkspace, localOverrides]);
 
   // ---- Mutations (optimistic, client-side only for now) --------------------
 
@@ -242,10 +330,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const setActiveTask = (task: TaskItem | null, markDone = false) => {
-    if (markDone && activeTask?.id) {
+    if (markDone && activeTask?.id && finalStatus) {
       setLocalOverrides((prev) => {
         const next = new Map(prev);
-        next.set(activeTask.id!, { status: 'Done' });
+        next.set(activeTask.id!, { status: finalStatus.name, statusColor: finalStatus.color });
         return next;
       });
     }
@@ -254,10 +342,19 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const toggleCompactCards = () => setCompactCards((p) => !p);
 
-  const markTaskDone = (taskId: string) => {
+  const changeTaskStatus = (taskId: string, status: StatusOption) => {
     setLocalOverrides((prev) => {
       const next = new Map(prev);
-      next.set(taskId, { status: 'Done' });
+      next.set(taskId, { status: status.name, statusColor: status.color });
+      return next;
+    });
+  };
+
+  const markTaskDone = (taskId: string) => {
+    if (!finalStatus) return;
+    setLocalOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
       return next;
     });
     if (activeTask?.id === taskId) setActiveTaskState(null);
@@ -282,11 +379,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         compactCards,
         selectedWorkspace,
         workspaces,
+        workspaceObjects,
+        statuses,
+        initialStatus,
+        finalStatus,
+        getAllowedStatuses,
         addTask,
         updateTask,
         setActiveTask,
         toggleCompactCards,
         setSelectedWorkspace,
+        changeTaskStatus,
         markTaskDone,
         assignTaskToYou,
       }}
