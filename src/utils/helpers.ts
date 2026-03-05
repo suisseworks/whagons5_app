@@ -1,3 +1,30 @@
+// Parse FontAwesome class string from backend (e.g. "fas fa-broom") into
+// a name usable by @expo/vector-icons FontAwesome5 and a solid/regular flag.
+export const parseWorkspaceIcon = (
+  iconStr?: string | null,
+): { name: string; solid: boolean } => {
+  if (!iconStr) return { name: 'building', solid: false };
+
+  // Extract prefix (fas/far/fab) and icon name (fa-xxx)
+  const parts = iconStr.trim().split(/\s+/);
+  let solid = true;
+  let name = 'building';
+
+  for (const part of parts) {
+    if (part === 'far') solid = false;
+    else if (part === 'fas') solid = true;
+    else if (part === 'fab') solid = false;
+    else if (part.startsWith('fa-')) {
+      name = part.replace('fa-', '');
+    }
+  }
+
+  return { name, solid };
+};
+
+// Default workspace color fallback
+export const DEFAULT_WORKSPACE_COLOR = '#3b82f6';
+
 // Priority color helper
 export const priorityColor = (priority: string): string => {
   switch (priority.toLowerCase()) {
@@ -10,20 +37,12 @@ export const priorityColor = (priority: string): string => {
   }
 };
 
-// Status color helper
-export const statusColor = (status: string): string => {
-  switch (status.toLowerCase()) {
-    case 'in progress':
-      return '#42A5F5'; // Colors.blue.shade500
-    case 'scheduled':
-      return '#AB47BC'; // Colors.purple.shade400
-    case 'blocked':
-      return '#EF5350'; // Colors.red.shade400
-    case 'done':
-      return '#43A047'; // Colors.green.shade600
-    default:
-      return '#9E9E9E'; // Colors.grey.shade500
-  }
+// Status color helper – prefers the backend-provided color, falls back to a
+// sensible default based on the status name.
+export const statusColor = (status: string, backendColor?: string | null): string => {
+  if (backendColor) return backendColor;
+  // Fallback for statuses without a backend color
+  return '#9E9E9E';
 };
 
 // Format timestamp for notifications

@@ -11,34 +11,25 @@ import {
   Alert,
   Dimensions,
   RefreshControl,
-  TextInput,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
+import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList, TaskItem } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
 import { AppDrawer } from '../components/AppDrawer';
+import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
-import { getInitials } from '../utils/helpers';
-
-interface ColabMessage {
-  id: string;
-  author: string;
-  text: string;
-  time: string;
-}
+import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 
 type MainScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Main'>;
 
@@ -57,52 +48,40 @@ const navItems: NavItem[] = [
 
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
-  const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const {
     tasks,
     activeTask,
     compactCards,
-    notificationCount,
     selectedWorkspace,
     workspaces,
+    workspaceObjects,
+    finalStatus,
+    getAllowedStatuses,
     setActiveTask,
-    markTaskDone,
+    changeTaskStatus,
     assignTaskToYou,
     setSelectedWorkspace,
   } = useTasks();
 
-  const { data, isSyncing, refresh, syncError } = useData();
+  const { isSyncing, refresh, syncError } = useData();
+
+  // Build workspace lookup by name for icon/color access
+  const workspaceLookup = useMemo(() => {
+    const map = new Map<string, { icon?: string | null; color?: string | null }>();
+    for (const ws of workspaceObjects) {
+      map.set(ws.name, { icon: ws.icon, color: ws.color });
+    }
+    return map;
+  }, [workspaceObjects]);
+  const { unreadCount: notificationCount } = useNotifications();
 
   const [selectedNav, setSelectedNav] = useState(0);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
-  const [colabSpaceId, setColabSpaceId] = useState<number | null>(null);
-  const [colabMessages, setColabMessages] = useState<Map<number, ColabMessage[]>>(new Map());
-  const [colabInput, setColabInput] = useState('');
-  const chatScrollRef = useRef<ScrollView>(null);
-
-  const getSpaceMessages = (spaceId: number): ColabMessage[] => {
-    return colabMessages.get(spaceId) ?? [];
-  };
-
-  const handleSendMessage = () => {
-    if (!colabInput.trim() || colabSpaceId === null) return;
-    const msg: ColabMessage = {
-      id: String(Date.now()),
-      author: 'You',
-      text: colabInput.trim(),
-      time: 'Just now',
-    };
-    setColabMessages(prev => {
-      const next = new Map(prev);
-      const existing = next.get(colabSpaceId) ?? [];
-      next.set(colabSpaceId, [...existing, msg]);
-      return next;
-    });
-    setColabInput('');
-    setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 100);
-  };
+  const [statusPickerVisible, setStatusPickerVisible] = useState(false);
+  const [statusPickerTask, setStatusPickerTask] = useState<TaskItem | null>(null);
+  const [colabInChat, setColabInChat] = useState(false);
 
   const onRefresh = useCallback(async () => {
     await refresh();
@@ -141,9 +120,17 @@ export const MainScreen: React.FC = () => {
   };
 
   const handleSwipeRight = (task: TaskItem) => {
-    // Mark as done
-    markTaskDone(task.id || '');
-    Alert.alert('Done', 'Marked as done');
+    // Open status picker
+    setStatusPickerTask(task);
+    setStatusPickerVisible(true);
+  };
+
+  const handleStatusSelect = (status: { id: number; name: string; color: string | null }) => {
+    if (statusPickerTask?.id) {
+      changeTaskStatus(statusPickerTask.id, status);
+    }
+    setStatusPickerVisible(false);
+    setStatusPickerTask(null);
   };
 
   const SwipeableTaskItem = ({ item }: { item: TaskItem }) => {
@@ -183,11 +170,11 @@ export const MainScreen: React.FC = () => {
     return (
       <View style={styles.taskItemContainer}>
         {/* Swipe backgrounds */}
-        <View style={[styles.swipeBackground, styles.swipeBackgroundRight]}>
-          <MaterialIcons name="check" size={24} color="#4CAF50" />
-          <Text style={styles.swipeText}>Mark done</Text>
+        <View style={[styles.swipeBackground, styles.swipeBackgroundRight, isDarkMode && { backgroundColor: 'rgba(156, 163, 175, 0.15)' }]}>
+          <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
+          <Text style={[styles.swipeText, { color: primaryColor }]}>Status</Text>
         </View>
-        <View style={[styles.swipeBackground, styles.swipeBackgroundLeft]}>
+        <View style={[styles.swipeBackground, styles.swipeBackgroundLeft, isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' }]}>
           <Text style={[styles.swipeText, { color: '#2196F3' }]}>Assign</Text>
           <MaterialIcons name="person-add" size={24} color="#2196F3" />
         </View>
@@ -232,193 +219,9 @@ export const MainScreen: React.FC = () => {
     );
   };
 
-  const renderColabSpaceChat = () => {
-    const space = data.workspaces.find(w => w.id === colabSpaceId);
-    if (!space) return null;
-    const messages = getSpaceMessages(space.id);
-    const cardBorder = isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7';
-
-    return (
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 140 : 0}
-      >
-        {/* Header */}
-        <View style={[styles.colabSpaceHeader, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' }]}>
-          <TouchableOpacity
-            style={styles.colabBackButton}
-            onPress={() => { setColabSpaceId(null); setColabInput(''); }}
-          >
-            <MaterialIcons name="arrow-back" size={22} color={colors.text} />
-          </TouchableOpacity>
-          <View
-            style={[
-              styles.colabSpaceHeaderIcon,
-              { backgroundColor: `${space.color || primaryColor}20` },
-            ]}
-          >
-            <MaterialIcons name="forum" size={18} color={space.color || primaryColor} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.colabSpaceHeaderTitle, { color: colors.text }]}>
-              {space.name}
-            </Text>
-            <Text style={[styles.colabSpaceHeaderSub, { color: colors.textSecondary }]}>
-              Space chat
-            </Text>
-          </View>
-        </View>
-
-        {/* Messages */}
-        <ScrollView
-          ref={chatScrollRef}
-          style={{ flex: 1 }}
-          contentContainerStyle={[
-            styles.chatMessagesList,
-            messages.length === 0 && { flex: 1, justifyContent: 'center', alignItems: 'center' },
-          ]}
-          onContentSizeChange={() => chatScrollRef.current?.scrollToEnd({ animated: false })}
-        >
-          {messages.length === 0 ? (
-            <View style={{ alignItems: 'center', padding: 32 }}>
-              <MaterialIcons name="chat-bubble-outline" size={48} color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D5CFC6'} />
-              <Text style={[styles.chatEmptyTitle, { color: colors.textSecondary }]}>
-                No messages yet
-              </Text>
-              <Text style={[styles.chatEmptySubtitle, { color: colors.textSecondary }]}>
-                Start the conversation with your team
-              </Text>
-            </View>
-          ) : (
-            messages.map((msg) => {
-              const isYou = msg.author === 'You';
-              return (
-                <View key={msg.id} style={styles.chatMessageItem}>
-                  <View style={[styles.chatAvatar, isYou && { backgroundColor: primaryColor }]}>
-                    <Text style={styles.chatAvatarText}>{getInitials(msg.author)}</Text>
-                  </View>
-                  <View style={styles.chatMessageContent}>
-                    <View style={styles.chatMessageHeader}>
-                      <Text style={[styles.chatAuthor, { color: colors.text }]}>{msg.author}</Text>
-                      <Text style={[styles.chatTime, { color: colors.textSecondary }]}>{msg.time}</Text>
-                    </View>
-                    <View style={[styles.chatBubble, { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#FFFFFF' }]}>
-                      <Text style={[styles.chatText, { color: colors.text }]}>{msg.text}</Text>
-                    </View>
-                  </View>
-                </View>
-              );
-            })
-          )}
-        </ScrollView>
-
-        {/* Input */}
-        <View style={[styles.chatInputContainer, { backgroundColor: colors.surface, borderTopColor: cardBorder, paddingBottom: 16 + insets.bottom }]}>
-          <TextInput
-            style={[
-              styles.chatInput,
-              {
-                backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
-                color: colors.text,
-              },
-            ]}
-            placeholder="Message..."
-            placeholderTextColor={colors.textSecondary}
-            value={colabInput}
-            onChangeText={setColabInput}
-            onSubmitEditing={handleSendMessage}
-            returnKeyType="send"
-          />
-          <TouchableOpacity
-            style={[styles.chatSendButton, { backgroundColor: colabInput.trim() ? primaryColor : isDarkMode ? 'rgba(255,255,255,0.08)' : '#D5CFC6' }]}
-            onPress={handleSendMessage}
-            disabled={!colabInput.trim()}
-          >
-            <MaterialIcons name="send" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  };
-
-  const renderColabSpaceList = () => {
-    const spaceWorkspaces = data.workspaces;
-
-    return (
-      <FlatList
-        data={spaceWorkspaces}
-        keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={styles.colabListContent}
-        ListHeaderComponent={
-          <View style={styles.colabListHeader}>
-            <Text style={[styles.listTitle, { color: colors.text }]}>Spaces</Text>
-            <Text style={[styles.listSubtitle, { color: colors.textSecondary }]}>
-              {spaceWorkspaces.length} {spaceWorkspaces.length === 1 ? 'space' : 'spaces'}
-            </Text>
-          </View>
-        }
-        ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[
-              styles.colabSpaceItem,
-              {
-                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
-              },
-            ]}
-            activeOpacity={0.7}
-            onPress={() => setColabSpaceId(item.id)}
-          >
-            <View
-              style={[
-                styles.colabSpaceIcon,
-                { backgroundColor: `${item.color || primaryColor}18` },
-              ]}
-            >
-              <MaterialIcons
-                name="forum"
-                size={22}
-                color={item.color || primaryColor}
-              />
-            </View>
-            <View style={styles.colabSpaceInfo}>
-              <Text style={[styles.colabSpaceName, { color: colors.text }]}>{item.name}</Text>
-              {item.description ? (
-                <Text
-                  style={[styles.colabSpaceDesc, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {item.description}
-                </Text>
-              ) : null}
-            </View>
-            <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
-          </TouchableOpacity>
-        )}
-        ListEmptyComponent={
-          <View style={styles.placeholderContainer}>
-            <MaterialIcons name="forum" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'} />
-            <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>
-              No spaces yet
-            </Text>
-            <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>
-              Spaces will appear here once they are created
-            </Text>
-          </View>
-        }
-        refreshControl={
-          <RefreshControl
-            refreshing={isSyncing}
-            onRefresh={onRefresh}
-            tintColor={primaryColor}
-            colors={[primaryColor]}
-          />
-        }
-      />
-    );
-  };
+  const handleColabChatViewChange = useCallback((isInChat: boolean) => {
+    setColabInChat(isInChat);
+  }, []);
 
   // Filter boards: exclude soft-deleted
   const boards = useMemo(() => {
@@ -533,10 +336,7 @@ export const MainScreen: React.FC = () => {
     }
 
     if (selectedNav === 1) {
-      if (colabSpaceId !== null) {
-        return renderColabSpaceChat();
-      }
-      return renderColabSpaceList();
+      return <ColabScreen onChatViewChange={handleColabChatViewChange} />;
     }
 
     if (selectedNav === 2) {
@@ -586,6 +386,21 @@ export const MainScreen: React.FC = () => {
           ]}
           onPress={() => setWorkspaceMenuVisible(true)}
         >
+          {(() => {
+            const selWs = workspaceLookup.get(selectedWorkspace);
+            const selColor = selWs?.color || DEFAULT_WORKSPACE_COLOR;
+            const { name: selIconName, solid: selSolid } = parseWorkspaceIcon(selWs?.icon);
+            const isEverything = selectedWorkspace === 'Everything';
+            return (
+              <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : selColor, marginRight: 6 }]}>
+                {isEverything ? (
+                  <MaterialIcons name="layers" size={12} color="#FFFFFF" />
+                ) : (
+                  <FontAwesome5 name={selIconName} size={11} color="#FFFFFF" solid={selSolid} />
+                )}
+              </View>
+            );
+          })()}
           <Text style={[styles.workspaceText, { color: colors.text }]}>
             {selectedWorkspace}
           </Text>
@@ -602,7 +417,7 @@ export const MainScreen: React.FC = () => {
 
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => setDrawerVisible(true)}
+            onPress={() => navigation.navigate('Settings')}
           >
             <MaterialIcons name="account-circle" size={24} color={colors.textSecondary} />
             {notificationCount > 0 && (
@@ -621,6 +436,7 @@ export const MainScreen: React.FC = () => {
         <View style={styles.bannerContainer}>
           <ActiveTaskBanner
             task={activeTask}
+            doneLabel={finalStatus?.name}
             onDone={() => setActiveTask(null, true)}
             onClear={() => setActiveTask(null)}
           />
@@ -714,26 +530,127 @@ export const MainScreen: React.FC = () => {
         >
           <View style={[styles.workspaceMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7' }]}
           >
-            {workspaces.map((workspace, index) => (
-              <TouchableOpacity
-                key={index}
-                style={styles.workspaceMenuItem}
-                onPress={() => {
-                  setSelectedWorkspace(workspace);
-                  setWorkspaceMenuVisible(false);
-                }}
-              >
-                <Text
-                  style={[
-                    styles.workspaceMenuText,
-                    { color: colors.text },
-                    workspace === selectedWorkspace && { color: primaryColor, fontFamily: fontFamilies.bodySemibold },
-                  ]}
+            {workspaces.map((workspace, index) => {
+              const wsData = workspaceLookup.get(workspace);
+              const wsColor = wsData?.color || DEFAULT_WORKSPACE_COLOR;
+              const { name: iconName, solid } = parseWorkspaceIcon(wsData?.icon);
+              const isEverything = workspace === 'Everything';
+              const isSelected = workspace === selectedWorkspace;
+
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.workspaceMenuItem}
+                  onPress={() => {
+                    setSelectedWorkspace(workspace);
+                    setWorkspaceMenuVisible(false);
+                  }}
                 >
-                  {workspace}
-                </Text>
-              </TouchableOpacity>
-            ))}
+                  <View style={styles.workspaceMenuItemRow}>
+                    <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : wsColor }]}>
+                      {isEverything ? (
+                        <MaterialIcons name="layers" size={12} color="#FFFFFF" />
+                      ) : (
+                        <FontAwesome5 name={iconName} size={11} color="#FFFFFF" solid={solid} />
+                      )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.workspaceMenuText,
+                        { color: colors.text },
+                        isSelected && { color: primaryColor, fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                    >
+                      {workspace}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Status Picker Modal */}
+      <Modal
+        visible={statusPickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setStatusPickerVisible(false);
+          setStatusPickerTask(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setStatusPickerVisible(false);
+            setStatusPickerTask(null);
+          }}
+        >
+          <View
+            style={[
+              styles.statusPickerSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
+              Change Status
+            </Text>
+            {statusPickerTask && (
+              <Text
+                style={[styles.statusPickerSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {statusPickerTask.title}
+              </Text>
+            )}
+            <View style={styles.statusPickerList}>
+              {(statusPickerTask ? getAllowedStatuses(statusPickerTask) : []).map((s) => {
+                const isCurrentStatus = statusPickerTask?.status === s.name;
+                return (
+                  <TouchableOpacity
+                    key={s.id}
+                    style={[
+                      styles.statusPickerItem,
+                      {
+                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
+                      },
+                      isCurrentStatus && {
+                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                      },
+                    ]}
+                    onPress={() => handleStatusSelect(s)}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.statusPickerDot,
+                        { backgroundColor: s.color || '#9E9E9E' },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusPickerItemText,
+                        { color: colors.text },
+                        isCurrentStatus && { fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                    >
+                      {s.name}
+                    </Text>
+                    {isCurrentStatus && (
+                      <MaterialIcons name="check" size={20} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         </TouchableOpacity>
       </Modal>
@@ -858,7 +775,7 @@ const styles = StyleSheet.create({
   swipeBackgroundRight: {
     left: 0,
     right: '50%',
-    backgroundColor: '#E1EFE6',
+    backgroundColor: '#EDE9E1',
   },
   swipeBackgroundLeft: {
     right: 0,
@@ -870,7 +787,6 @@ const styles = StyleSheet.create({
     marginHorizontal: 8,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#4CAF50',
   },
   placeholderContainer: {
     flex: 1,
@@ -979,157 +895,78 @@ const styles = StyleSheet.create({
   },
   workspaceMenuItem: {
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
+  },
+  workspaceMenuItemRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 10,
+  },
+  workspaceIconBadge: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
   workspaceMenuText: {
     fontSize: fontSizes.md,
     color: '#212121',
     fontFamily: fontFamilies.bodyMedium,
   },
-  // Colab space list
-  colabListContent: {
-    padding: spacing.md,
-    paddingBottom: spacing.xl,
+  statusPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'flex-end' as const,
   },
-  colabListHeader: {
-    marginBottom: spacing.sm,
-  },
-  colabSpaceItem: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    padding: 14,
-    borderRadius: radius.lg,
+  statusPickerSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
     borderWidth: 1,
-  },
-  colabSpaceIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: radius.md,
-    justifyContent: 'center' as const,
-    alignItems: 'center' as const,
-    marginRight: 14,
-  },
-  colabSpaceInfo: {
-    flex: 1,
-  },
-  colabSpaceName: {
-    fontSize: fontSizes.md,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  colabSpaceDesc: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyRegular,
-    marginTop: 2,
-  },
-  // Colab space chat header
-  colabSpaceHeader: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.06)',
-  },
-  colabBackButton: {
-    padding: 6,
-    marginRight: 8,
-  },
-  colabSpaceHeaderIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: radius.sm,
-    justifyContent: 'center' as const,
-    alignItems: 'center' as const,
-    marginRight: 10,
-  },
-  colabSpaceHeaderTitle: {
-    fontSize: fontSizes.md,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  colabSpaceHeaderSub: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyRegular,
-    marginTop: 1,
-  },
-  // Colab chat messages
-  chatMessagesList: {
-    padding: spacing.md,
-  },
-  chatEmptyTitle: {
-    marginTop: 12,
-    fontSize: fontSizes.md,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  chatEmptySubtitle: {
-    marginTop: 4,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyRegular,
-    textAlign: 'center' as const,
-  },
-  chatMessageItem: {
-    flexDirection: 'row' as const,
-    marginBottom: 16,
-  },
-  chatAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#BDBDBD',
-    justifyContent: 'center' as const,
-    alignItems: 'center' as const,
-  },
-  chatAvatarText: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
-    color: '#FFFFFF',
-  },
-  chatMessageContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-  chatMessageHeader: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-  },
-  chatAuthor: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  chatTime: {
-    marginLeft: 8,
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
-  },
-  chatBubble: {
-    marginTop: 4,
-    borderRadius: radius.md,
-    padding: 12,
-  },
-  chatText: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyRegular,
-  },
-  chatInputContainer: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    padding: 16,
-    borderTopWidth: 1,
+    borderBottomWidth: 0,
+    paddingTop: 12,
+    paddingBottom: 32,
+    paddingHorizontal: 20,
     ...shadows.subtle,
   },
-  chatInput: {
-    flex: 1,
-    borderRadius: radius.pill,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  statusPickerHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#D1CBC0',
+    alignSelf: 'center' as const,
+    marginBottom: 16,
+  },
+  statusPickerTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+    marginBottom: 4,
+  },
+  statusPickerSubtitle: {
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
+    marginBottom: 16,
   },
-  chatSendButton: {
-    marginLeft: 8,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    justifyContent: 'center' as const,
+  statusPickerList: {
+    gap: 2,
+  },
+  statusPickerItem: {
+    flexDirection: 'row' as const,
     alignItems: 'center' as const,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: radius.md,
+    borderBottomWidth: 1,
+  },
+  statusPickerDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 12,
+  },
+  statusPickerItemText: {
+    flex: 1,
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
   },
 });

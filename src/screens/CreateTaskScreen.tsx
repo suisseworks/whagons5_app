@@ -24,7 +24,7 @@ const priorities = ['Low', 'Medium', 'High'] as const;
 export const CreateTaskScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { addTask } = useTasks();
+  const { addTask, initialStatus } = useTasks();
 
   const [title, setTitle] = useState('');
   const [spot, setSpot] = useState('');
@@ -47,7 +47,8 @@ export const CreateTaskScreen: React.FC = () => {
       title: title.trim(),
       spot: spot.trim() || 'Unassigned',
       priority: selectedPriority,
-      status: 'Open',
+      status: initialStatus?.name ?? '',
+      statusColor: initialStatus?.color ?? null,
       assignees: assignees.length > 0 ? assignees : ['Unassigned'],
       createdAt: 'Just now',
       tags,

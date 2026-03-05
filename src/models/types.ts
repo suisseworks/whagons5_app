@@ -11,7 +11,10 @@ export interface TaskItem {
   title: string;
   spot: string;
   priority: 'Low' | 'Medium' | 'High';
-  status: 'Open' | 'In progress' | 'Scheduled' | 'Blocked' | 'Done';
+  status: string;
+  statusColor?: string | null;
+  statusId?: number | null;
+  categoryId?: number | null;
   assignees: string[];
   createdAt: string;
   tags: string[];

@@ -26,7 +26,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
         styles.card,
         {
           backgroundColor: colors.surface,
-          borderLeftColor: statusColor(task.status),
+          borderLeftColor: statusColor(task.status, task.statusColor),
           borderColor,
           padding: cardPadding,
           paddingLeft: 12,
@@ -43,6 +43,12 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
       </View>
 
       <View style={[styles.row, { marginTop: compact ? 6 : 8 }]}>
+        {task.status !== '' && (
+          <>
+            <CustomChip label={task.status} color={statusColor(task.status, task.statusColor)} />
+            <View style={{ width: 8 }} />
+          </>
+        )}
         <CustomChip label={task.priority} color={priorityColor(task.priority)} />
         <View style={{ width: 8 }} />
         <CustomChip label={task.spot} color="#E0E0E0" textColor="#212121" />

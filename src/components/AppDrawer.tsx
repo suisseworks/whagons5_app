@@ -12,10 +12,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
+import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList } from '../models/types';
 import { quotes, inspirationalImages, getDailyIndex } from '../utils/helpers';
 import { clearAllData } from '../store/database';
@@ -30,8 +30,9 @@ interface AppDrawerProps {
 export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
-  const { compactCards, toggleCompactCards, notificationCount } = useTasks();
+  const { compactCards, toggleCompactCards } = useTasks();
   const { logout, user } = useAuth();
+  const { unreadCount: notificationCount } = useNotifications();
 
   const quoteIndex = getDailyIndex(quotes.length);
   const imageIndex = getDailyIndex(inspirationalImages.length);
@@ -69,25 +70,20 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView>
         {/* Header */}
-        <LinearGradient
-          colors={[colors.primary, colors.secondary]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.header}
-        >
+        <View style={styles.header}>
           <View style={styles.headerContent}>
-            <View style={styles.logoBadge}>
+            <View style={[styles.logoBadge, { backgroundColor: `${primaryColor}20` }]}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoImage} />
             </View>
             <View>
-              <Text style={styles.headerTitle}>Whagons</Text>
-              <Text style={styles.headerSubtitle}>Field operations</Text>
+              <Text style={[styles.headerTitle, { color: colors.text }]}>Whagons</Text>
+              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Field operations</Text>
             </View>
           </View>
           {user && (
-            <Text style={styles.headerUser}>{user.name ?? user.email}</Text>
+            <Text style={[styles.headerUser, { color: colors.textSecondary }]}>{user.name ?? user.email}</Text>
           )}
-        </LinearGradient>
+        </View>
 
         {/* Menu Items */}
         <TouchableOpacity
@@ -207,7 +203,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 14,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -220,20 +215,17 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
-    color: '#FFFFFF',
   },
   headerSubtitle: {
     marginTop: 2,
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
-    color: 'rgba(255, 255, 255, 0.75)',
     letterSpacing: 0.3,
   },
   headerUser: {
     marginTop: 10,
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
-    color: 'rgba(255, 255, 255, 0.78)',
   },
   menuItem: {
     flexDirection: 'row',
