@@ -12,6 +12,7 @@ import { CreateTaskScreen } from '../screens/CreateTaskScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ThemesScreen } from '../screens/ThemesScreen';
+import { BoardDetailScreen } from '../screens/BoardDetailScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -33,6 +34,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="Themes" component={ThemesScreen} />
+        <Stack.Screen name="BoardDetail" component={BoardDetailScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

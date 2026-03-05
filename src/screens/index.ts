@@ -6,3 +6,4 @@ export { CreateTaskScreen } from './CreateTaskScreen';
 export { NotificationsScreen } from './NotificationsScreen';
 export { SettingsScreen } from './SettingsScreen';
 export { ThemesScreen } from './ThemesScreen';
+export { BoardDetailScreen } from './BoardDetailScreen';

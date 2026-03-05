@@ -79,6 +79,7 @@ export type RootStackParamList = {
   Notifications: undefined;
   Settings: undefined;
   Themes: undefined;
+  BoardDetail: { boardId: number };
 };
 
 export type MainTabParamList = {

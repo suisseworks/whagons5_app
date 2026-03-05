@@ -115,6 +115,49 @@ export interface SyncedTaskTag {
   [key: string]: unknown;
 }
 
+export interface SyncedBoard {
+  id: number;
+  name: string;
+  description?: string | null;
+  visibility: 'public' | 'private';
+  birthday_messages_enabled?: boolean;
+  birthday_message_template?: string | null;
+  created_by: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+  deleted_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedBoardMember {
+  id: number;
+  board_id: number;
+  member_type: 'user' | 'team';
+  member_id: number;
+  role: 'admin' | 'member';
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedBoardMessage {
+  id: number;
+  board_id: number;
+  created_by: number;
+  title?: string | null;
+  content?: string | null;
+  is_pinned: boolean;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  metadata?: Record<string, unknown> | null;
+  source_type?: string | null;
+  source_id?: number | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  deleted_at?: string | null;
+  [key: string]: unknown;
+}
+
 export interface SyncedData {
   tasks: SyncedTask[];
   workspaces: SyncedWorkspace[];
@@ -127,6 +170,9 @@ export interface SyncedData {
   tags: SyncedTag[];
   taskUsers: SyncedTaskUser[];
   taskTags: SyncedTaskTag[];
+  boards: SyncedBoard[];
+  boardMembers: SyncedBoardMember[];
+  boardMessages: SyncedBoardMessage[];
 }
 
 interface DataContextType {
@@ -154,6 +200,9 @@ const EMPTY_DATA: SyncedData = {
   tags: [],
   taskUsers: [],
   taskTags: [],
+  boards: [],
+  boardMembers: [],
+  boardMessages: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -199,6 +248,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         tags,
         taskUsers,
         taskTags,
+        boards,
+        boardMembers,
+        boardMessages,
       ] = await Promise.all([
         DB.getAllRows<SyncedTask>('wh_tasks'),
         DB.getAllRows<SyncedWorkspace>('wh_workspaces'),
@@ -211,6 +263,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedTag>('wh_tags'),
         DB.getAllRows<SyncedTaskUser>('wh_task_users'),
         DB.getAllRows<SyncedTaskTag>('wh_task_tags'),
+        DB.getAllRows<SyncedBoard>('wh_boards'),
+        DB.getAllRows<SyncedBoardMember>('wh_board_members'),
+        DB.getAllRows<SyncedBoardMessage>('wh_board_messages'),
       ]);
       setData({
         tasks,
@@ -224,6 +279,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         tags,
         taskUsers,
         taskTags,
+        boards,
+        boardMembers,
+        boardMessages,
       });
     } catch (err) {
       console.warn('DataContext: hydrate failed', err);
