@@ -258,6 +258,273 @@ export class ApiClient {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Task form endpoints (tenant-level: /api/task-forms)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Submit a new form for a task.
+   * Backend route: POST /api/task-forms
+   */
+  async createTaskForm(params: {
+    task_id: number;
+    form_version_id: number;
+    data: Record<string, unknown>;
+  }): Promise<{ id: number; task_id: number; form_version_id: number; data: Record<string, unknown> }> {
+    const url = `${this.baseUrl}/task-forms`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to create task form: ${response.status} ${body}`);
+    }
+
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /**
+   * Update an existing task form submission.
+   * Backend route: PATCH /api/task-forms/:id
+   */
+  async updateTaskForm(
+    id: number,
+    updates: { data: Record<string, unknown> },
+  ): Promise<{ id: number; task_id: number; form_version_id: number; data: Record<string, unknown> }> {
+    const url = `${this.baseUrl}/task-forms/${id}`;
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to update task form: ${response.status} ${body}`);
+    }
+
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task update (PATCH – partial update)
+  // ---------------------------------------------------------------------------
+
+  async patchTask(id: number, updates: Record<string, unknown>): Promise<any> {
+    const url = `${this.baseUrl}/tasks/${id}`;
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to patch task: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chat / Messaging endpoints
+  // ---------------------------------------------------------------------------
+
+  /** Create a conversation (DM or group). Backend finds-or-creates for DMs. */
+  async createConversation(params: {
+    uuid: string;
+    type: 'dm' | 'group';
+    name?: string | null;
+    created_by: number;
+    participant_user_ids: number[];
+  }): Promise<any> {
+    const url = `${this.baseUrl}/conversations`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to create conversation: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Mark a conversation as read for the current user. */
+  async markConversationRead(conversationId: number): Promise<void> {
+    const url = `${this.baseUrl}/conversations/${conversationId}/read`;
+    await fetch(url, { method: 'POST', headers: this.getHeaders() });
+  }
+
+  /** Send a direct message. */
+  async sendDirectMessage(params: {
+    uuid: string;
+    conversation_id: number;
+    user_id: number;
+    message: string;
+    status?: string;
+  }): Promise<any> {
+    const url = `${this.baseUrl}/direct-messages`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to send message: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Edit a direct message. */
+  async updateDirectMessage(id: number, updates: { message?: string; status?: string }): Promise<any> {
+    const url = `${this.baseUrl}/direct-messages/${id}`;
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to update message: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Delete a direct message. */
+  async deleteDirectMessage(id: number): Promise<void> {
+    const url = `${this.baseUrl}/direct-messages/${id}`;
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete message: ${response.status}`);
+    }
+  }
+
+  /** Toggle a reaction on a message. Backend adds if not present, removes if already exists. */
+  async toggleMessageReaction(params: { message_id: number; emoji: string }): Promise<any> {
+    const url = `${this.baseUrl}/message-reactions`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to toggle reaction: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Update a conversation (rename group, etc.) */
+  async updateConversation(id: number, updates: { name?: string | null }): Promise<any> {
+    const url = `${this.baseUrl}/conversations/${id}`;
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to update conversation: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Add a participant to a conversation. */
+  async addConversationParticipant(params: { conversation_id: number; user_id: number }): Promise<any> {
+    const url = `${this.baseUrl}/conversation-participants`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to add participant: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Remove a participant from a conversation. */
+  async removeConversationParticipant(participantId: number): Promise<void> {
+    const url = `${this.baseUrl}/conversation-participants/${participantId}`;
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to remove participant: ${response.status}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Workspace Chat (Spaces / Collab) endpoints
+  // ---------------------------------------------------------------------------
+
+  /** Send a workspace chat message. */
+  async sendWorkspaceChatMessage(params: {
+    uuid: string;
+    workspace_id: number;
+    message: string;
+    user_id: number;
+  }): Promise<any> {
+    const url = `${this.baseUrl}/workspace-chat`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to send workspace chat message: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Edit a workspace chat message. */
+  async updateWorkspaceChatMessage(id: number, updates: { message: string }): Promise<any> {
+    const url = `${this.baseUrl}/workspace-chat/${id}`;
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to update workspace chat message: ${response.status} ${body}`);
+    }
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  /** Delete a workspace chat message. */
+  async deleteWorkspaceChatMessage(id: number): Promise<void> {
+    const url = `${this.baseUrl}/workspace-chat/${id}`;
+    const response = await fetch(url, {
+      method: 'DELETE',
+      headers: this.getHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete workspace chat message: ${response.status}`);
+    }
+  }
+
   setAuthToken(token: string): void {
     this.authToken = token;
   }

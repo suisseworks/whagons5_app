@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -176,11 +177,18 @@ export const SettingsScreen: React.FC = () => {
         <SectionHeader title="Account" />
         <View style={cardStyle}>
           <TouchableOpacity style={styles.profileTile} onPress={() => showComingSoon('Profile editing')}>
-            <View style={[styles.profileAvatar, { backgroundColor: primaryColor }]}>
-              <Text style={styles.profileInitials}>
-                {user?.name ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?'}
-              </Text>
-            </View>
+            {user?.photo_url ? (
+              <Image
+                source={{ uri: user.photo_url as string }}
+                style={styles.profileAvatarImage}
+              />
+            ) : (
+              <View style={[styles.profileAvatar, { backgroundColor: primaryColor }]}>
+                <Text style={styles.profileInitials}>
+                  {user?.name ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : '?'}
+                </Text>
+              </View>
+            )}
             <View style={styles.profileContent}>
               <Text style={[styles.profileName, { color: colors.text }]}>{user?.name || 'User'}</Text>
               <Text style={[styles.profileSubtitle, { color: colors.textSecondary }]}>
@@ -470,6 +478,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#14B7A3',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  profileAvatarImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
   },
   profileInitials: {
     fontSize: fontSizes.md,

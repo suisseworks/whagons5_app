@@ -14,7 +14,7 @@ interface TaskCardProps {
   onPress: () => void;
 }
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPress }) => {
+export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact = false, onPress }) => {
   const { colors, isDarkMode } = useTheme();
   const cardPadding = compact ? 10 : 14;
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
@@ -50,8 +50,20 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
           </>
         )}
         <CustomChip label={task.priority} color={priorityColor(task.priority)} />
-        <View style={{ width: 8 }} />
-        <CustomChip label={task.spot} color="#E0E0E0" textColor="#212121" />
+        {task.spot !== '' && (
+          <>
+            <View style={{ width: 8 }} />
+            <CustomChip label={task.spot} color="#E0E0E0" textColor="#212121" />
+          </>
+        )}
+        {task.formName && (
+          <>
+            <View style={{ width: 8 }} />
+            <View style={styles.formIndicator}>
+              <MaterialIcons name="description" size={12} color="#6B7280" />
+            </View>
+          </>
+        )}
         <View style={{ width: 8 }} />
         <AssigneeAvatars assignees={task.assignees} />
       </View>
@@ -87,7 +99,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, compact = false, onPre
       )}
     </TouchableOpacity>
   );
-};
+});
 
 const styles = StyleSheet.create({
   card: {
@@ -128,5 +140,13 @@ const styles = StyleSheet.create({
   },
   spacer: {
     flex: 1,
+  },
+  formIndicator: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
   },
 });

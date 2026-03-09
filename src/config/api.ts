@@ -14,6 +14,10 @@
 const PROTOCOL = process.env.EXPO_PUBLIC_API_PROTOCOL ?? (__DEV__ ? 'http' : 'https');
 const HOST = process.env.EXPO_PUBLIC_API_URL ?? (__DEV__ ? '10.0.2.2:8000' : 'api.whagons.com');
 
+/** RTE (Real-Time Engine) WebSocket server */
+const RTE_PROTOCOL = process.env.EXPO_PUBLIC_RTE_PROTOCOL ?? (__DEV__ ? 'ws' : 'wss');
+const RTE_HOST = process.env.EXPO_PUBLIC_RTE_URL ?? (__DEV__ ? '10.0.2.2:8082' : 'rte.whagons.com');
+
 /** True when the host is an IP address (subdomain URLs won't resolve). */
 const IS_IP_HOST = /^\d+\.\d+\.\d+\.\d+(:\d+)?$/.test(HOST);
 
@@ -38,6 +42,12 @@ export const API_CONFIG = {
    * Callers should use getTenantHeaders() to pass the tenant via header.
    */
   useHeaderTenant: __DEV__ && IS_IP_HOST,
+
+  /** RTE WebSocket protocol (ws or wss) */
+  rteProtocol: RTE_PROTOCOL,
+
+  /** RTE WebSocket host (without protocol) */
+  rteHost: RTE_HOST,
 } as const;
 
 /**

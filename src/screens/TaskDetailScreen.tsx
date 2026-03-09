@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Image,
   Alert,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -16,9 +17,12 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks, StatusOption } from '../context/TaskContext';
+import { useAuth } from '../context/AuthContext';
 import { RootStackParamList, Comment, ChecklistItem } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
+import { FormFiller } from '../components/FormFiller';
+import { apiClient } from '../services/apiClient';
 import { priorityColor, statusColor, getInitials } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
@@ -29,16 +33,38 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { setActiveTask, getAllowedStatuses, changeTaskStatus } = useTasks();
+  const { setActiveTask, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId } = useTasks();
+  const { subdomain, token } = useAuth();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
-  const [activeTab, setActiveTab] = useState<'details' | 'checklist' | 'comments'>('details');
+  // Determine if this task has a form
+  const formSchema = useMemo(() => getFormSchema(task), [task, getFormSchema]);
+  const existingSubmission = useMemo(() => getTaskFormSubmission(task.id || ''), [task.id, getTaskFormSubmission]);
+  const hasForm = !!formSchema && formSchema.fields.length > 0;
+
+  type TabKey = 'details' | 'form' | 'checklist' | 'comments';
+  const [activeTab, setActiveTab] = useState<TabKey>('details');
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
   // Track local status so changes reflect immediately on this screen
   const [currentStatus, setCurrentStatus] = useState(task.status);
   const [currentStatusColor, setCurrentStatusColor] = useState(task.statusColor);
+  const [currentStatusId, setCurrentStatusId] = useState(task.statusId);
+
+  // Build a task object with the current local status so getAllowedStatuses
+  // computes valid transitions from the *current* status, not the original one.
+  const currentTask = useMemo(
+    () => ({ ...task, status: currentStatus, statusColor: currentStatusColor, statusId: currentStatusId }),
+    [task, currentStatus, currentStatusColor, currentStatusId],
+  );
   const [commentText, setCommentText] = useState('');
   const [attachedImages, setAttachedImages] = useState<string[]>([]);
+
+  // Form state
+  const [formValues, setFormValues] = useState<Record<string, unknown>>(
+    existingSubmission?.data ?? {},
+  );
+  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [formShowValidation, setFormShowValidation] = useState(false);
 
   const [comments, setComments] = useState<Comment[]>([
     { author: 'Alex', time: '10 mins ago', text: 'Started working on this task' },
@@ -62,6 +88,7 @@ export const TaskDetailScreen: React.FC = () => {
     changeTaskStatus(task.id || '', status);
     setCurrentStatus(status.name);
     setCurrentStatusColor(status.color);
+    setCurrentStatusId(status.id);
     setStatusPickerVisible(false);
   };
 
@@ -122,9 +149,47 @@ export const TaskDetailScreen: React.FC = () => {
     ]);
   };
 
+  // Form submission
+  const handleFormSubmit = useCallback(async () => {
+    if (!formSchema || !task.formId || !task.id) return;
+
+    // Validate required fields
+    const errors = formSchema.fields.filter(
+      (f) => f.required && (formValues[f.id] === undefined || formValues[f.id] === null || formValues[f.id] === '' || (Array.isArray(formValues[f.id]) && (formValues[f.id] as unknown[]).length === 0)),
+    );
+    if (errors.length > 0) {
+      setFormShowValidation(true);
+      Alert.alert('Validation Error', 'Please fill in all required fields.');
+      return;
+    }
+
+    setFormSubmitting(true);
+    const formVersionId = existingSubmission?.formVersionId ?? (task.formId ? getFormVersionId(task.formId) : null) ?? 0;
+    try {
+      if (existingSubmission) {
+        await apiClient.updateTaskForm(existingSubmission.id, { data: formValues });
+      } else {
+        await apiClient.createTaskForm({
+          task_id: Number(task.id),
+          form_version_id: formVersionId,
+          data: formValues,
+        });
+      }
+      Alert.alert('Success', existingSubmission ? 'Form updated.' : 'Form submitted.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      Alert.alert('Error', `Failed to save form: ${message}`);
+    } finally {
+      setFormSubmitting(false);
+    }
+  }, [formSchema, formValues, task, existingSubmission, subdomain, token]);
+
   const renderDetailsTab = () => (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
       <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
+      {task.id && (
+        <Text style={[styles.taskId, { color: colors.textSecondary }]}>#{task.id}</Text>
+      )}
 
       <View style={styles.statusRow}>
         {currentStatus !== '' && (
@@ -257,6 +322,50 @@ export const TaskDetailScreen: React.FC = () => {
     </ScrollView>
   );
 
+  const renderFormTab = () => {
+    if (!formSchema) return null;
+    return (
+      <View style={styles.tabContent}>
+        <ScrollView style={styles.flex} contentContainerStyle={styles.tabContentContainer}>
+          <FormFiller
+            schema={formSchema}
+            values={formValues}
+            onChange={setFormValues}
+            readOnly={formSubmitting}
+            showValidation={formShowValidation}
+            colors={colors}
+            primaryColor={primaryColor}
+            isDarkMode={isDarkMode}
+          />
+        </ScrollView>
+
+        <View
+          style={[
+            styles.actionButtonsContainer,
+            { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
+          ]}
+        >
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: primaryColor, opacity: formSubmitting ? 0.6 : 1 }]}
+            onPress={handleFormSubmit}
+            disabled={formSubmitting}
+          >
+            {formSubmitting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <>
+                <MaterialIcons name={existingSubmission ? 'save' : 'send'} size={20} color="#FFFFFF" />
+                <Text style={styles.actionButtonText}>
+                  {existingSubmission ? 'Update Form' : 'Submit Form'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
   const renderChecklistTab = () => (
     <View style={styles.tabContent}>
       <ScrollView style={styles.flex}>
@@ -367,7 +476,10 @@ export const TaskDetailScreen: React.FC = () => {
 
       {/* Tab Bar */}
       <View style={styles.tabBar}>
-        {(['details', 'checklist', 'comments'] as const).map(tab => (
+        {(hasForm
+          ? (['details', 'form', 'comments'] as TabKey[])
+          : (['details', 'checklist', 'comments'] as TabKey[])
+        ).map(tab => (
           <TouchableOpacity
             key={tab}
             style={[styles.tab, activeTab === tab && { borderBottomColor: primaryColor }]}
@@ -379,7 +491,7 @@ export const TaskDetailScreen: React.FC = () => {
                 activeTab === tab && { color: primaryColor },
               ]}
             >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === 'form' ? 'Form' : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -387,7 +499,8 @@ export const TaskDetailScreen: React.FC = () => {
 
       {/* Tab Content */}
       {activeTab === 'details' && renderDetailsTab()}
-      {activeTab === 'checklist' && renderChecklistTab()}
+      {activeTab === 'form' && hasForm && renderFormTab()}
+      {activeTab === 'checklist' && !hasForm && renderChecklistTab()}
       {activeTab === 'comments' && renderCommentsTab()}
 
       {/* Action Buttons - Only show in details tab */}
@@ -406,7 +519,7 @@ export const TaskDetailScreen: React.FC = () => {
             <Text style={styles.actionButtonText}>Start Working</Text>
           </TouchableOpacity>
 
-          {getAllowedStatuses(task).length > 0 && (
+          {getAllowedStatuses(currentTask).length > 0 && (
             <TouchableOpacity
               style={[styles.actionButton, styles.doneButton, { borderColor: statusColor(currentStatus, currentStatusColor) }]}
               onPress={() => setStatusPickerVisible(true)}
@@ -447,7 +560,7 @@ export const TaskDetailScreen: React.FC = () => {
               Change Status
             </Text>
             <View style={styles.statusPickerList}>
-              {getAllowedStatuses(task).map((s) => {
+              {getAllowedStatuses(currentTask).map((s) => {
                 const isCurrentStatus = currentStatus === s.name;
                 return (
                   <TouchableOpacity
@@ -537,7 +650,12 @@ const styles = StyleSheet.create({
   taskTitle: {
     fontSize: fontSizes.xl,
     fontFamily: fontFamilies.displaySemibold,
-    marginBottom: 16,
+    marginBottom: 4,
+  },
+  taskId: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
+    marginBottom: 12,
   },
   statusRow: {
     flexDirection: 'row',

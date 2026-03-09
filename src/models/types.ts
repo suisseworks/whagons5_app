@@ -20,6 +20,10 @@ export interface TaskItem {
   tags: string[];
   approval?: string | null;
   sla?: string | null;
+  /** Form ID linked via task's template (null if no form) */
+  formId?: number | null;
+  /** Name of the form linked to this task */
+  formName?: string | null;
 }
 
 // Notification item model
@@ -87,7 +91,7 @@ export type RootStackParamList = {
 
 export type MainTabParamList = {
   Tasks: undefined;
-  Colab: undefined;
+  Workspaces: undefined;
   Boards: undefined;
   Cleaning: undefined;
 };

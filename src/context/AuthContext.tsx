@@ -28,6 +28,7 @@ import {
   signInWithEmail as fbSignInWithEmail,
   firebaseSignOut,
   onAuthStateChanged,
+  getCurrentUser,
 } from '../firebase/authService';
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,7 @@ interface UserInfo {
   id: number;
   name: string;
   email: string;
+  photo_url?: string | null;
   tenant_domain_prefix?: string | null;
   [key: string]: unknown;
 }
@@ -289,7 +291,17 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const json = await resp.json();
     // The response may be wrapped in { data: { ... } }
-    return json.data ?? json;
+    const user: UserInfo = json.data ?? json;
+
+    // If the backend doesn't provide a photo, fall back to Firebase photoURL
+    if (!user.photo_url) {
+      const firebaseUser = getCurrentUser();
+      if (firebaseUser?.photoURL) {
+        user.photo_url = firebaseUser.photoURL;
+      }
+    }
+
+    return user;
   };
 
   // ------------------------------------------------------------------

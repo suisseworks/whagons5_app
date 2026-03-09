@@ -21,6 +21,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { DataManager } from '../store/DataManager';
 import { useAuth } from './AuthContext';
 import * as DB from '../store/database';
+import { apiClient } from '../services/apiClient';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -105,6 +106,7 @@ export interface SyncedUser {
   id: number;
   name: string;
   email?: string;
+  url_picture?: string | null;
   [key: string]: unknown;
 }
 
@@ -177,6 +179,113 @@ export interface SyncedBoardMessage {
   [key: string]: unknown;
 }
 
+export interface SyncedTemplate {
+  id: number;
+  name: string;
+  form_id?: number | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedForm {
+  id: number;
+  name: string;
+  description?: string | null;
+  current_version_id?: number | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedFormVersion {
+  id: number;
+  form_id: number;
+  version: number;
+  fields?: string | Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedTaskForm {
+  id: number;
+  task_id: number;
+  form_version_id: number;
+  data?: string | Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------------------
+// Chat / Messaging types
+// ---------------------------------------------------------------------------
+
+export interface SyncedConversation {
+  id: number;
+  uuid: string;
+  type: 'dm' | 'group';
+  name: string | null;
+  avatar_url: string | null;
+  created_by: number;
+  last_message_at: string | null;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface SyncedConversationParticipant {
+  id: number;
+  conversation_id: number;
+  user_id: number;
+  last_read_at: string | null;
+  is_muted: boolean;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface SyncedDirectMessage {
+  id: number;
+  uuid: string;
+  conversation_id: number;
+  user_id: number;
+  message: string;
+  status: 'sending' | 'sent' | 'delivered' | 'read';
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface SyncedMessageReaction {
+  id: number;
+  message_id: number;
+  user_id: number;
+  emoji: string;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+export interface SyncedLinkPreview {
+  id: number;
+  message_id: number | null;
+  workspace_chat_id: number | null;
+  url: string;
+  url_hash: string;
+  title: string | null;
+  description: string | null;
+  image_url: string | null;
+  site_name: string | null;
+  favicon_url: string | null;
+  type: string | null;
+  status: 'pending' | 'fetched' | 'failed';
+  [key: string]: unknown;
+}
+
+export interface SyncedWorkspaceChat {
+  id: number;
+  uuid: string;
+  workspace_id: number;
+  message: string;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+}
+
 export interface SyncedData {
   tasks: SyncedTask[];
   workspaces: SyncedWorkspace[];
@@ -194,6 +303,18 @@ export interface SyncedData {
   boards: SyncedBoard[];
   boardMembers: SyncedBoardMember[];
   boardMessages: SyncedBoardMessage[];
+  templates: SyncedTemplate[];
+  forms: SyncedForm[];
+  formVersions: SyncedFormVersion[];
+  taskForms: SyncedTaskForm[];
+  // Chat / Messaging
+  conversations: SyncedConversation[];
+  conversationParticipants: SyncedConversationParticipant[];
+  directMessages: SyncedDirectMessage[];
+  messageReactions: SyncedMessageReaction[];
+  linkPreviews: SyncedLinkPreview[];
+  // Workspace-scoped chat (Spaces / Collab)
+  workspaceChat: SyncedWorkspaceChat[];
 }
 
 interface DataContextType {
@@ -226,6 +347,16 @@ const EMPTY_DATA: SyncedData = {
   boards: [],
   boardMembers: [],
   boardMessages: [],
+  templates: [],
+  forms: [],
+  formVersions: [],
+  taskForms: [],
+  conversations: [],
+  conversationParticipants: [],
+  directMessages: [],
+  messageReactions: [],
+  linkPreviews: [],
+  workspaceChat: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -243,9 +374,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const dmRef = useRef<DataManager | null>(null);
 
-  // Create / update the DataManager when auth changes
+  // Create / update the DataManager + apiClient when auth changes
   useEffect(() => {
     if (token && subdomain) {
+      // Configure the shared API client so all screens can use it
+      apiClient.configure(subdomain, token);
+
       if (!dmRef.current) {
         dmRef.current = new DataManager({ subdomain, authToken: token });
       } else {
@@ -276,6 +410,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         boards,
         boardMembers,
         boardMessages,
+        templates,
+        forms,
+        formVersions,
+        taskForms,
+        conversations,
+        conversationParticipants,
+        directMessages,
+        messageReactions,
+        linkPreviews,
+        workspaceChat,
       ] = await Promise.all([
         DB.getAllRows<SyncedTask>('wh_tasks'),
         DB.getAllRows<SyncedWorkspace>('wh_workspaces'),
@@ -293,6 +437,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedBoard>('wh_boards'),
         DB.getAllRows<SyncedBoardMember>('wh_board_members'),
         DB.getAllRows<SyncedBoardMessage>('wh_board_messages'),
+        DB.getAllRows<SyncedTemplate>('wh_templates'),
+        DB.getAllRows<SyncedForm>('wh_forms'),
+        DB.getAllRows<SyncedFormVersion>('wh_form_versions'),
+        DB.getAllRows<SyncedTaskForm>('wh_task_form'),
+        DB.getAllRows<SyncedConversation>('wh_conversations'),
+        DB.getAllRows<SyncedConversationParticipant>('wh_conversation_participants'),
+        DB.getAllRows<SyncedDirectMessage>('wh_direct_messages'),
+        DB.getAllRows<SyncedMessageReaction>('wh_message_reactions'),
+        DB.getAllRows<SyncedLinkPreview>('wh_link_previews'),
+        DB.getAllRows<SyncedWorkspaceChat>('wh_workspace_chat'),
       ]);
       setData({
         tasks,
@@ -311,6 +465,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         boards,
         boardMembers,
         boardMessages,
+        templates,
+        forms,
+        formVersions,
+        taskForms,
+        conversations,
+        conversationParticipants,
+        directMessages,
+        messageReactions,
+        linkPreviews,
+        workspaceChat,
       });
     } catch (err) {
       console.warn('DataContext: hydrate failed', err);

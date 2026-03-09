@@ -3,16 +3,16 @@ import {
   View,
   Text,
   StyleSheet,
+  StatusBar,
   Animated,
   TouchableWithoutFeedback,
-  ActivityIndicator,
   Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
-import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+import { fontFamilies, fontSizes } from '../config/designTokens';
 import { useAuth } from '../context/AuthContext';
 
 type SplashScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Splash'>;
@@ -21,13 +21,15 @@ export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<SplashScreenNavigationProp>();
   const { isLoading: authLoading, token } = useAuth();
   const navigatedRef = useRef(false);
-  const scaleAnim = useRef(new Animated.Value(0)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  const logoScale = useRef(new Animated.Value(0.8)).current;
+  const logoFade = useRef(new Animated.Value(0)).current;
+  const textFade = useRef(new Animated.Value(0)).current;
+  const dotsFade = useRef(new Animated.Value(0)).current;
 
   const goNext = () => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    // Route to Main if already authenticated, Login otherwise
     const destination = token ? 'Main' : 'Login';
     navigation.dispatch(
       CommonActions.reset({
@@ -38,23 +40,37 @@ export const SplashScreen: React.FC = () => {
   };
 
   useEffect(() => {
-    // Logo animation
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
+    // Staggered entrance
+    Animated.sequence([
+      // Logo fades in and scales up
+      Animated.parallel([
+        Animated.spring(logoScale, {
+          toValue: 1,
+          friction: 6,
+          tension: 50,
+          useNativeDriver: true,
+        }),
+        Animated.timing(logoFade, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]),
+      // Text slides in
+      Animated.timing(textFade, {
         toValue: 1,
-        friction: 4,
-        tension: 40,
+        duration: 400,
         useNativeDriver: true,
       }),
-      Animated.timing(fadeAnim, {
+      // Loading dots
+      Animated.timing(dotsFade, {
         toValue: 1,
-        duration: 800,
+        duration: 300,
         useNativeDriver: true,
       }),
     ]).start();
   }, []);
 
-  // Navigate once auth state is loaded
   useEffect(() => {
     if (!authLoading) {
       const timer = setTimeout(goNext, 1200);
@@ -65,39 +81,49 @@ export const SplashScreen: React.FC = () => {
   return (
     <TouchableWithoutFeedback onPress={goNext}>
       <LinearGradient
-        colors={['#121614', '#1C2420', '#2F6F6D']}
+        colors={['#121614', '#1A201D', '#1E2926']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.container}
       >
-        {/* Glow circles */}
-        <View style={[styles.glowCircle, styles.topGlow]} />
-        <View style={[styles.glowCircle, styles.bottomGlow]} />
+        <StatusBar barStyle="light-content" backgroundColor="#121614" translucent={false} />
+
+        {/* Subtle ambient glow */}
+        <View style={styles.glowTop} />
+        <View style={styles.glowBottom} />
 
         <View style={styles.content}>
+          {/* Logo */}
           <Animated.View
             style={[
               styles.logoContainer,
               {
-                opacity: fadeAnim,
-                transform: [{ scale: scaleAnim }],
+                opacity: logoFade,
+                transform: [{ scale: logoScale }],
               },
             ]}
           >
-            <View style={styles.logoWrapper}>
-              <View style={styles.logoCircle}>
-                <Image source={require('../../assets/whagons-check.png')} style={styles.logoImage} />
-              </View>
-              <Text style={styles.title}>Whagons</Text>
-              <Text style={styles.subtitle}>Coordinating work, together.</Text>
-            </View>
+            <Image
+              source={require('../../assets/whagons-check.png')}
+              style={styles.logoImage}
+            />
           </Animated.View>
 
-          <Animated.View style={[styles.loaderContainer, { opacity: fadeAnim }]}>
-            <View style={styles.progressBar}>
-              <ActivityIndicator size="small" color="#FFFFFF" />
+          {/* Brand name */}
+          <Animated.Text style={[styles.title, { opacity: textFade }]}>
+            Whagons
+          </Animated.Text>
+
+          {/* Tagline */}
+          <Animated.Text style={[styles.subtitle, { opacity: textFade }]}>
+            Coordinating work, together.
+          </Animated.Text>
+
+          {/* Loading indicator */}
+          <Animated.View style={[styles.loadingContainer, { opacity: dotsFade }]}>
+            <View style={styles.loadingBar}>
+              <Animated.View style={styles.loadingBarFill} />
             </View>
-            <Text style={styles.loadingText}>Preparing your workspace...</Text>
           </Animated.View>
         </View>
       </LinearGradient>
@@ -111,83 +137,63 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  glowCircle: {
+  glowTop: {
     position: 'absolute',
-    width: 260,
-    height: 260,
-    borderRadius: 130,
+    top: -100,
+    left: -60,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: 'rgba(199, 123, 67, 0.08)',
   },
-  topGlow: {
-    top: -80,
-    left: -40,
-    backgroundColor: 'rgba(199, 123, 67, 0.2)',
-  },
-  bottomGlow: {
-    bottom: -60,
-    right: -30,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: 'rgba(63, 143, 140, 0.2)',
+  glowBottom: {
+    position: 'absolute',
+    bottom: -80,
+    right: -50,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: 'rgba(47, 111, 109, 0.1)',
   },
   content: {
     alignItems: 'center',
-    paddingHorizontal: 32,
   },
   logoContainer: {
-    alignItems: 'center',
-  },
-  logoWrapper: {
-    alignItems: 'center',
-    paddingHorizontal: 32,
-    paddingVertical: 28,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: radius.xl,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-    ...shadows.lifted,
-  },
-  logoCircle: {
-    padding: 16,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    marginBottom: 20,
   },
   logoImage: {
-    width: 64,
-    height: 64,
+    width: 72,
+    height: 72,
     resizeMode: 'contain',
   },
   title: {
-    marginTop: 18,
-    fontSize: fontSizes.xl,
+    fontSize: 32,
     fontFamily: fontFamilies.displaySemibold,
     color: '#FFFFFF',
-    letterSpacing: 0.5,
+    letterSpacing: -0.5,
   },
   subtitle: {
     marginTop: 8,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyRegular,
-    color: 'rgba(255, 255, 255, 0.7)',
-    letterSpacing: 0.2,
-  },
-  loaderContainer: {
-    marginTop: 32,
-    alignItems: 'center',
-  },
-  progressBar: {
-    height: 4,
-    width: 72,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    marginTop: 12,
-    color: 'rgba(255, 255, 255, 0.7)',
+    color: 'rgba(255, 255, 255, 0.45)',
     letterSpacing: 0.3,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyMedium,
+  },
+  loadingContainer: {
+    marginTop: 48,
+    alignItems: 'center',
+  },
+  loadingBar: {
+    width: 40,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    overflow: 'hidden',
+  },
+  loadingBarFill: {
+    width: '60%',
+    height: '100%',
+    borderRadius: 1.5,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
   },
 });

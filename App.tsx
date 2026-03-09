@@ -3,6 +3,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { useFonts as useMontserratFonts, Montserrat_400Regular, Montserrat_500Medium, Montserrat_600SemiBold, Montserrat_700Bold } from '@expo-google-fonts/montserrat';
 import { ThemeProvider } from './src/context/ThemeContext';
 import { AuthProvider } from './src/context/AuthContext';
@@ -30,18 +31,20 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <DataProvider>
-            <NotificationProvider>
-              <ThemeProvider>
-                <TaskProvider>
-                  <StatusBar style="auto" />
-                  <AppNavigator />
-                </TaskProvider>
-              </ThemeProvider>
-            </NotificationProvider>
-          </DataProvider>
-        </AuthProvider>
+        <KeyboardProvider>
+          <AuthProvider>
+            <DataProvider>
+              <NotificationProvider>
+                <ThemeProvider>
+                  <TaskProvider>
+                    <StatusBar style="auto" />
+                    <AppNavigator />
+                  </TaskProvider>
+                </ThemeProvider>
+              </NotificationProvider>
+            </DataProvider>
+          </AuthProvider>
+        </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

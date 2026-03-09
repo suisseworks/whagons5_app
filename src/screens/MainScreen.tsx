@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -22,11 +22,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList, TaskItem } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
-import { AppDrawer } from '../components/AppDrawer';
+import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
+import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
@@ -40,17 +42,112 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { icon: 'check-box', label: 'Tasks' },
-  { icon: 'forum', label: 'Colab' },
+  { icon: 'checklist', label: 'Tasks' },
+  { icon: 'forum', label: 'Collab' },
   { icon: 'people-outline', label: 'Boards' },
   { icon: 'cleaning-services', label: 'Cleaning' },
 ];
+
+// ---------------------------------------------------------------------------
+// Stable FlatList helpers (module-level to avoid re-creation)
+// ---------------------------------------------------------------------------
+const keyExtractor = (item: TaskItem, index: number) => item.id || String(index);
+const ItemSeparator = () => <View style={{ height: 12 }} />;
+
+// ---------------------------------------------------------------------------
+// SwipeableTaskItem – extracted outside MainScreen to avoid re-creation on
+// every parent render.  Wrapped in React.memo so it only re-renders when its
+// own props change.
+// ---------------------------------------------------------------------------
+interface SwipeableTaskItemProps {
+  item: TaskItem;
+  compactCards: boolean;
+  isDarkMode: boolean;
+  primaryColor: string;
+  onPress: (task: TaskItem) => void;
+  onSwipeLeft: (task: TaskItem) => void;
+  onSwipeRight: (task: TaskItem) => void;
+}
+
+const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
+  ({ item, compactCards, isDarkMode, primaryColor, onPress, onSwipeLeft, onSwipeRight }) => {
+    const translateX = useRef(new Animated.Value(0)).current;
+
+    const panResponder = useMemo(
+      () =>
+        PanResponder.create({
+          onMoveShouldSetPanResponder: (_, gestureState) => {
+            return Math.abs(gestureState.dx) > 20;
+          },
+          onPanResponderMove: (_, gestureState) => {
+            translateX.setValue(gestureState.dx);
+          },
+          onPanResponderRelease: (_, gestureState) => {
+            if (gestureState.dx > 100) {
+              Animated.spring(translateX, {
+                toValue: 0,
+                useNativeDriver: true,
+              }).start();
+              onSwipeRight(item);
+            } else if (gestureState.dx < -100) {
+              Animated.spring(translateX, {
+                toValue: 0,
+                useNativeDriver: true,
+              }).start();
+              onSwipeLeft(item);
+            } else {
+              Animated.spring(translateX, {
+                toValue: 0,
+                useNativeDriver: true,
+              }).start();
+            }
+          },
+        }),
+      [item, translateX, onSwipeLeft, onSwipeRight],
+    );
+
+    const handlePress = useCallback(() => onPress(item), [item, onPress]);
+
+    return (
+      <View style={styles.taskItemContainer}>
+        {/* Swipe backgrounds */}
+        <View
+          style={[
+            styles.swipeBackground,
+            styles.swipeBackgroundRight,
+            isDarkMode && { backgroundColor: 'rgba(156, 163, 175, 0.15)' },
+          ]}
+        >
+          <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
+          <Text style={[styles.swipeText, { color: primaryColor }]}>Status</Text>
+        </View>
+        <View
+          style={[
+            styles.swipeBackground,
+            styles.swipeBackgroundLeft,
+            isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' },
+          ]}
+        >
+          <Text style={[styles.swipeText, { color: '#2196F3' }]}>Assign</Text>
+          <MaterialIcons name="person-add" size={24} color="#2196F3" />
+        </View>
+
+        <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
+          <TaskCard task={item} compact={compactCards} onPress={handlePress} />
+        </Animated.View>
+      </View>
+    );
+  },
+);
 
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const {
     tasks,
+    totalTaskCount,
+    loadMoreTasks,
+    hasMoreTasks,
     activeTask,
     compactCards,
     selectedWorkspace,
@@ -62,6 +159,7 @@ export const MainScreen: React.FC = () => {
     changeTaskStatus,
     assignTaskToYou,
     setSelectedWorkspace,
+    hasActiveFilters,
   } = useTasks();
 
   const { data, isSyncing, refresh, syncError } = useData();
@@ -75,9 +173,51 @@ export const MainScreen: React.FC = () => {
     return map;
   }, [workspaceObjects]);
   const { unreadCount: notificationCount } = useNotifications();
+  const { user: authUser } = useAuth();
+
+  // Compute total unread chat message count for the Colab tab badge
+  const chatUnreadCount = useMemo(() => {
+    const currentUserId = authUser?.id ?? 0;
+    if (!currentUserId) return 0;
+    const myConvIds = new Set(
+      data.conversationParticipants
+        .filter((p: any) => Number(p.user_id) === Number(currentUserId))
+        .map((p: any) => Number(p.conversation_id)),
+    );
+    let total = 0;
+    for (const conv of data.conversations) {
+      if (!myConvIds.has(Number(conv.id))) continue;
+      const myParticipant = data.conversationParticipants.find(
+        (p: any) =>
+          Number(p.conversation_id) === Number(conv.id) &&
+          Number(p.user_id) === Number(currentUserId),
+      );
+      const otherMsgs = data.directMessages.filter(
+        (m: any) =>
+          Number(m.conversation_id) === Number(conv.id) &&
+          Number(m.user_id) !== Number(currentUserId),
+      );
+      if (!myParticipant || !(myParticipant as any).last_read_at) {
+        total += otherMsgs.length;
+      } else {
+        const lastRead = new Date(
+          (myParticipant as any).last_read_at.includes('Z') || (myParticipant as any).last_read_at.includes('+')
+            ? (myParticipant as any).last_read_at
+            : (myParticipant as any).last_read_at + 'Z',
+        ).getTime();
+        total += otherMsgs.filter((m: any) => {
+          const ts = m.created_at;
+          const normalized = ts && (ts.includes('Z') || ts.includes('+')) ? ts : (ts || '') + 'Z';
+          return new Date(normalized).getTime() > lastRead;
+        }).length;
+      }
+    }
+    return total;
+  }, [authUser, data.conversations, data.conversationParticipants, data.directMessages]);
 
   const [selectedNav, setSelectedNav] = useState(0);
-  const [drawerVisible, setDrawerVisible] = useState(false);
+  const drawerRef = useRef<AnimatedDrawerRef>(null);
+  const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
   const [statusPickerTask, setStatusPickerTask] = useState<TaskItem | null>(null);
@@ -87,114 +227,63 @@ export const MainScreen: React.FC = () => {
     await refresh();
   }, [refresh]);
   
-  const drawerTranslateX = useRef(new Animated.Value(-SCREEN_WIDTH)).current;
 
-  useEffect(() => {
-    if (drawerVisible) {
-      Animated.timing(drawerTranslateX, {
-        toValue: 0,
-        duration: 250,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      drawerTranslateX.setValue(-SCREEN_WIDTH);
-    }
-  }, [drawerVisible]);
 
-  const handleTaskPress = (task: TaskItem) => {
-    navigation.navigate('TaskDetail', { task });
-  };
+  const handleTaskPress = useCallback(
+    (task: TaskItem) => {
+      navigation.navigate('TaskDetail', { task });
+    },
+    [navigation],
+  );
 
-  const handleCreateTask = () => {
+  const handleCreateTask = useCallback(() => {
     navigation.navigate('CreateTask');
-  };
+  }, [navigation]);
 
-  const handleSwipeLeft = (task: TaskItem) => {
-    // Assign to You
-    if (!task.assignees.includes('You')) {
-      assignTaskToYou(task.id || '');
-      Alert.alert('Assigned', 'Task assigned to You');
-    } else {
-      Alert.alert('Already Assigned', 'Already assigned to You');
-    }
-  };
+  const handleSwipeLeft = useCallback(
+    (task: TaskItem) => {
+      if (!task.assignees.includes('You')) {
+        assignTaskToYou(task.id || '');
+        Alert.alert('Assigned', 'Task assigned to You');
+      } else {
+        Alert.alert('Already Assigned', 'Already assigned to You');
+      }
+    },
+    [assignTaskToYou],
+  );
 
-  const handleSwipeRight = (task: TaskItem) => {
-    // Open status picker
-    setStatusPickerTask(task);
-    setStatusPickerVisible(true);
-  };
+  const handleSwipeRight = useCallback(
+    (task: TaskItem) => {
+      setStatusPickerTask(task);
+      setStatusPickerVisible(true);
+    },
+    [],
+  );
 
-  const handleStatusSelect = (status: { id: number; name: string; color: string | null }) => {
-    if (statusPickerTask?.id) {
-      changeTaskStatus(statusPickerTask.id, status);
-    }
-    setStatusPickerVisible(false);
-    setStatusPickerTask(null);
-  };
+  const handleStatusSelect = useCallback(
+    (status: { id: number; name: string; color: string | null }) => {
+      if (statusPickerTask?.id) {
+        changeTaskStatus(statusPickerTask.id, status);
+      }
+      setStatusPickerVisible(false);
+      setStatusPickerTask(null);
+    },
+    [statusPickerTask, changeTaskStatus],
+  );
 
-  const SwipeableTaskItem = ({ item }: { item: TaskItem }) => {
-    const translateX = useRef(new Animated.Value(0)).current;
-
-    const panResponder = useMemo(() => PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dx) > 20;
-      },
-      onPanResponderMove: (_, gestureState) => {
-        translateX.setValue(gestureState.dx);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        if (gestureState.dx > 100) {
-          // Swipe right - mark done
-          Animated.spring(translateX, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-          handleSwipeRight(item);
-        } else if (gestureState.dx < -100) {
-          // Swipe left - assign
-          Animated.spring(translateX, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-          handleSwipeLeft(item);
-        } else {
-          Animated.spring(translateX, {
-            toValue: 0,
-            useNativeDriver: true,
-          }).start();
-        }
-      },
-    }), [item, translateX]);
-
-    return (
-      <View style={styles.taskItemContainer}>
-        {/* Swipe backgrounds */}
-        <View style={[styles.swipeBackground, styles.swipeBackgroundRight, isDarkMode && { backgroundColor: 'rgba(156, 163, 175, 0.15)' }]}>
-          <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
-          <Text style={[styles.swipeText, { color: primaryColor }]}>Status</Text>
-        </View>
-        <View style={[styles.swipeBackground, styles.swipeBackgroundLeft, isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' }]}>
-          <Text style={[styles.swipeText, { color: '#2196F3' }]}>Assign</Text>
-          <MaterialIcons name="person-add" size={24} color="#2196F3" />
-        </View>
-
-        <Animated.View
-          {...panResponder.panHandlers}
-          style={{ transform: [{ translateX }] }}
-        >
-          <TaskCard
-            task={item}
-            compact={compactCards}
-            onPress={() => handleTaskPress(item)}
-          />
-        </Animated.View>
-      </View>
-    );
-  };
-
-  const renderTaskItem = ({ item }: { item: TaskItem }) => (
-    <SwipeableTaskItem item={item} />
+  const renderTaskItem = useCallback(
+    ({ item }: { item: TaskItem }) => (
+      <SwipeableTaskItem
+        item={item}
+        compactCards={compactCards}
+        isDarkMode={isDarkMode}
+        primaryColor={primaryColor}
+        onPress={handleTaskPress}
+        onSwipeLeft={handleSwipeLeft}
+        onSwipeRight={handleSwipeRight}
+      />
+    ),
+    [compactCards, isDarkMode, primaryColor, handleTaskPress, handleSwipeLeft, handleSwipeRight],
   );
 
   const renderListHeader = () => {
@@ -203,6 +292,12 @@ export const MainScreen: React.FC = () => {
 
     return (
       <View style={styles.listHeader}>
+        <View>
+          <Text style={[styles.listTitle, { color: colors.text }]}>Today</Text>
+          <Text style={[styles.listSubtitle, { color: colors.textSecondary }]}>
+            {totalTaskCount} tasks
+          </Text>
+        </View>
         <View
           style={[
             styles.syncPill,
@@ -319,10 +414,16 @@ export const MainScreen: React.FC = () => {
         <FlatList
           data={tasks}
           renderItem={renderTaskItem}
-          keyExtractor={(item, index) => item.id || String(index)}
+          keyExtractor={keyExtractor}
           contentContainerStyle={styles.listContent}
           ListHeaderComponent={renderListHeader}
-          ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
+          ItemSeparatorComponent={ItemSeparator}
+          windowSize={7}
+          maxToRenderPerBatch={10}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={true}
+          onEndReached={loadMoreTasks}
+          onEndReachedThreshold={0.5}
           refreshControl={
             <RefreshControl
               refreshing={isSyncing}
@@ -371,7 +472,7 @@ export const MainScreen: React.FC = () => {
       <View style={[styles.appBar, { borderBottomColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#E8E1D6' }]}>
         <TouchableOpacity
           style={styles.menuButton}
-          onPress={() => setDrawerVisible(true)}
+          onPress={() => drawerRef.current?.open()}
         >
           <MaterialIcons name="menu" size={24} color={colors.text} />
         </TouchableOpacity>
@@ -401,7 +502,7 @@ export const MainScreen: React.FC = () => {
               </View>
             );
           })()}
-          <Text style={[styles.workspaceText, { color: colors.text }]}>
+          <Text numberOfLines={1} style={[styles.workspaceText, { color: colors.text }]}>
             {selectedWorkspace}
           </Text>
           <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
@@ -410,9 +511,16 @@ export const MainScreen: React.FC = () => {
         <View style={styles.appBarActions}>
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => Alert.alert('Filters', 'Filters coming soon')}
+            onPress={() => setFilterSheetVisible(true)}
           >
-            <MaterialIcons name="filter-list" size={22} color={colors.textSecondary} />
+            <MaterialIcons
+              name="filter-list"
+              size={22}
+              color={hasActiveFilters ? primaryColor : colors.textSecondary}
+            />
+            {hasActiveFilters && (
+              <View style={[styles.filterDot, { backgroundColor: primaryColor }]} />
+            )}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -486,6 +594,13 @@ export const MainScreen: React.FC = () => {
                   size={26}
                   color={selectedNav === index ? primaryColor : colors.textSecondary}
                 />
+                {index === 1 && chatUnreadCount > 0 && (
+                  <View style={[styles.boardsBadge, { backgroundColor: primaryColor }]}>
+                    <Text style={styles.boardsBadgeText}>
+                      {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                    </Text>
+                  </View>
+                )}
                 {index === 2 && boards.length > 0 && (
                   <View style={[styles.boardsBadge, { borderColor: colors.surface }]}>
                     <Text style={styles.boardsBadgeText}>{boards.length > 9 ? '9+' : boards.length}</Text>
@@ -497,24 +612,14 @@ export const MainScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Drawer Modal */}
-      <Modal
-        visible={drawerVisible}
-        animationType="none"
-        transparent={true}
-        onRequestClose={() => setDrawerVisible(false)}
-      >
-        <View style={styles.drawerOverlay}>
-          <TouchableOpacity
-            style={styles.drawerBackdrop}
-            onPress={() => setDrawerVisible(false)}
-            activeOpacity={1}
-          />
-          <Animated.View style={[styles.drawerContainer, { transform: [{ translateX: drawerTranslateX }] }]}>
-            <AppDrawer onClose={() => setDrawerVisible(false)} />
-          </Animated.View>
-        </View>
-      </Modal>
+      {/* Drawer */}
+      <AnimatedDrawer ref={drawerRef} />
+
+      {/* Filter Sheet */}
+      <TaskFilterSheet
+        visible={filterSheetVisible}
+        onClose={() => setFilterSheetVisible(false)}
+      />
 
       {/* Workspace Menu Modal */}
       <Modal
@@ -674,6 +779,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   workspaceSelector: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     marginLeft: 4,
@@ -684,18 +790,25 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.6)',
   },
   workspaceText: {
+    flexShrink: 1,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
   },
   appBarActions: {
-    flex: 1,
     flexDirection: 'row',
-    justifyContent: 'flex-end',
     alignItems: 'center',
   },
   iconButton: {
     padding: 8,
     marginLeft: 4,
+  },
+  filterDot: {
+    position: 'absolute',
+    right: 5,
+    top: 5,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
   notificationBadge: {
     position: 'absolute',
@@ -861,23 +974,7 @@ const styles = StyleSheet.create({
     ...shadows.lifted,
     zIndex: 10,
   },
-  drawerOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1000,
-  },
-  drawerBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-  },
-  drawerContainer: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    width: '80%',
-    maxWidth: 320,
-    backgroundColor: '#FFFFFF',
-  },
+
   menuModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.3)',

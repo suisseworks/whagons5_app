@@ -8,9 +8,10 @@
  * before the first sync.
  */
 
-import React, { createContext, useContext, useState, useMemo, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useMemo, useCallback, useRef, useEffect, ReactNode } from 'react';
 import { TaskItem } from '../models/types';
-import { useData, SyncedTask, SyncedWorkspace } from './DataContext';
+import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
+import { apiClient } from '../services/apiClient';
 
 // ---------------------------------------------------------------------------
 // Helpers – map synced backend data → UI TaskItem
@@ -67,8 +68,14 @@ function mapTaskToItem(
   assigneeMap: Map<number, string[]>, // taskId → list of user names
   tagMap: Map<number, string[]>,      // taskId → list of tag names
   initialStatus: { name: string; color: string | null } | null,
+  templateFormMap: Map<number, { formId: number; formName: string }>, // templateId → form info
 ): TaskItem {
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
+
+  // Resolve form via template_id → template → form_id
+  const templateId = task.template_id as number | undefined;
+  const formInfo = templateId ? templateFormMap.get(templateId) : undefined;
+
   return {
     id: String(task.id),
     title: task.name || 'Untitled',
@@ -83,6 +90,8 @@ function mapTaskToItem(
     tags: tagMap.get(task.id) ?? [],
     approval: null,
     sla: null,
+    formId: formInfo?.formId ?? null,
+    formName: formInfo?.formName ?? null,
   };
 }
 
@@ -117,8 +126,51 @@ export interface StatusOption {
   final?: boolean;
 }
 
+export interface TaskFilters {
+  statuses: string[];          // status names to include (empty = all)
+  priorities: string[];        // 'Low' | 'Medium' | 'High' (empty = all)
+  assignees: string[];         // user names to include (empty = all)
+}
+
+export const emptyFilters: TaskFilters = {
+  statuses: [],
+  priorities: [],
+  assignees: [],
+};
+
+/** Parsed form schema matching the web client's FormVersion.fields structure */
+export interface FormSchema {
+  title?: string;
+  description?: string;
+  fields: FormSchemaField[];
+}
+
+export interface FormSchemaField {
+  id: number;
+  type: 'text' | 'textarea' | 'select' | 'checkbox' | 'date' | 'number'
+       | 'time' | 'datetime' | 'signature' | 'image' | 'fixed-image'
+       | 'barcode' | 'list' | 'single-checkbox';
+  label: string;
+  placeholder?: string;
+  required?: boolean;
+  options?: string[];
+  properties?: {
+    imageUrl?: string | null;
+    imageId?: string | null;
+    allowDecimals?: boolean;
+    listItemType?: string;
+    [key: string]: unknown;
+  };
+}
+
 interface TaskContextType {
   tasks: TaskItem[];
+  /** Total number of tasks for the selected workspace (before pagination) */
+  totalTaskCount: number;
+  /** Load the next page of tasks (infinite scroll) */
+  loadMoreTasks: () => void;
+  /** Whether there are more tasks to load */
+  hasMoreTasks: boolean;
   activeTask: TaskItem | null;
   compactCards: boolean;
   selectedWorkspace: string;
@@ -133,9 +185,20 @@ interface TaskContextType {
   setActiveTask: (task: TaskItem | null, markDone?: boolean) => void;
   toggleCompactCards: () => void;
   setSelectedWorkspace: (workspace: string) => void;
+  filters: TaskFilters;
+  setFilters: (filters: TaskFilters) => void;
+  hasActiveFilters: boolean;
+  /** All unique assignee names across the current workspace's tasks */
+  availableAssignees: string[];
   changeTaskStatus: (taskId: string, status: StatusOption) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
+  /** Get the form schema for a task (returns null if no form) */
+  getFormSchema: (task: TaskItem) => FormSchema | null;
+  /** Get the existing task form submission for a task */
+  getTaskFormSubmission: (taskId: string) => { id: number; formVersionId: number; data: Record<string, unknown> } | null;
+  /** Get the active form version ID for a given form */
+  getFormVersionId: (formId: number) => number | null;
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -146,6 +209,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [activeTask, setActiveTaskState] = useState<TaskItem | null>(null);
   const [compactCards, setCompactCards] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
+  const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
   // Local overrides for optimistic mutations (keyed by task id)
   const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
 
@@ -201,6 +265,21 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     return m;
   }, [data.taskTags, tagNameMap]);
+
+  // Build template → form lookup: templateId → { formId, formName }
+  const templateFormMap = useMemo(() => {
+    const formMap = new Map<number, string>();
+    for (const f of data.forms) formMap.set(f.id, f.name);
+
+    const m = new Map<number, { formId: number; formName: string }>();
+    for (const tpl of data.templates) {
+      if (tpl.form_id) {
+        const formName = formMap.get(tpl.form_id) ?? 'Form';
+        m.set(tpl.id, { formId: tpl.form_id, formName });
+      }
+    }
+    return m;
+  }, [data.templates, data.forms]);
 
   // Build workspace list (names for backward compat) + full objects
   const workspaces = useMemo(() => {
@@ -281,37 +360,125 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return statuses.filter((s) => s.id === statusId || allowedIds.has(s.id));
   }, [statuses, categoryTransitionGroupMap, transitionMap]);
 
-  // Map synced tasks → TaskItem[]
-  const tasks = useMemo(() => {
-    if (data.tasks.length === 0) return staticTasks;
-
-    let mapped = data.tasks.map((t) =>
-      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus),
+  // ---------------------------------------------------------------------------
+  // Step 1: Pre-map ALL tasks once (expensive, only recomputes when data changes)
+  // ---------------------------------------------------------------------------
+  const allMappedTasks = useMemo(() => {
+    if (data.tasks.length === 0) return [];
+    return data.tasks.map((t) =>
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap),
     );
+  }, [data.tasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap]);
+
+  // Build a workspace-id lookup from the pre-mapped tasks (index-aligned with data.tasks)
+  const taskWorkspaceIds = useMemo(() => {
+    return data.tasks.map((t) => t.workspace_id);
+  }, [data.tasks]);
+
+  // ---------------------------------------------------------------------------
+  // Step 2: Filter by workspace + user filters
+  // ---------------------------------------------------------------------------
+  const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0;
+
+  const filteredTasks = useMemo(() => {
+    if (allMappedTasks.length === 0) return staticTasks;
+
+    let result: TaskItem[];
+    if (selectedWorkspace === 'Everything') {
+      result = allMappedTasks;
+    } else {
+      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+      if (ws) {
+        const wsId = ws.id;
+        result = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+      } else {
+        result = allMappedTasks;
+      }
+    }
+
+    // Apply user-selected filters
+    if (hasActiveFilters) {
+      const statusSet = filters.statuses.length > 0 ? new Set(filters.statuses) : null;
+      const prioritySet = filters.priorities.length > 0 ? new Set(filters.priorities) : null;
+      const assigneeSet = filters.assignees.length > 0 ? new Set(filters.assignees) : null;
+
+      result = result.filter((t) => {
+        if (statusSet && !statusSet.has(t.status)) return false;
+        if (prioritySet && !prioritySet.has(t.priority)) return false;
+        if (assigneeSet && !t.assignees.some((a) => assigneeSet.has(a))) return false;
+        return true;
+      });
+    }
 
     // Apply local overrides
     if (localOverrides.size > 0) {
-      mapped = mapped.map((t) => {
+      result = result.map((t) => {
         const override = localOverrides.get(t.id ?? '');
         return override ? { ...t, ...override } : t;
       });
     }
 
-    // Filter by workspace
-    if (selectedWorkspace !== 'Everything') {
+    return result;
+  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters]);
+
+  // Unique assignee names from the workspace-filtered (pre-user-filter) tasks
+  const availableAssignees = useMemo(() => {
+    let wsFiltered: TaskItem[];
+    if (selectedWorkspace === 'Everything') {
+      wsFiltered = allMappedTasks;
+    } else {
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
-        const wsTaskIds = new Set(
-          data.tasks
-            .filter((t) => t.workspace_id === ws.id)
-            .map((t) => String(t.id)),
-        );
-        mapped = mapped.filter((t) => wsTaskIds.has(t.id ?? ''));
+        const wsId = ws.id;
+        wsFiltered = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+      } else {
+        wsFiltered = allMappedTasks;
       }
     }
+    const names = new Set<string>();
+    for (const t of wsFiltered) {
+      for (const a of t.assignees) names.add(a);
+    }
+    return Array.from(names).sort();
+  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
 
-    return mapped;
-  }, [data.tasks, data.workspaces, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, selectedWorkspace, localOverrides]);
+  // ---------------------------------------------------------------------------
+  // Step 3: Paginate – only expose a slice, grow on loadMore (infinite scroll)
+  // ---------------------------------------------------------------------------
+  const PAGE_SIZE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  // Reset visible count (and filters) when workspace changes
+  const prevWorkspaceRef = useRef(selectedWorkspace);
+  useEffect(() => {
+    if (prevWorkspaceRef.current !== selectedWorkspace) {
+      setVisibleCount(PAGE_SIZE);
+      setFilters(emptyFilters);
+      prevWorkspaceRef.current = selectedWorkspace;
+    }
+  }, [selectedWorkspace]);
+
+  // Reset pagination when filters change
+  const prevFiltersRef = useRef(filters);
+  useEffect(() => {
+    if (prevFiltersRef.current !== filters) {
+      setVisibleCount(PAGE_SIZE);
+      prevFiltersRef.current = filters;
+    }
+  }, [filters]);
+
+  const tasks = useMemo(() => {
+    return filteredTasks.slice(0, visibleCount);
+  }, [filteredTasks, visibleCount]);
+
+  const totalTaskCount = filteredTasks.length;
+  const hasMoreTasks = visibleCount < filteredTasks.length;
+
+  const loadMoreTasks = useCallback(() => {
+    if (hasMoreTasks) {
+      setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, filteredTasks.length));
+    }
+  }, [hasMoreTasks, filteredTasks.length]);
 
   // ---- Mutations (optimistic, client-side only for now) --------------------
 
@@ -342,26 +509,50 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const toggleCompactCards = () => setCompactCards((p) => !p);
 
-  const changeTaskStatus = (taskId: string, status: StatusOption) => {
+  const changeTaskStatus = useCallback((taskId: string, status: StatusOption) => {
+    // Optimistic update
     setLocalOverrides((prev) => {
       const next = new Map(prev);
-      next.set(taskId, { status: status.name, statusColor: status.color });
+      next.set(taskId, { status: status.name, statusColor: status.color, statusId: status.id });
       return next;
     });
-  };
 
-  const markTaskDone = (taskId: string) => {
+    // Persist to backend
+    apiClient.patchTask(Number(taskId), { status_id: status.id }).catch((err) => {
+      console.warn('[TaskContext] Failed to change status:', err);
+      // Rollback optimistic update
+      setLocalOverrides((prev) => {
+        const next = new Map(prev);
+        next.delete(taskId);
+        return next;
+      });
+    });
+  }, []);
+
+  const markTaskDone = useCallback((taskId: string) => {
     if (!finalStatus) return;
+    // Find the final status ID
+    const finalStatusObj = data.statuses.find((s) => s.final);
+    const finalStatusId = finalStatusObj?.id;
+
+    // Optimistic update
     setLocalOverrides((prev) => {
       const next = new Map(prev);
       next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
       return next;
     });
     if (activeTask?.id === taskId) setActiveTaskState(null);
-  };
+
+    // Persist to backend
+    if (finalStatusId) {
+      apiClient.patchTask(Number(taskId), { status_id: finalStatusId }).catch((err) => {
+        console.warn('[TaskContext] Failed to mark task done:', err);
+      });
+    }
+  }, [finalStatus, data.statuses, activeTask]);
 
   const assignTaskToYou = (taskId: string) => {
-    const task = tasks.find((t) => t.id === taskId);
+    const task = filteredTasks.find((t) => t.id === taskId);
     if (task && !task.assignees.includes('You')) {
       setLocalOverrides((prev) => {
         const next = new Map(prev);
@@ -371,29 +562,132 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  // Form version map: formId → active form version (with parsed schema)
+  const formVersionMap = useMemo(() => {
+    const formToCurrentVersion = new Map<number, number>();
+    for (const f of data.forms) {
+      if (f.current_version_id) formToCurrentVersion.set(f.id, f.current_version_id);
+    }
+
+    const m = new Map<number, SyncedFormVersion>();
+    for (const fv of data.formVersions) {
+      // Check if this version is the current active one for its form
+      const currentVersionId = formToCurrentVersion.get(fv.form_id);
+      if (currentVersionId === fv.id) {
+        m.set(fv.form_id, fv);
+      }
+    }
+    return m;
+  }, [data.forms, data.formVersions]);
+
+  // Task form submissions map: taskId → TaskForm
+  const taskFormMap = useMemo(() => {
+    const m = new Map<number, SyncedTaskForm>();
+    for (const tf of data.taskForms) {
+      m.set(tf.task_id, tf);
+    }
+    return m;
+  }, [data.taskForms]);
+
+  const getFormSchema = useCallback((task: TaskItem): FormSchema | null => {
+    if (!task.formId) return null;
+
+    const fv = formVersionMap.get(task.formId);
+    if (!fv || !fv.fields) return null;
+
+    try {
+      const parsed = typeof fv.fields === 'string' ? JSON.parse(fv.fields) : fv.fields;
+      return {
+        title: (parsed as Record<string, unknown>).title as string | undefined,
+        description: (parsed as Record<string, unknown>).description as string | undefined,
+        fields: ((parsed as Record<string, unknown>).fields as FormSchemaField[]) ?? [],
+      };
+    } catch {
+      return null;
+    }
+  }, [formVersionMap]);
+
+  const getFormVersionId = useCallback((formId: number): number | null => {
+    const fv = formVersionMap.get(formId);
+    return fv?.id ?? null;
+  }, [formVersionMap]);
+
+  const getTaskFormSubmission = useCallback((taskId: string): { id: number; formVersionId: number; data: Record<string, unknown> } | null => {
+    const tf = taskFormMap.get(Number(taskId));
+    if (!tf) return null;
+
+    let parsedData: Record<string, unknown> = {};
+    if (tf.data) {
+      try {
+        parsedData = typeof tf.data === 'string' ? JSON.parse(tf.data) : tf.data as Record<string, unknown>;
+      } catch {
+        parsedData = {};
+      }
+    }
+
+    return {
+      id: tf.id,
+      formVersionId: tf.form_version_id,
+      data: parsedData,
+    };
+  }, [taskFormMap]);
+
+  const contextValue = useMemo<TaskContextType>(
+    () => ({
+      tasks,
+      totalTaskCount,
+      loadMoreTasks,
+      hasMoreTasks,
+      activeTask,
+      compactCards,
+      selectedWorkspace,
+      workspaces,
+      workspaceObjects,
+      statuses,
+      initialStatus,
+      finalStatus,
+      getAllowedStatuses,
+      addTask,
+      updateTask,
+      setActiveTask,
+      toggleCompactCards,
+      setSelectedWorkspace,
+      filters,
+      setFilters,
+      hasActiveFilters,
+      availableAssignees,
+      changeTaskStatus,
+      markTaskDone,
+      assignTaskToYou,
+      getFormSchema,
+      getTaskFormSubmission,
+      getFormVersionId,
+    }),
+    [
+      tasks,
+      totalTaskCount,
+      loadMoreTasks,
+      hasMoreTasks,
+      activeTask,
+      compactCards,
+      selectedWorkspace,
+      workspaces,
+      workspaceObjects,
+      statuses,
+      initialStatus,
+      finalStatus,
+      getAllowedStatuses,
+      filters,
+      hasActiveFilters,
+      availableAssignees,
+      getFormSchema,
+      getTaskFormSubmission,
+      getFormVersionId,
+    ],
+  );
+
   return (
-    <TaskContext.Provider
-      value={{
-        tasks,
-        activeTask,
-        compactCards,
-        selectedWorkspace,
-        workspaces,
-        workspaceObjects,
-        statuses,
-        initialStatus,
-        finalStatus,
-        getAllowedStatuses,
-        addTask,
-        updateTask,
-        setActiveTask,
-        toggleCompactCards,
-        setSelectedWorkspace,
-        changeTaskStatus,
-        markTaskDone,
-        assignTaskToYou,
-      }}
-    >
+    <TaskContext.Provider value={contextValue}>
       {children}
     </TaskContext.Provider>
   );

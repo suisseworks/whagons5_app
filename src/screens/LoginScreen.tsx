@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,10 +8,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Keyboard,
+  StatusBar,
   useWindowDimensions,
   ActivityIndicator,
   Alert,
   Image,
+  Animated,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -20,7 +23,6 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useAuth } from '../context/AuthContext';
 import Svg, { Path, Rect, G, Defs, ClipPath } from 'react-native-svg';
-import { LinearGradient } from 'expo-linear-gradient';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
@@ -52,6 +54,40 @@ export const LoginScreen: React.FC = () => {
   const [isObscured, setIsObscured] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  // Animations
+  const logoFade = useRef(new Animated.Value(0)).current;
+  const formSlide = useRef(new Animated.Value(30)).current;
+  const formFade = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(logoFade, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.parallel([
+        Animated.timing(formFade, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(formSlide, {
+          toValue: 0,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, []);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
   const isLargeScreen = width > 800;
   const anyLoading = isLoading || isGoogleLoading;
@@ -62,7 +98,6 @@ export const LoginScreen: React.FC = () => {
     );
   };
 
-  // ---- Google Sign-In ------------------------------------------------
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
@@ -71,7 +106,7 @@ export const LoginScreen: React.FC = () => {
     } catch (err: any) {
       const msg = err?.message || 'Google sign-in failed. Please try again.';
       if (msg.includes('CANCELED') || msg.includes('cancelled')) {
-        // User cancelled – don't show an error
+        // User cancelled
       } else {
         Alert.alert('Sign-In Failed', msg);
       }
@@ -80,7 +115,6 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
-  // ---- Email / Password Sign-In --------------------------------------
   const handleEmailSignIn = async () => {
     if (!email.trim()) {
       Alert.alert('Error', 'Please enter your email');
@@ -97,7 +131,6 @@ export const LoginScreen: React.FC = () => {
       navigateToMain();
     } catch (err: any) {
       let msg = err?.message || 'Unable to log in. Please try again.';
-      // Friendlier Firebase error messages
       if (msg.includes('wrong-password') || msg.includes('invalid-credential')) {
         msg = 'Incorrect email or password.';
       } else if (msg.includes('user-not-found')) {
@@ -113,19 +146,21 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
-  // ---- Form -----------------------------------------------------------
   const LoginForm = () => (
-    <View style={[styles.formContainer, isLargeScreen && styles.formContainerLarge]}>
-      <Text style={styles.welcomeText}>Welcome back</Text>
-      <Text style={styles.subtitleText}>Sign in to continue to Whagons</Text>
-
+    <Animated.View
+      style={[
+        styles.formContainer,
+        isLargeScreen && styles.formContainerLarge,
+        { opacity: formFade, transform: [{ translateY: formSlide }] },
+      ]}
+    >
       {/* Email */}
       <View style={styles.inputContainer}>
-        <MaterialIcons name="email" size={22} color="#8B8E84" style={styles.inputIcon} />
+        <MaterialIcons name="email" size={20} color="#A8A8A0" style={styles.inputIcon} />
         <TextInput
           style={styles.input}
           placeholder="Email"
-          placeholderTextColor="#9E9E9E"
+          placeholderTextColor="#B0B0A8"
           value={email}
           onChangeText={setEmail}
           keyboardType="email-address"
@@ -136,11 +171,11 @@ export const LoginScreen: React.FC = () => {
 
       {/* Password */}
       <View style={styles.inputContainer}>
-        <MaterialIcons name="lock" size={22} color="#8B8E84" style={styles.inputIcon} />
+        <MaterialIcons name="lock" size={20} color="#A8A8A0" style={styles.inputIcon} />
         <TextInput
           style={[styles.input, { flex: 1 }]}
           placeholder="Password"
-          placeholderTextColor="#9E9E9E"
+          placeholderTextColor="#B0B0A8"
           value={password}
           onChangeText={setPassword}
           secureTextEntry={isObscured}
@@ -148,20 +183,21 @@ export const LoginScreen: React.FC = () => {
           returnKeyType="go"
           onSubmitEditing={handleEmailSignIn}
         />
-        <TouchableOpacity onPress={() => setIsObscured(!isObscured)}>
+        <TouchableOpacity onPress={() => setIsObscured(!isObscured)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
           <MaterialIcons
             name={isObscured ? 'visibility' : 'visibility-off'}
-            size={22}
-            color="#8B8E84"
+            size={20}
+            color="#A8A8A0"
           />
         </TouchableOpacity>
       </View>
 
-      {/* Email Sign-In Button */}
+      {/* Sign In Button */}
       <TouchableOpacity
         style={[styles.loginButton, anyLoading && styles.loginButtonDisabled]}
         onPress={handleEmailSignIn}
         disabled={anyLoading}
+        activeOpacity={0.85}
       >
         {isLoading ? (
           <ActivityIndicator color="#FFFFFF" />
@@ -173,61 +209,40 @@ export const LoginScreen: React.FC = () => {
       {/* Divider */}
       <View style={styles.dividerRow}>
         <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>Or continue with</Text>
+        <Text style={styles.dividerText}>or</Text>
         <View style={styles.dividerLine} />
       </View>
 
-      {/* Google Sign-In Button */}
+      {/* Google */}
       <TouchableOpacity
         style={[styles.googleButton, anyLoading && styles.loginButtonDisabled]}
         onPress={handleGoogleSignIn}
         disabled={anyLoading}
+        activeOpacity={0.85}
       >
         {isGoogleLoading ? (
           <ActivityIndicator color="#212121" />
         ) : (
           <View style={styles.googleButtonContent}>
             <GoogleLogo />
-            <Text style={styles.googleButtonText}>Sign in with Google</Text>
+            <Text style={styles.googleButtonText}>Continue with Google</Text>
           </View>
         )}
       </TouchableOpacity>
-    </View>
+    </Animated.View>
   );
 
-  const AppPreview = () => (
-    <LinearGradient
-      colors={['#161B19', '#233029', '#2F6F6D']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[styles.previewContainer, isLargeScreen && styles.previewContainerLarge]}
-    >
-      <View style={styles.previewBadge}>
-        <Image source={require('../../assets/whagons-check.png')} style={styles.previewLogo} />
-      </View>
-      <Text style={styles.previewTitle}>Work flows. Clean lines.</Text>
-      <Text style={styles.previewText}>Track tasks, crews, and approvals in one place.</Text>
-      <View style={styles.previewCard}>
-        <View style={styles.previewRow}>
-          <View style={styles.previewDot} />
-          <Text style={styles.previewRowText}>HVAC filters · Building A</Text>
-        </View>
-        <View style={styles.previewRow}>
-          <View style={[styles.previewDot, { backgroundColor: '#D28A54' }]} />
-          <Text style={styles.previewRowText}>Emergency lights · Basement</Text>
-        </View>
-      </View>
-    </LinearGradient>
-  );
-
+  // ---- Large screen (tablet) layout ----
   if (isLargeScreen) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.largeScreenContainer}>
-          <View style={styles.previewSection}>
-            <AppPreview />
-          </View>
           <View style={styles.formSection}>
+            <View style={styles.logoArea}>
+              <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
+              <Text style={styles.brandName}>Whagons</Text>
+              <Text style={styles.tagline}>Sign in to your account</Text>
+            </View>
             <LoginForm />
           </View>
         </View>
@@ -235,18 +250,46 @@ export const LoginScreen: React.FC = () => {
     );
   }
 
+  // ---- Phone layout ----
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <StatusBar barStyle="dark-content" backgroundColor="#F4F1EA" translucent={false} />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={[styles.previewContainer, { height: height * 0.42 }]}>
-            <AppPreview />
+        {keyboardVisible ? (
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            bounces={false}
+            overScrollMode="never"
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <View style={styles.keyboardHeader}>
+              <Image source={require('../../assets/whagons-check.png')} style={styles.logoMarkSmall} />
+              <Text style={styles.brandNameSmall}>Whagons</Text>
+            </View>
+            <LoginForm />
+          </ScrollView>
+        ) : (
+          <View style={styles.flex}>
+            {/* Top: Logo area */}
+            <Animated.View style={[styles.logoSection, { opacity: logoFade }]}>
+              <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
+              <Text style={styles.brandName}>Whagons</Text>
+              <Text style={styles.tagline}>Sign in to your account</Text>
+            </Animated.View>
+
+            {/* Bottom: Form */}
+            <LoginForm />
+
+            {/* Footer */}
+            <View style={styles.footer}>
+              <Text style={styles.footerText}>Coordinating work, together.</Text>
+            </View>
           </View>
-          <LoginForm />
-        </ScrollView>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -262,105 +305,72 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: 24,
   },
-  largeScreenContainer: {
-    flex: 1,
-    flexDirection: 'row',
-  },
-  previewSection: {
-    flex: 1,
-    backgroundColor: '#F4F1EA',
-  },
-  formSection: {
+
+  // ---- Logo section (phone) ----
+  logoSection: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingTop: 20,
   },
-  previewContainer: {
-    backgroundColor: '#F4F1EA',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: spacing.lg,
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-  },
-  previewContainerLarge: {
-    flex: 1,
-    height: '100%',
-  },
-  previewBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.16)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 14,
-  },
-  previewLogo: {
-    width: 36,
-    height: 36,
+  logoMark: {
+    width: 56,
+    height: 56,
     resizeMode: 'contain',
   },
-  previewTitle: {
-    fontSize: fontSizes.lg,
+  brandName: {
+    marginTop: 14,
+    fontSize: 30,
     fontFamily: fontFamilies.displaySemibold,
-    color: '#F4F1EA',
-    textAlign: 'center',
+    color: '#1E2321',
+    letterSpacing: -0.5,
   },
-  previewText: {
-    marginTop: 8,
+  tagline: {
+    marginTop: 6,
     fontSize: fontSizes.sm,
-    color: 'rgba(244, 241, 234, 0.8)',
-    textAlign: 'center',
     fontFamily: fontFamilies.bodyRegular,
+    color: '#8B8E84',
   },
-  previewCard: {
-    marginTop: 18,
-    width: '100%',
-    backgroundColor: 'rgba(15, 23, 20, 0.45)',
-    borderRadius: radius.md,
-    padding: 14,
-    ...shadows.subtle,
-  },
-  previewRow: {
+
+  // Keyboard-visible compact header
+  keyboardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    justifyContent: 'center',
+    paddingTop: 16,
+    paddingBottom: 8,
   },
-  previewDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#C7D6CF',
-    marginRight: 10,
+  logoMarkSmall: {
+    width: 28,
+    height: 28,
+    resizeMode: 'contain',
   },
-  previewRowText: {
-    fontSize: fontSizes.sm,
-    color: 'rgba(244, 241, 234, 0.9)',
-    fontFamily: fontFamilies.bodyMedium,
+  brandNameSmall: {
+    marginLeft: 10,
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+    color: '#1E2321',
+    letterSpacing: -0.3,
   },
+
+  // Logo area (large screen)
+  logoArea: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+
+  // ---- Form ----
   formContainer: {
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: 8,
     width: '100%',
-    maxWidth: 420,
+    maxWidth: 400,
+    alignSelf: 'center',
   },
   formContainerLarge: {
     padding: spacing.xl,
-  },
-  welcomeText: {
-    fontSize: fontSizes.display,
-    fontFamily: fontFamilies.displaySemibold,
-    color: '#1E2321',
-    textAlign: 'center',
-  },
-  subtitleText: {
-    marginTop: 8,
-    fontSize: fontSizes.md,
-    color: '#6C746F',
-    textAlign: 'center',
-    marginBottom: 32,
-    fontFamily: fontFamilies.bodyRegular,
   },
   inputContainer: {
     flexDirection: 'row',
@@ -369,9 +379,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E6E1D7',
     borderRadius: radius.md,
-    paddingHorizontal: 12,
-    marginBottom: 16,
-    height: 56,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    height: 52,
   },
   inputIcon: {
     marginRight: 12,
@@ -383,16 +393,15 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyMedium,
   },
   loginButton: {
-    backgroundColor: '#C77B43',
+    backgroundColor: '#1E2321',
     height: 52,
     borderRadius: radius.md,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
-    ...shadows.subtle,
+    marginTop: 4,
   },
   loginButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.6,
   },
   loginButtonText: {
     color: '#FFFFFF',
@@ -402,7 +411,7 @@ const styles = StyleSheet.create({
   dividerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 20,
+    marginVertical: 18,
   },
   dividerLine: {
     flex: 1,
@@ -410,12 +419,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#E6E1D7',
   },
   dividerText: {
-    marginHorizontal: 12,
+    marginHorizontal: 14,
     fontSize: fontSizes.xs,
-    color: '#8B8E84',
-    textTransform: 'uppercase',
-    fontFamily: fontFamilies.bodySemibold,
-    letterSpacing: 0.8,
+    color: '#B0ADA6',
+    fontFamily: fontFamilies.bodyMedium,
   },
   googleButton: {
     height: 52,
@@ -435,5 +442,29 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
     color: '#1E2321',
+  },
+
+  // ---- Footer ----
+  footer: {
+    paddingBottom: 20,
+    alignItems: 'center',
+  },
+  footerText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
+    color: '#B0ADA6',
+    letterSpacing: 0.3,
+  },
+
+  // ---- Large screen ----
+  largeScreenContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  formSection: {
+    width: '100%',
+    maxWidth: 420,
+    alignItems: 'center',
   },
 });
