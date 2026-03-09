@@ -17,6 +17,7 @@ import notifee, {
   EventType,
 } from '@notifee/react-native';
 import { getApp } from '@react-native-firebase/app';
+import { getChannelIdForTone, getAllToneChannelConfigs } from '../utils/notificationTones';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -37,7 +38,8 @@ const CHANNEL_ID_TASKS = 'whagons_tasks';
 export async function createNotificationChannels(): Promise<void> {
   if (Platform.OS !== 'android') return;
 
-  await Promise.all([
+  // Core channels
+  const coreChannels = [
     notifee.createChannel({
       id: CHANNEL_ID_DEFAULT,
       name: 'General',
@@ -60,7 +62,21 @@ export async function createNotificationChannels(): Promise<void> {
       sound: 'default',
       vibration: true,
     }),
-  ]);
+  ];
+
+  // Per-tone channels (one for each predefined notification tone)
+  const toneChannels = getAllToneChannelConfigs().map(cfg =>
+    notifee.createChannel({
+      id: cfg.id,
+      name: cfg.name,
+      description: `Category notification tone: ${cfg.name}`,
+      importance: cfg.silent ? AndroidImportance.LOW : AndroidImportance.HIGH,
+      sound: cfg.silent ? undefined : cfg.sound,
+      vibration: !cfg.silent,
+    }),
+  );
+
+  await Promise.all([...coreChannels, ...toneChannels]);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,13 +158,23 @@ export function setupForegroundMessageHandler(): () => void {
 
     const { notification, data } = remoteMessage;
 
-    // Determine which channel to use based on message type
-    let channelId = CHANNEL_ID_DEFAULT;
-    const type = data?.type as string | undefined;
-    if (type === 'message' || type === 'chat') {
-      channelId = CHANNEL_ID_MESSAGES;
-    } else if (type === 'task' || type === 'sla' || type === 'assignment') {
-      channelId = CHANNEL_ID_TASKS;
+    // Determine which channel to use.
+    // Priority: category notification_tone → message-type channel → default
+    const notificationTone = data?.notification_tone as string | undefined;
+    let channelId: string;
+
+    if (notificationTone) {
+      // Use tone-specific channel when the category has a tone configured
+      channelId = getChannelIdForTone(notificationTone);
+    } else {
+      // Fall back to type-based channel selection
+      channelId = CHANNEL_ID_DEFAULT;
+      const type = data?.type as string | undefined;
+      if (type === 'message' || type === 'chat') {
+        channelId = CHANNEL_ID_MESSAGES;
+      } else if (type === 'task' || type === 'sla' || type === 'assignment') {
+        channelId = CHANNEL_ID_TASKS;
+      }
     }
 
     // Display with Notifee
@@ -187,12 +213,21 @@ export function registerBackgroundMessageHandler(): void {
     // we display them via Notifee:
     if (!remoteMessage.notification) {
       const { data } = remoteMessage;
-      let channelId = CHANNEL_ID_DEFAULT;
-      const type = data?.type as string | undefined;
-      if (type === 'message' || type === 'chat') {
-        channelId = CHANNEL_ID_MESSAGES;
-      } else if (type === 'task' || type === 'sla' || type === 'assignment') {
-        channelId = CHANNEL_ID_TASKS;
+
+      // Determine channel: category tone → type-based → default
+      const notificationTone = data?.notification_tone as string | undefined;
+      let channelId: string;
+
+      if (notificationTone) {
+        channelId = getChannelIdForTone(notificationTone);
+      } else {
+        channelId = CHANNEL_ID_DEFAULT;
+        const type = data?.type as string | undefined;
+        if (type === 'message' || type === 'chat') {
+          channelId = CHANNEL_ID_MESSAGES;
+        } else if (type === 'task' || type === 'sla' || type === 'assignment') {
+          channelId = CHANNEL_ID_TASKS;
+        }
       }
 
       await notifee.displayNotification({

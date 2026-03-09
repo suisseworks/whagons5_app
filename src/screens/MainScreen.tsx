@@ -64,7 +64,7 @@ export const MainScreen: React.FC = () => {
     setSelectedWorkspace,
   } = useTasks();
 
-  const { isSyncing, refresh, syncError } = useData();
+  const { data, isSyncing, refresh, syncError } = useData();
 
   // Build workspace lookup by name for icon/color access
   const workspaceLookup = useMemo(() => {
@@ -449,7 +449,7 @@ export const MainScreen: React.FC = () => {
       </View>
 
       {/* FAB — floating above the bottom bar */}
-      {!(selectedNav === 1 && colabSpaceId !== null) && (
+      {!(selectedNav === 1 && colabInChat) && (
         <TouchableOpacity
           style={[styles.fab, { backgroundColor: primaryColor }]}
           onPress={handleCreateTask}
@@ -460,7 +460,7 @@ export const MainScreen: React.FC = () => {
       )}
 
       {/* Bottom Navigation — hidden when inside a colab space chat */}
-      {!(selectedNav === 1 && colabSpaceId !== null) && (
+      {!(selectedNav === 1 && colabInChat) && (
         <View
           style={[
             styles.bottomBar,
@@ -476,7 +476,7 @@ export const MainScreen: React.FC = () => {
               style={styles.navItem}
               onPress={() => {
                 setSelectedNav(index);
-                if (index !== 1) setColabSpaceId(null);
+                if (index !== 1) setColabInChat(false);
               }}
               activeOpacity={0.6}
             >
