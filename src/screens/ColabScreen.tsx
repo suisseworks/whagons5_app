@@ -1013,21 +1013,21 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         (lp) => lp.status !== 'failed' && (lp.title || lp.description || lp.image_url),
       );
 
-      return (
+       return (
         <View
           style={[
             styles.messageRow,
             isMe ? styles.messageRowMe : styles.messageRowOther,
           ]}
         >
-          {/* Avatar (left for others) */}
+          {/* Avatar (left for others only) */}
           {!isMe && (
             <View style={styles.messageAvatarWrap}>
               <UserAvatar user={sender} size={32} primaryColor={primaryColor} />
             </View>
           )}
 
-          <View style={[styles.messageBubbleWrap, isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
+          <View style={[styles.messageBubbleWrap, !isMe && { flex: 1 }, isMe ? { alignItems: 'flex-end' } : { alignItems: 'flex-start' }]}>
             {/* Sender name + time */}
             <View style={[styles.messageHeader, isMe && { flexDirection: 'row-reverse' }]}>
               <Text style={[styles.messageAuthor, { color: colors.text }]}>
@@ -1235,13 +1235,6 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               </View>
             )}
           </View>
-
-          {/* Avatar (right for own messages) */}
-          {isMe && (
-            <View style={styles.messageAvatarWrap}>
-              <UserAvatar user={getUser(currentUserId)} size={32} primaryColor={primaryColor} />
-            </View>
-          )}
         </View>
       );
     },
@@ -2338,7 +2331,6 @@ const styles = StyleSheet.create({
   },
   messageRowMe: {
     alignSelf: 'flex-end',
-    flexDirection: 'row-reverse',
   },
   messageRowOther: {
     alignSelf: 'flex-start',
