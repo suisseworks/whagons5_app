@@ -80,6 +80,7 @@ export interface TaskModel {
 export type RootStackParamList = {
   Splash: undefined;
   Login: undefined;
+  TenantSelect: { tenants: string[]; firebaseIdToken: string };
   Main: undefined;
   TaskDetail: { task: TaskItem };
   CreateTask: undefined;

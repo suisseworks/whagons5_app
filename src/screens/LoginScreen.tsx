@@ -21,7 +21,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, TenantChoiceRequired } from '../context/AuthContext';
 import Svg, { Path, Rect, G, Defs, ClipPath } from 'react-native-svg';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
@@ -104,6 +104,13 @@ export const LoginScreen: React.FC = () => {
       await signInWithGoogle();
       navigateToMain();
     } catch (err: any) {
+      if (err instanceof TenantChoiceRequired) {
+        navigation.navigate('TenantSelect', {
+          tenants: err.tenants,
+          firebaseIdToken: err.firebaseIdToken,
+        });
+        return;
+      }
       const msg = err?.message || 'Google sign-in failed. Please try again.';
       if (msg.includes('CANCELED') || msg.includes('cancelled')) {
         // User cancelled
@@ -130,6 +137,13 @@ export const LoginScreen: React.FC = () => {
       await signInWithEmail({ email: email.trim(), password });
       navigateToMain();
     } catch (err: any) {
+      if (err instanceof TenantChoiceRequired) {
+        navigation.navigate('TenantSelect', {
+          tenants: err.tenants,
+          firebaseIdToken: err.firebaseIdToken,
+        });
+        return;
+      }
       let msg = err?.message || 'Unable to log in. Please try again.';
       if (msg.includes('wrong-password') || msg.includes('invalid-credential')) {
         msg = 'Incorrect email or password.';

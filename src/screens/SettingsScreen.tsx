@@ -8,20 +8,29 @@ import {
   TouchableOpacity,
   Switch,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, CommonActions } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
+import { useData } from '../context/DataContext';
+import { clearAllData } from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
+type SettingsNavProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
+
 export const SettingsScreen: React.FC = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<SettingsNavProp>();
   const { colors, primaryColor, isDarkMode, toggleDarkMode } = useTheme();
   const { preferences, updatePreferences, hasPermission } = useNotifications();
-  const { user } = useAuth();
+  const { user, logout, subdomain, switchTenant } = useAuth();
+  const { forceResync } = useData();
+  const [isSwitching, setIsSwitching] = useState(false);
 
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [autoBackup, setAutoBackup] = useState(true);
@@ -50,30 +59,73 @@ export const SettingsScreen: React.FC = () => {
 
   const showClearCacheDialog = () => {
     Alert.alert(
-      'Clear Cache',
-      'This will clear 125 MB of cached data. Continue?',
+      'Force Resync',
+      'This will clear all cached data and resync everything from the server.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear',
-          onPress: () => Alert.alert('Done', 'Cache cleared successfully'),
+          text: 'Resync',
+          onPress: async () => {
+            try {
+              await forceResync();
+              Alert.alert('Done', 'Data resynced successfully');
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Resync failed');
+            }
+          },
         },
       ]
+    );
+  };
+
+  const handleSwitchTenant = () => {
+    Alert.alert(
+      'Switch Workspace',
+      'This will clear your current data and let you pick a different workspace.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Switch',
+          onPress: async () => {
+            setIsSwitching(true);
+            try {
+              await clearAllData();
+              const { tenants, firebaseIdToken } = await switchTenant();
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'TenantSelect', params: { tenants, firebaseIdToken } }],
+                }),
+              );
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to switch workspace');
+            } finally {
+              setIsSwitching(false);
+            }
+          },
+        },
+      ],
     );
   };
 
   const showLogoutDialog = () => {
     Alert.alert(
       'Logout',
-      'Are you sure you want to logout?',
+      'Are you sure you want to logout? You can pick a different workspace when you sign back in.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: () => {
-            navigation.goBack();
-            Alert.alert('Done', 'Logged out successfully');
+          onPress: async () => {
+            await clearAllData();
+            await logout();
+            navigation.dispatch(
+              CommonActions.reset({
+                index: 0,
+                routes: [{ name: 'Login' }],
+              }),
+            );
           },
         },
       ]
@@ -212,6 +264,36 @@ export const SettingsScreen: React.FC = () => {
             subtitle="+1 (555) 123-4567"
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Phone settings')}
+          />
+        </View>
+
+        {/* Workspace Section */}
+        <SectionHeader title="Workspace" />
+        <View style={cardStyle}>
+          <View style={styles.listTile}>
+            <MaterialIcons name="business" size={24} color={primaryColor} />
+            <View style={styles.listTileContent}>
+              <Text style={[styles.listTileTitle, { color: colors.text }]}>
+                {subdomain ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1) : 'No workspace'}
+              </Text>
+              <Text style={[styles.listTileSubtitle, { color: colors.textSecondary }]}>
+                Current workspace
+              </Text>
+            </View>
+          </View>
+          <View style={styles.divider} />
+          <ListTile
+            icon="swap-horiz"
+            title="Switch Workspace"
+            subtitle="Sign into a different workspace"
+            trailing={
+              isSwitching ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />
+              )
+            }
+            onPress={handleSwitchTenant}
           />
         </View>
 

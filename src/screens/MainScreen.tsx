@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -43,7 +43,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { icon: 'checklist', label: 'Tasks' },
-  { icon: 'forum', label: 'Collab' },
+  { icon: 'forum', label: 'Colab' },
   { icon: 'people-outline', label: 'Boards' },
   { icon: 'cleaning-services', label: 'Cleaning' },
 ];
@@ -142,6 +142,7 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
 
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
+  const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const {
     tasks,
@@ -292,12 +293,6 @@ export const MainScreen: React.FC = () => {
 
     return (
       <View style={styles.listHeader}>
-        <View>
-          <Text style={[styles.listTitle, { color: colors.text }]}>Today</Text>
-          <Text style={[styles.listSubtitle, { color: colors.textSecondary }]}>
-            {totalTaskCount} tasks
-          </Text>
-        </View>
         <View
           style={[
             styles.syncPill,
@@ -556,59 +551,66 @@ export const MainScreen: React.FC = () => {
         {renderContent()}
       </View>
 
-      {/* FAB — floating above the bottom bar */}
-      {!(selectedNav === 1 && colabInChat) && (
-        <TouchableOpacity
-          style={[styles.fab, { backgroundColor: primaryColor }]}
-          onPress={handleCreateTask}
-          activeOpacity={0.8}
-        >
-          <MaterialIcons name="add" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
-      )}
-
-      {/* Bottom Navigation — hidden when inside a colab space chat */}
+      {/* Bottom Navigation — hidden when inside a colab chat */}
       {!(selectedNav === 1 && colabInChat) && (
         <View
           style={[
             styles.bottomBar,
             {
               backgroundColor: colors.surface,
-              borderTopColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)',
+              borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
+              marginBottom: insets.bottom > 0 ? insets.bottom : 12,
             },
           ]}
         >
-          {navItems.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.navItem}
-              onPress={() => {
-                setSelectedNav(index);
-                if (index !== 1) setColabInChat(false);
-              }}
-              activeOpacity={0.6}
-            >
-              <View style={styles.navIconContainer}>
-                <MaterialIcons
-                  name={item.icon}
-                  size={26}
-                  color={selectedNav === index ? primaryColor : colors.textSecondary}
-                />
-                {index === 1 && chatUnreadCount > 0 && (
-                  <View style={[styles.boardsBadge, { backgroundColor: primaryColor }]}>
-                    <Text style={styles.boardsBadgeText}>
-                      {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
-                    </Text>
-                  </View>
-                )}
-                {index === 2 && boards.length > 0 && (
-                  <View style={[styles.boardsBadge, { borderColor: colors.surface }]}>
-                    <Text style={styles.boardsBadgeText}>{boards.length > 9 ? '9+' : boards.length}</Text>
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          ))}
+          <View style={styles.bottomBarContent}>
+            {navItems.map((item, index) => (
+              <TouchableOpacity
+                key={index}
+                style={styles.navItem}
+                onPress={() => {
+                  setSelectedNav(index);
+                  if (index !== 1) setColabInChat(false);
+                }}
+              >
+                <View style={styles.navIconContainer}>
+                  <MaterialIcons
+                    name={item.icon}
+                    size={22}
+                    color={selectedNav === index ? primaryColor : (item.color || colors.textSecondary)}
+                  />
+                  {index === 1 && chatUnreadCount > 0 && (
+                    <View style={[styles.boardsBadge, { backgroundColor: primaryColor }]}>
+                      <Text style={styles.boardsBadgeText}>
+                        {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
+                      </Text>
+                    </View>
+                  )}
+                  {index === 2 && boards.length > 0 && (
+                    <View style={[styles.boardsBadge, { borderColor: colors.surface }]}>
+                      <Text style={styles.boardsBadgeText}>{boards.length > 9 ? '9+' : boards.length}</Text>
+                    </View>
+                  )}
+                </View>
+                <Text
+                  style={[
+                    styles.navLabel,
+                    { color: selectedNav === index ? primaryColor : colors.textSecondary },
+                  ]}
+                >
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* FAB */}
+          <TouchableOpacity
+            style={[styles.fab, { backgroundColor: primaryColor }]}
+            onPress={handleCreateTask}
+          >
+            <MaterialIcons name="add" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
         </View>
       )}
 
@@ -927,22 +929,32 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyMedium,
   },
   bottomBar: {
+    height: 72,
+    borderRadius: radius.lg,
+    marginHorizontal: 12,
+    borderWidth: 1,
+    ...shadows.lifted,
+  },
+  bottomBarContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 48,
-    borderTopWidth: 0.5,
-    paddingLeft: 8,
-    paddingRight: 8,
+    height: '100%',
+    paddingLeft: 16,
+    paddingRight: 88,
+    justifyContent: 'space-between',
   },
   navItem: {
-    width: 48,
-    height: 48,
+    flex: 1,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 4,
+    paddingVertical: 10,
   },
   navIconContainer: {
     position: 'relative',
+  },
+  navLabel: {
+    marginTop: 4,
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
   },
   boardsBadge: {
     position: 'absolute',
@@ -964,15 +976,14 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    right: 16,
-    bottom: 64,
+    right: 20,
+    bottom: 46,
     width: 56,
     height: 56,
     borderRadius: 28,
     justifyContent: 'center',
     alignItems: 'center',
     ...shadows.lifted,
-    zIndex: 10,
   },
 
   menuModalOverlay: {
@@ -1065,5 +1076,42 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
+  },
+
+  // Board list styles
+  colabListContent: {
+    padding: spacing.md,
+    paddingBottom: spacing.xl,
+  },
+  colabListHeader: {
+    marginBottom: spacing.sm,
+  },
+  colabSpaceItem: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    padding: 14,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+  },
+  colabSpaceIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginRight: 12,
+  },
+  colabSpaceInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  colabSpaceName: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  colabSpaceDesc: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
   },
 });

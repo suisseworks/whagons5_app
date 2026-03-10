@@ -326,6 +326,8 @@ interface DataContextType {
   syncError: string | null;
   /** Trigger a manual sync (for pull-to-refresh). */
   refresh: () => Promise<void>;
+  /** Force clear all cached data and do a full resync. */
+  forceResync: () => Promise<void>;
   /** DataManager instance for advanced access. */
   dataManager: DataManager | null;
 }
@@ -366,7 +368,7 @@ const EMPTY_DATA: SyncedData = {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { token, subdomain } = useAuth();
+  const { token, subdomain, isLoading: authLoading } = useAuth();
 
   const [data, setData] = useState<SyncedData>(EMPTY_DATA);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -376,19 +378,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Create / update the DataManager + apiClient when auth changes
   useEffect(() => {
+    if (authLoading) return; // Wait for auth to fully resolve
     if (token && subdomain) {
       // Configure the shared API client so all screens can use it
       apiClient.configure(subdomain, token);
 
-      if (!dmRef.current) {
+      // Always recreate DataManager when subdomain changes
+      if (!dmRef.current || dmRef.current.getSubdomain() !== subdomain) {
         dmRef.current = new DataManager({ subdomain, authToken: token });
+        console.log(`[DataContext] Created DataManager for tenant: ${subdomain}`);
       } else {
         dmRef.current.setAuthToken(token);
       }
     } else {
       dmRef.current = null;
     }
-  }, [token, subdomain]);
+  }, [token, subdomain, authLoading]);
 
   // Load data from SQLite into state
   const hydrateFromCache = useCallback(async () => {
@@ -432,8 +437,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedUser>('wh_users'),
         DB.getAllRows<SyncedTeam>('wh_teams'),
         DB.getAllRows<SyncedTag>('wh_tags'),
-        DB.getAllRows<SyncedTaskUser>('wh_task_users'),
-        DB.getAllRows<SyncedTaskTag>('wh_task_tags'),
+        DB.getAllRows<SyncedTaskUser>('wh_task_user'),
+        DB.getAllRows<SyncedTaskTag>('wh_task_tag'),
         DB.getAllRows<SyncedBoard>('wh_boards'),
         DB.getAllRows<SyncedBoardMember>('wh_board_members'),
         DB.getAllRows<SyncedBoardMessage>('wh_board_messages'),
@@ -448,6 +453,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedLinkPreview>('wh_link_previews'),
         DB.getAllRows<SyncedWorkspaceChat>('wh_workspace_chat'),
       ]);
+      console.log(`[DataContext] hydrate counts: tasks=${tasks.length} workspaces=${workspaces.length} statuses=${statuses.length} users=${users.length} conversations=${conversations.length} boards=${boards.length}`);
       setData({
         tasks,
         workspaces,
@@ -484,39 +490,49 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Run sync
   const runSync = useCallback(async () => {
     const dm = dmRef.current;
-    if (!dm) return;
+    if (!dm) {
+      console.log('[DataContext] runSync: no DataManager');
+      return;
+    }
 
+    console.log('[DataContext] runSync: starting...');
     setIsSyncing(true);
     setSyncError(null);
 
     try {
       const result = await dm.bootstrapAndSync();
+      console.log(`[DataContext] sync result: success=${result.success} touched=${result.touchedTables.join(',')} error=${result.error || 'none'}`);
       if (!result.success && result.error) {
         setSyncError(result.error);
       }
     } catch (err: any) {
+      console.warn('[DataContext] sync exception:', err);
       setSyncError(err?.message ?? 'Sync failed');
     }
 
     // Always hydrate from cache even if sync had partial errors
+    console.log('[DataContext] hydrating from cache...');
     await hydrateFromCache();
     setIsSyncing(false);
+    console.log('[DataContext] runSync: done');
   }, [hydrateFromCache]);
 
-  // Auto-sync when auth becomes available
+  // Auto-sync when auth becomes available (wait for auth to finish loading)
   useEffect(() => {
+    if (authLoading) return; // Don't sync while auth is still resolving
     if (token && subdomain) {
+      console.log(`[DataContext] Auth ready, starting sync for tenant: ${subdomain}`);
       runSync();
     } else {
       // Logged out – clear data
       setData(EMPTY_DATA);
     }
-  }, [token, subdomain, runSync]);
+  }, [token, subdomain, authLoading, runSync]);
 
   // Re-sync when app comes to foreground
   useEffect(() => {
     const handleAppState = (nextState: AppStateStatus) => {
-      if (nextState === 'active' && token && subdomain) {
+      if (nextState === 'active' && !authLoading && token && subdomain) {
         runSync();
       }
     };
@@ -529,6 +545,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await runSync();
   }, [runSync]);
 
+  // Force clear all data and do a full resync from scratch
+  const forceResync = useCallback(async () => {
+    console.log('[DataContext] forceResync: clearing all data...');
+    await DB.clearAllData();
+    setData(EMPTY_DATA);
+    await runSync();
+  }, [runSync]);
+
   return (
     <DataContext.Provider
       value={{
@@ -536,6 +560,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         isSyncing,
         syncError,
         refresh,
+        forceResync,
         dataManager: dmRef.current,
       }}
     >

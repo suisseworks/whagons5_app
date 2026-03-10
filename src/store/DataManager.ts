@@ -45,6 +45,7 @@ export class DataManager {
   private subdomain: string;
   private authToken: string;
   private listeners: SyncListener[] = [];
+  private syncInProgress: Promise<SyncResult> | null = null;
 
   constructor(config: DataManagerConfig) {
     this.subdomain = config.subdomain;
@@ -54,6 +55,11 @@ export class DataManager {
   /** Update the auth token (e.g. after refresh). */
   setAuthToken(token: string) {
     this.authToken = token;
+  }
+
+  /** Get the current subdomain this DataManager is configured for. */
+  getSubdomain(): string {
+    return this.subdomain;
   }
 
   /** Register a listener that fires after every sync. */
@@ -83,6 +89,20 @@ export class DataManager {
    * - Runs the NDJSON sync stream (full or delta based on cursor)
    */
   async bootstrapAndSync(): Promise<SyncResult> {
+    // Prevent concurrent syncs — they crash SQLite with nested transactions
+    if (this.syncInProgress) {
+      console.log('[DataManager] Sync already in progress, waiting...');
+      return this.syncInProgress;
+    }
+    this.syncInProgress = this._doSync();
+    try {
+      return await this.syncInProgress;
+    } finally {
+      this.syncInProgress = null;
+    }
+  }
+
+  private async _doSync(): Promise<SyncResult> {
     await DB.initDb();
 
     const baseUrl = buildBaseUrl(this.subdomain);
@@ -104,30 +124,38 @@ export class DataManager {
     const lastSyncRaw = await DB.getMeta(lastSyncKey);
     const lastSyncAt = lastSyncRaw ? Number(lastSyncRaw) : 0;
 
-    // Check if we have local data
+    // Check if we have local data (must have tasks AND reference tables)
     let hasLocalData = false;
+    let taskCount = 0;
     try {
       const counts = await Promise.all([
+        DB.getRowCount('wh_tasks'),
         DB.getRowCount('wh_workspaces'),
         DB.getRowCount('wh_teams'),
         DB.getRowCount('wh_categories'),
       ]);
-      hasLocalData = counts.some((c) => c > 0);
+      taskCount = counts[0];
+      hasLocalData = counts[0] > 0 && counts.slice(1).some((c) => c > 0);
     } catch {}
 
-    // If we lost the data but still have a cursor, clear the cursor
+    console.log(`[DataManager] hasLocalData=${hasLocalData} taskCount=${taskCount} cursor=${!!cursor} lastSync=${lastSyncAt ? Date.now() - lastSyncAt + 'ms ago' : 'never'}`);
+
+    // If we lost the data but still have a cursor, clear the cursor for full resync
     if (!hasLocalData && cursor) {
+      console.log('[DataManager] Lost local data, clearing cursor for full resync');
       await DB.deleteMeta(cursorKey);
     }
 
-    // Skip sync if we synced very recently and have data
+    // Skip sync if we synced very recently and have meaningful data
     const shouldSkip =
       hasLocalData &&
+      taskCount > 0 &&
       !!cursor &&
       lastSyncAt > 0 &&
-      Date.now() - lastSyncAt < 30_000;
+      Date.now() - lastSyncAt < 15_000;
 
     if (shouldSkip) {
+      console.log('[DataManager] Skipping sync (recent)');
       const result: SyncResult = { success: true, touchedTables: [] };
       this.notifyListeners(result);
       return result;
@@ -155,6 +183,8 @@ export class DataManager {
       ? `${baseUrl}/sync/stream?cursor=${encodeURIComponent(cursor)}`
       : `${baseUrl}/sync/stream`;
 
+    console.log(`[DataManager] syncStream url=${url} cursor=${cursor ? 'yes' : 'full'} tenant=${this.subdomain}`);
+
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
@@ -173,16 +203,22 @@ export class DataManager {
     const taskDeletes: string[] = [];
     const BATCH_SIZE = 200;
 
+    let taskUpsertTotal = 0;
+    let taskDeleteTotal = 0;
+
     const flushTasks = async () => {
       if (taskUpserts.length > 0) {
-        await DB.upsertRows(
-          'wh_tasks',
-          taskUpserts.splice(0, taskUpserts.length),
-        );
+        const batch = taskUpserts.splice(0, taskUpserts.length);
+        taskUpsertTotal += batch.length;
+        console.log(`[DataManager] flushing ${batch.length} task upserts (total: ${taskUpsertTotal})`);
+        await DB.upsertRows('wh_tasks', batch);
         touchedTables.add('wh_tasks');
       }
       if (taskDeletes.length > 0) {
-        await DB.deleteRows('wh_tasks', taskDeletes.splice(0, taskDeletes.length));
+        const batch = taskDeletes.splice(0, taskDeletes.length);
+        taskDeleteTotal += batch.length;
+        console.log(`[DataManager] flushing ${batch.length} task deletes (total: ${taskDeleteTotal})`);
+        await DB.deleteRows('wh_tasks', batch);
         touchedTables.add('wh_tasks');
       }
     };
@@ -224,6 +260,7 @@ export class DataManager {
 
       // snapshot_start (pivot tables sent in full)
       if (msg.type === 'snapshot_start' && msg.entity) {
+        console.log(`[DataManager] snapshot_start: ${msg.entity}`);
         activeSnapshots.set(msg.entity, new Set());
         return;
       }
@@ -231,6 +268,7 @@ export class DataManager {
       // snapshot_end – delete local rows not in snapshot
       if (msg.type === 'snapshot_end' && msg.entity) {
         const snapshotIds = activeSnapshots.get(msg.entity);
+        console.log(`[DataManager] snapshot_end: ${msg.entity} (${snapshotIds?.size ?? 0} IDs tracked)`);
         if (snapshotIds) {
           activeSnapshots.delete(msg.entity);
           try {
@@ -239,6 +277,7 @@ export class DataManager {
               (lid) => !snapshotIds.has(lid),
             );
             if (toDelete.length > 0) {
+              console.log(`[DataManager] snapshot cleanup: deleting ${toDelete.length} stale rows from ${msg.entity}`);
               await DB.deleteRows(msg.entity, toDelete);
               touchedTables.add(msg.entity);
             }
@@ -258,15 +297,15 @@ export class DataManager {
 
       // Special batching for tasks
       if (table === 'wh_tasks') {
+        // Log first 3 task messages raw
+        if (taskUpserts.length + taskDeletes.length < 3) {
+          console.log(`[DataManager] Task msg: type=${msg.type} id=${id} keys=${msg.record ? Object.keys(msg.record).join(',') : 'none'} deleted_at=${msg.record?.deleted_at}`);
+        }
         if (msg.type === 'delete') {
           taskDeletes.push(String(id));
-        } else if (msg.type === 'upsert') {
-          const record = msg.record;
-          if (record?.deleted_at) {
-            taskDeletes.push(String(id));
-          } else {
-            taskUpserts.push({ id: String(id), record });
-          }
+        } else {
+          // Store ALL tasks (upsert, or any other type)
+          taskUpserts.push({ id: String(id), record: msg.record || msg });
         }
         if (taskUpserts.length + taskDeletes.length >= BATCH_SIZE) {
           await flushTasks();
@@ -340,6 +379,13 @@ export class DataManager {
 
       // Flush remaining task batches
       await flushTasks();
+      console.log(`[DataManager] Task totals: ${taskUpsertTotal} upserted, ${taskDeleteTotal} deleted`);
+      
+      // Verify tasks in DB
+      const dbTaskCount = await DB.getRowCount('wh_tasks');
+      console.log(`[DataManager] Tasks in SQLite after sync: ${dbTaskCount}`);
+
+      console.log(`[DataManager] syncStream done. touched=${Array.from(touchedTables).join(',')} doneReceived=${doneReceived}`);
 
       if (needsResync) {
         await this.resetAndResync();
@@ -348,7 +394,7 @@ export class DataManager {
 
       return { success: true, touchedTables: Array.from(touchedTables) };
     } catch (err: any) {
-      console.warn('DataManager: sync stream error', err);
+      console.warn('[DataManager] sync stream error', err);
       return {
         success: false,
         touchedTables: Array.from(touchedTables),

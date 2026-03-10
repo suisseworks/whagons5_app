@@ -15,9 +15,18 @@ import {
   ActivityIndicator,
   Linking,
   Pressable,
+  useWindowDimensions,
+  PanResponder,
+  GestureResponderEvent,
+  PanResponderGestureState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { KeyboardStickyView } from 'react-native-keyboard-controller';
+// KeyboardAvoidingView is handled by the parent navigator
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+} from 'react-native-reanimated';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useTheme } from '../context/ThemeContext';
@@ -35,6 +44,7 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { useTasks } from '../context/TaskContext';
 import { apiClient } from '../services/apiClient';
+import * as DB from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { getInitials } from '../utils/helpers';
 
@@ -99,6 +109,54 @@ function formatConversationTime(ts: string | null | undefined): string {
 function extractUrls(text: string): string[] {
   const matches = text.match(URL_REGEX);
   return matches ? [...new Set(matches)] : [];
+}
+
+/** Markdown link pattern: [label](url) */
+const MD_LINK_REGEX = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+
+const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+const VIDEO_EXTS = /\.(mp4|mov|webm|avi|mkv)$/i;
+
+type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'image'; url: string; label: string }
+  | { type: 'video'; url: string; label: string };
+
+/** Parse a message string into parts: plain text, images, videos */
+function parseMessageContent(text: string): MessagePart[] {
+  const parts: MessagePart[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  const regex = new RegExp(MD_LINK_REGEX.source, 'g');
+
+  while ((match = regex.exec(text)) !== null) {
+    // Add preceding text
+    if (match.index > lastIndex) {
+      const preceding = text.slice(lastIndex, match.index).trim();
+      if (preceding) parts.push({ type: 'text', text: preceding });
+    }
+    const label = match[1];
+    const url = match[2];
+    if (IMAGE_EXTS.test(url) || IMAGE_EXTS.test(label)) {
+      parts.push({ type: 'image', url, label });
+    } else if (VIDEO_EXTS.test(url) || VIDEO_EXTS.test(label)) {
+      parts.push({ type: 'video', url, label });
+    } else {
+      // Generic file link -- render as text link
+      parts.push({ type: 'text', text: `${label}: ${url}` });
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Trailing text
+  if (lastIndex < text.length) {
+    const trailing = text.slice(lastIndex).trim();
+    if (trailing) parts.push({ type: 'text', text: trailing });
+  }
+
+  // If nothing was parsed, return the original text
+  if (parts.length === 0) parts.push({ type: 'text', text });
+  return parts;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,11 +330,45 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const { selectedWorkspace, workspaceObjects } = useTasks();
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
+  const { width: screenWidth } = useWindowDimensions();
+
+  // Swipe between tabs using PanResponder (doesn't steal focus from TextInput)
+  const tabTranslateX = useSharedValue(0);
+
+  useEffect(() => {
+    tabTranslateX.value = withTiming(activeTab === 'workspaces' ? 0 : -screenWidth, { duration: 250 });
+  }, [activeTab, screenWidth]);
+
+  const tabSlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tabTranslateX.value }],
+  }));
+
+  const tabPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
+          Math.abs(gs.dx) > 25 && Math.abs(gs.dy) < 20,
+        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const THRESHOLD = screenWidth * 0.2;
+          if (gs.dx < -THRESHOLD && activeTab === 'workspaces') {
+            setActiveTab('chats');
+          } else if (gs.dx > THRESHOLD && activeTab === 'chats') {
+            setActiveTab('workspaces');
+          }
+        },
+      }),
+    [activeTab, screenWidth],
+  );
+
   const [chatView, setChatView] = useState<ChatView>({ type: 'list' });
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const chatListRef = useRef<FlatList>(null);
+
+  // Locally-created conversations & participants not yet in sync data
+  const [localConversations, setLocalConversations] = useState<SyncedConversation[]>([]);
+  const [localParticipants, setLocalParticipants] = useState<SyncedConversationParticipant[]>([]);
 
   // Message actions
   const [reactionMessageId, setReactionMessageId] = useState<number | null>(null);
@@ -326,12 +418,12 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   const userMap = useMemo(() => {
     const m = new Map<number, SyncedUser>();
-    for (const u of data.users) m.set(u.id, u);
+    for (const u of data.users) m.set(Number(u.id), u);
     return m;
   }, [data.users]);
 
   const getUser = useCallback(
-    (id: number): SyncedUser | undefined => userMap.get(id),
+    (id: number | string): SyncedUser | undefined => userMap.get(Number(id)),
     [userMap],
   );
 
@@ -357,27 +449,41 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   // ---- Chats tab data (DM/group conversations) ----
 
+  // Merge synced conversations with locally-created ones (dedupe by id)
+  const allConversations = useMemo(() => {
+    const syncedIds = new Set(data.conversations.map((c) => Number(c.id)));
+    const extras = localConversations.filter((c) => !syncedIds.has(Number(c.id)));
+    return [...data.conversations, ...extras];
+  }, [data.conversations, localConversations]);
+
+  // Merge synced + local participants for lookups
+  const allParticipants = useMemo(() => {
+    const syncedKeys = new Set(data.conversationParticipants.map((p) => `${p.conversation_id}-${p.user_id}`));
+    const extras = localParticipants.filter((p) => !syncedKeys.has(`${p.conversation_id}-${p.user_id}`));
+    return [...data.conversationParticipants, ...extras];
+  }, [data.conversationParticipants, localParticipants]);
+
   const myConversations = useMemo(() => {
     const myConvIds = new Set(
-      data.conversationParticipants
+      allParticipants
         .filter((p) => Number(p.user_id) === Number(currentUserId))
         .map((p) => Number(p.conversation_id)),
     );
-    return data.conversations
+    return allConversations
       .filter((c) => myConvIds.has(Number(c.id)))
       .sort((a, b) => {
         const aTime = utcMs(a.last_message_at) || utcMs(a.created_at);
         const bTime = utcMs(b.last_message_at) || utcMs(b.created_at);
         return bTime - aTime;
       });
-  }, [data.conversations, data.conversationParticipants, currentUserId]);
+  }, [allConversations, allParticipants, currentUserId]);
 
   const filteredConversations = useMemo(() => {
     if (!searchQuery.trim()) return myConversations;
     const q = searchQuery.toLowerCase();
     return myConversations.filter((conv) => {
       if (conv.name && conv.name.toLowerCase().includes(q)) return true;
-      const participants = data.conversationParticipants.filter(
+      const participants = allParticipants.filter(
         (p) => Number(p.conversation_id) === Number(conv.id),
       );
       return participants.some((p) => {
@@ -385,7 +491,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         return u && u.name.toLowerCase().includes(q);
       });
     });
-  }, [myConversations, searchQuery, data.conversationParticipants, getUser]);
+  }, [myConversations, searchQuery, allParticipants, getUser]);
 
   // Active conversation messages (DM/group)
   const activeConversationId = chatView.type === 'conversation' ? chatView.conversationId : null;
@@ -407,15 +513,15 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   const activeConversation = useMemo(() => {
     if (!activeConversationId) return null;
-    return data.conversations.find((c) => Number(c.id) === activeConversationId) || null;
-  }, [data.conversations, activeConversationId]);
+    return allConversations.find((c) => Number(c.id) === activeConversationId) || null;
+  }, [allConversations, activeConversationId]);
 
   const activeParticipants = useMemo(() => {
     if (!activeConversationId) return [];
-    return data.conversationParticipants.filter(
+    return allParticipants.filter(
       (p) => Number(p.conversation_id) === activeConversationId,
     );
-  }, [data.conversationParticipants, activeConversationId]);
+  }, [allParticipants, activeConversationId]);
 
   // Reactions indexed by message_id
   const reactionsByMessageId = useMemo(() => {
@@ -471,7 +577,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const getConversationDisplayName = useCallback(
     (conv: SyncedConversation): string => {
       if (conv.name) return conv.name;
-      const participants = data.conversationParticipants.filter(
+      const participants = allParticipants.filter(
         (p) => Number(p.conversation_id) === Number(conv.id),
       );
       if (conv.type === 'dm') {
@@ -491,7 +597,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       }
       return 'Conversation';
     },
-    [data.conversationParticipants, currentUserId, getUser],
+    [allParticipants, currentUserId, getUser],
   );
 
   const getLastMessage = useCallback(
@@ -748,19 +854,43 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           created_by: currentUserId,
           participant_user_ids: [targetUserId],
         });
-        setShowNewChatModal(false);
-        setNewChatSearch('');
-        await refresh();
         if (result?.id) {
+          const conv = result as SyncedConversation;
+          // Persist to SQLite so DataContext picks it up on next hydrate
+          const now = new Date().toISOString();
+          const participantIds = [currentUserId, targetUserId];
+          await DB.upsertRow('wh_conversations', result.id, conv);
+          for (let i = 0; i < participantIds.length; i++) {
+            const pid = `${result.id}_${participantIds[i]}`;
+            await DB.upsertRow('wh_conversation_participants', pid, {
+              id: pid, conversation_id: result.id, user_id: participantIds[i],
+              last_read_at: now, is_muted: false, updated_at: now,
+            });
+          }
+          // Also keep in local state for immediate use
+          setLocalConversations((prev) => [...prev.filter((c) => c.id !== result.id), conv]);
+          setLocalParticipants((prev) => [
+            ...prev.filter((p) => Number(p.conversation_id) !== result.id),
+            ...participantIds.map((uid, i) => ({
+              id: -(result.id * 100 + i),
+              conversation_id: result.id,
+              user_id: uid,
+              last_read_at: now,
+              is_muted: false,
+              updated_at: now,
+            } as SyncedConversationParticipant)),
+          ]);
           openConversation(result.id);
         }
+        setShowNewChatModal(false);
+        setNewChatSearch('');
       } catch {
         Alert.alert('Error', 'Failed to create conversation');
       } finally {
         setIsCreating(false);
       }
     },
-    [currentUserId, refresh, openConversation],
+    [currentUserId, openConversation],
   );
 
   const handleCreateGroup = useCallback(async () => {
@@ -782,20 +912,42 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         created_by: currentUserId,
         participant_user_ids: selectedGroupUsers,
       });
+      if (result?.id) {
+        const conv = result as SyncedConversation;
+        const now = new Date().toISOString();
+        const participantIds = [currentUserId, ...selectedGroupUsers];
+        await DB.upsertRow('wh_conversations', result.id, conv);
+        for (let i = 0; i < participantIds.length; i++) {
+          const pid = `${result.id}_${participantIds[i]}`;
+          await DB.upsertRow('wh_conversation_participants', pid, {
+            id: pid, conversation_id: result.id, user_id: participantIds[i],
+            last_read_at: now, is_muted: false, updated_at: now,
+          });
+        }
+        setLocalConversations((prev) => [...prev.filter((c) => c.id !== result.id), conv]);
+        setLocalParticipants((prev) => [
+          ...prev.filter((p) => Number(p.conversation_id) !== result.id),
+          ...participantIds.map((uid, i) => ({
+            id: -(result.id * 100 + i),
+            conversation_id: result.id,
+            user_id: uid,
+            last_read_at: now,
+            is_muted: false,
+            updated_at: now,
+          } as SyncedConversationParticipant)),
+        ]);
+        openConversation(result.id);
+      }
       setShowNewChatModal(false);
       setGroupName('');
       setSelectedGroupUsers([]);
       setNewChatSearch('');
-      await refresh();
-      if (result?.id) {
-        openConversation(result.id);
-      }
     } catch {
       Alert.alert('Error', 'Failed to create group');
     } finally {
       setIsCreating(false);
     }
-  }, [currentUserId, selectedGroupUsers, groupName, getUser, refresh, openConversation]);
+  }, [currentUserId, selectedGroupUsers, groupName, getUser, openConversation]);
 
   const toggleGroupUser = useCallback((userId: number) => {
     setSelectedGroupUsers((prev) =>
@@ -949,14 +1101,67 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                         },
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.messageText,
-                      { color: isMe ? '#FFFFFF' : colors.text },
-                    ]}
-                  >
-                    {message}
-                  </Text>
+                  {(() => {
+                    const parts = parseMessageContent(message);
+                    const hasMedia = parts.some((p) => p.type === 'image' || p.type === 'video');
+                    if (!hasMedia) {
+                      return (
+                        <Text
+                          style={[
+                            styles.messageText,
+                            { color: isMe ? '#FFFFFF' : colors.text },
+                          ]}
+                        >
+                          {message}
+                        </Text>
+                      );
+                    }
+                    return parts.map((part, idx) => {
+                      if (part.type === 'image') {
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            activeOpacity={0.9}
+                            onPress={() => Linking.openURL(part.url).catch(() => {})}
+                          >
+                            <ExpoImage
+                              source={{ uri: part.url }}
+                              style={styles.messageImage}
+                              contentFit="cover"
+                              cachePolicy="disk"
+                              transition={200}
+                            />
+                          </TouchableOpacity>
+                        );
+                      }
+                      if (part.type === 'video') {
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            style={styles.messageVideoThumb}
+                            activeOpacity={0.8}
+                            onPress={() => Linking.openURL(part.url).catch(() => {})}
+                          >
+                            <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
+                            <Text style={styles.messageVideoLabel} numberOfLines={1}>
+                              {part.label || 'Video'}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      }
+                      return (
+                        <Text
+                          key={idx}
+                          style={[
+                            styles.messageText,
+                            { color: isMe ? '#FFFFFF' : colors.text },
+                          ]}
+                        >
+                          {part.text}
+                        </Text>
+                      );
+                    });
+                  })()}
                 </View>
               </Pressable>
             )}
@@ -1063,57 +1268,55 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   const renderChatInput = useCallback(
     (onSend: () => void) => (
-      <KeyboardStickyView offset={{ closed: 0, opened: 0 }}>
-        <View
+      <View
+        style={[
+          styles.inputContainer,
+          {
+            backgroundColor: colors.surface,
+            borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+            paddingBottom: Math.max(8, insets.bottom),
+          },
+        ]}
+      >
+        <TextInput
           style={[
-            styles.inputContainer,
+            styles.textInput,
             {
-              backgroundColor: colors.surface,
-              borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
-              paddingBottom: Math.max(8, insets.bottom),
+              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
+              color: colors.text,
             },
           ]}
+          placeholder="Message..."
+          placeholderTextColor={colors.textSecondary}
+          value={inputText}
+          onChangeText={setInputText}
+          onSubmitEditing={onSend}
+          returnKeyType="send"
+          editable={!isSending}
+          multiline
+          blurOnSubmit={false}
+        />
+        <TouchableOpacity
+          style={[
+            styles.sendButton,
+            {
+              backgroundColor: inputText.trim()
+                ? primaryColor
+                : isDarkMode
+                  ? 'rgba(255,255,255,0.08)'
+                  : '#D5CFC6',
+            },
+          ]}
+          onPress={onSend}
+          disabled={!inputText.trim() || isSending}
         >
-          <TextInput
-            style={[
-              styles.textInput,
-              {
-                backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
-                color: colors.text,
-              },
-            ]}
-            placeholder="Message..."
-            placeholderTextColor={colors.textSecondary}
-            value={inputText}
-            onChangeText={setInputText}
-            onSubmitEditing={onSend}
-            returnKeyType="send"
-            editable={!isSending}
-            multiline
-            blurOnSubmit={false}
-          />
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              {
-                backgroundColor: inputText.trim()
-                  ? primaryColor
-                  : isDarkMode
-                    ? 'rgba(255,255,255,0.08)'
-                    : '#D5CFC6',
-              },
-            ]}
-            onPress={onSend}
-            disabled={!inputText.trim() || isSending}
-          >
-            {isSending ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <MaterialIcons name="send" size={20} color="#FFFFFF" />
-            )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardStickyView>
+          {isSending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <MaterialIcons name="send" size={20} color="#FFFFFF" />
+          )}
+        </TouchableOpacity>
+      </View>
     ),
     [inputText, isSending, primaryColor, isDarkMode, colors, insets.bottom],
   );
@@ -1403,7 +1606,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
       let otherUser: SyncedUser | undefined;
       if (!isGroup) {
-        const other = data.conversationParticipants.find(
+        const other = allParticipants.find(
           (p) =>
             Number(p.conversation_id) === Number(conv.id) &&
             Number(p.user_id) !== Number(currentUserId),
@@ -1484,7 +1687,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     },
     [
       getConversationDisplayName, getLastMessage, getUnreadCount, getUser,
-      data.conversationParticipants, currentUserId, isDarkMode, primaryColor,
+      allParticipants, currentUserId, isDarkMode, primaryColor,
       colors, openConversation,
     ],
   );
@@ -1570,7 +1773,26 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   // ---------------------------------------------------------------------------
 
   const renderConversationChatView = () => {
-    if (!activeConversation) return null;
+    if (!activeConversation) {
+      return (
+        <View style={{ flex: 1 }}>
+          <View
+            style={[
+              styles.chatHeader,
+              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' },
+            ]}
+          >
+            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+              <MaterialIcons name="arrow-back" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.chatHeaderTitle, { color: colors.text }]}>Loading...</Text>
+          </View>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+            <ActivityIndicator size="large" color={primaryColor} />
+          </View>
+        </View>
+      );
+    }
     const displayName = getConversationDisplayName(activeConversation);
     const isGroup = activeConversation.type === 'group';
     const participantCount = activeParticipants.length;
@@ -1923,7 +2145,17 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   return (
     <View style={{ flex: 1 }}>
       {renderTabBar()}
-      {activeTab === 'workspaces' ? renderWorkspacesTab() : renderChatsTab()}
+      <Animated.View
+        {...tabPanResponder.panHandlers}
+        style={[{ flexDirection: 'row', flex: 1, width: screenWidth * 2 }, tabSlideStyle]}
+      >
+        <View style={{ width: screenWidth, flex: 1 }}>
+          {renderWorkspacesTab()}
+        </View>
+        <View style={{ width: screenWidth, flex: 1 }}>
+          {renderChatsTab()}
+        </View>
+      </Animated.View>
       {renderNewChatModal()}
     </View>
   );
@@ -2055,7 +2287,7 @@ const styles = StyleSheet.create({
   newChatFab: {
     position: 'absolute',
     right: 20,
-    bottom: 24,
+    bottom: 80,
     width: 52,
     height: 52,
     borderRadius: 26,
@@ -2142,6 +2374,27 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyRegular,
     lineHeight: 20,
+  },
+  messageImage: {
+    width: 220,
+    height: 180,
+    borderRadius: radius.md,
+    marginVertical: 4,
+  },
+  messageVideoThumb: {
+    width: 220,
+    height: 140,
+    borderRadius: radius.md,
+    marginVertical: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  messageVideoLabel: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+    marginTop: 4,
   },
 
   // Message actions (edit/delete icons below own messages)

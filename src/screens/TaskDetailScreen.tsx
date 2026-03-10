@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,13 +18,39 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
-import { RootStackParamList, Comment, ChecklistItem } from '../models/types';
+import { useData } from '../context/DataContext';
+import { RootStackParamList } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
-import { apiClient } from '../services/apiClient';
+import { apiClient, TaskNoteResponse } from '../services/apiClient';
 import { priorityColor, statusColor, getInitials } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+
+function generateUUID(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+function timeAgo(dateStr: string): string {
+  const date = new Date(
+    dateStr.includes('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z',
+  );
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return 'Just now';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return `${diffDay}d ago`;
+  return date.toLocaleDateString();
+}
 
 type TaskDetailRouteProp = RouteProp<RootStackParamList, 'TaskDetail'>;
 
@@ -34,15 +60,25 @@ export const TaskDetailScreen: React.FC = () => {
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { setActiveTask, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId } = useTasks();
-  const { subdomain, token } = useAuth();
+  const { subdomain, token, user: authUser } = useAuth();
+  const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
+
+  // Build a user lookup map from synced data
+  const userMap = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const u of data.users) {
+      map.set(Number(u.id), u.name);
+    }
+    return map;
+  }, [data.users]);
 
   // Determine if this task has a form
   const formSchema = useMemo(() => getFormSchema(task), [task, getFormSchema]);
   const existingSubmission = useMemo(() => getTaskFormSubmission(task.id || ''), [task.id, getTaskFormSubmission]);
   const hasForm = !!formSchema && formSchema.fields.length > 0;
 
-  type TabKey = 'details' | 'form' | 'checklist' | 'comments';
+  type TabKey = 'details' | 'form' | 'comments';
   const [activeTab, setActiveTab] = useState<TabKey>('details');
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
   // Track local status so changes reflect immediately on this screen
@@ -66,17 +102,43 @@ export const TaskDetailScreen: React.FC = () => {
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formShowValidation, setFormShowValidation] = useState(false);
 
-  const [comments, setComments] = useState<Comment[]>([
-    { author: 'Alex', time: '10 mins ago', text: 'Started working on this task' },
-    { author: 'You', time: '5 mins ago', text: 'Please update when complete' },
-  ]);
+  // Real comments from API
+  const [notes, setNotes] = useState<TaskNoteResponse[]>([]);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [sendingComment, setSendingComment] = useState(false);
+  const notesFetched = useRef(false);
+  const commentsScrollRef = useRef<ScrollView>(null);
 
-  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([
-    { title: 'Inspect equipment', completed: true },
-    { title: 'Take photos', completed: true },
-    { title: 'Update log', completed: false },
-    { title: 'Notify supervisor', completed: false },
-  ]);
+  // Fetch task notes from API
+  const fetchNotes = useCallback(async () => {
+    if (!task.id) return;
+    setNotesLoading(true);
+    setNotesError(null);
+    try {
+      const result = await apiClient.getTaskNotes(task.id);
+      // Sort oldest first
+      result.sort((a, b) => {
+        const ta = new Date(a.created_at).getTime();
+        const tb = new Date(b.created_at).getTime();
+        return ta - tb;
+      });
+      setNotes(result);
+    } catch (err: any) {
+      console.warn('[TaskDetail] Failed to fetch notes:', err?.message);
+      setNotesError(err?.message || 'Failed to load comments');
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [task.id]);
+
+  // Fetch notes on mount (so count is ready even before switching to comments tab)
+  useEffect(() => {
+    if (!notesFetched.current && task.id) {
+      notesFetched.current = true;
+      fetchNotes();
+    }
+  }, [fetchNotes]);
 
   const handleStartWorking = () => {
     setActiveTask(task);
@@ -92,26 +154,44 @@ export const TaskDetailScreen: React.FC = () => {
     setStatusPickerVisible(false);
   };
 
-  const handleAddComment = () => {
-    if (commentText.trim()) {
-      setComments(prev => [...prev, { author: 'You', time: 'Just now', text: commentText.trim() }]);
-      setCommentText('');
+  const handleAddComment = async () => {
+    const text = commentText.trim();
+    if (!text || !task.id || !authUser?.id) return;
+
+    setSendingComment(true);
+    const optimistic: TaskNoteResponse = {
+      id: 0,
+      uuid: generateUUID(),
+      task_id: Number(task.id),
+      note: text,
+      user_id: authUser.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Optimistic update
+    setNotes(prev => [...prev, optimistic]);
+    setCommentText('');
+
+    // Scroll to bottom after optimistic insert
+    setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 100);
+
+    try {
+      const created = await apiClient.createTaskNote({
+        uuid: optimistic.uuid,
+        task_id: Number(task.id),
+        note: text,
+        user_id: authUser.id,
+      });
+      // Replace optimistic entry with real server response
+      setNotes(prev => prev.map(n => (n.uuid === optimistic.uuid ? created : n)));
+    } catch (err: any) {
+      // Remove optimistic entry on failure
+      setNotes(prev => prev.filter(n => n.uuid !== optimistic.uuid));
+      Alert.alert('Error', err?.message || 'Failed to post comment');
+    } finally {
+      setSendingComment(false);
     }
-  };
-
-  const handleToggleChecklistItem = (index: number) => {
-    setChecklistItems(prev => {
-      const newItems = [...prev];
-      newItems[index] = { ...newItems[index], completed: !newItems[index].completed };
-      return newItems;
-    });
-  };
-
-  const handleAddChecklistItem = () => {
-    setChecklistItems(prev => [
-      ...prev,
-      { title: `New item ${prev.length + 1}`, completed: false },
-    ]);
   };
 
   const pickImage = async () => {
@@ -366,77 +446,92 @@ export const TaskDetailScreen: React.FC = () => {
     );
   };
 
-  const renderChecklistTab = () => (
-    <View style={styles.tabContent}>
-      <ScrollView style={styles.flex}>
-        {checklistItems.map((item, index) => (
-          <TouchableOpacity
-            key={index}
-            style={[styles.checklistItem, { backgroundColor: colors.surface, borderColor: cardBorder }]}
-            onPress={() => handleToggleChecklistItem(index)}
-          >
-            <MaterialIcons
-              name={item.completed ? 'check-box' : 'check-box-outline-blank'}
-              size={24}
-              color={item.completed ? primaryColor : '#757575'}
-            />
-            <Text
-              style={[
-                styles.checklistText,
-                { color: colors.text },
-                item.completed && styles.checklistTextCompleted,
-              ]}
-            >
-              {item.title}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <View style={styles.bottomAction}>
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFillObject,
-            { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
-          ]}
-        />
-        <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: primaryColor }]}
-          onPress={handleAddChecklistItem}
-        >
-          <MaterialIcons name="add" size={20} color="#FFFFFF" />
-          <Text style={styles.actionButtonText}>Add Item</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   const renderCommentsTab = () => (
     <View style={styles.tabContent}>
-      <ScrollView style={styles.flex} contentContainerStyle={styles.commentsList}>
-        {comments.map((comment, index) => {
-          const isYou = comment.author === 'You';
-          return (
-            <View key={index} style={styles.commentItem}>
-              <View style={[styles.commentAvatar, isYou && { backgroundColor: primaryColor }]}>
-                <Text style={styles.commentAvatarText}>{getInitials(comment.author)}</Text>
-              </View>
-              <View style={styles.commentContent}>
-                <View style={styles.commentHeader}>
-                  <Text style={[styles.commentAuthor, { color: colors.text }]}>{comment.author}</Text>
-                  <Text style={[styles.commentTime, { color: colors.textSecondary }]}>{comment.time}</Text>
+      {notesLoading && notes.length === 0 ? (
+        <View style={styles.commentsCenter}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
+            Loading comments...
+          </Text>
+        </View>
+      ) : notesError && notes.length === 0 ? (
+        <View style={styles.commentsCenter}>
+          <MaterialIcons name="error-outline" size={40} color="#BDBDBD" />
+          <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
+            {notesError}
+          </Text>
+          <TouchableOpacity onPress={fetchNotes} style={styles.retryButton}>
+            <Text style={[styles.retryText, { color: primaryColor }]}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : notes.length === 0 ? (
+        <View style={styles.commentsCenter}>
+          <MaterialIcons name="chat-bubble-outline" size={48} color="#E0E0E0" />
+          <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
+            No comments yet
+          </Text>
+          <Text style={[styles.commentsCenterHint, { color: colors.textSecondary }]}>
+            Be the first to add a comment
+          </Text>
+        </View>
+      ) : (
+        <ScrollView
+          ref={commentsScrollRef}
+          style={styles.flex}
+          contentContainerStyle={styles.commentsList}
+          onContentSizeChange={() =>
+            commentsScrollRef.current?.scrollToEnd({ animated: false })
+          }
+        >
+          {notes.map((note) => {
+            const isMe = authUser?.id === note.user_id;
+            const authorName = isMe
+              ? 'You'
+              : userMap.get(Number(note.user_id)) || `User #${note.user_id}`;
+            return (
+              <View key={note.uuid || note.id} style={styles.commentItem}>
+                <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}>
+                  <Text style={styles.commentAvatarText}>
+                    {getInitials(authorName)}
+                  </Text>
                 </View>
-                <View style={[styles.commentBubble, { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#FFFFFF' }]}>
-                  <Text style={[styles.commentText, { color: colors.text }]}>{comment.text}</Text>
+                <View style={styles.commentContent}>
+                  <View style={styles.commentHeader}>
+                    <Text style={[styles.commentAuthor, { color: colors.text }]}>
+                      {authorName}
+                    </Text>
+                    <Text style={[styles.commentTime, { color: colors.textSecondary }]}>
+                      {timeAgo(note.created_at)}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.commentBubble,
+                      {
+                        backgroundColor: isDarkMode
+                          ? 'rgba(31, 36, 34, 0.7)'
+                          : '#FFFFFF',
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.commentText, { color: colors.text }]}>
+                      {note.note}
+                    </Text>
+                  </View>
                 </View>
               </View>
-            </View>
-          );
-        })}
-      </ScrollView>
+            );
+          })}
+        </ScrollView>
+      )}
 
-      <View style={[styles.commentInputContainer, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}>
+      <View
+        style={[
+          styles.commentInputContainer,
+          { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
+        ]}
+      >
         <TextInput
           style={[
             styles.commentInput,
@@ -450,12 +545,18 @@ export const TaskDetailScreen: React.FC = () => {
           value={commentText}
           onChangeText={setCommentText}
           onSubmitEditing={handleAddComment}
+          editable={!sendingComment}
         />
         <TouchableOpacity
-          style={[styles.sendButton, { backgroundColor: primaryColor }]}
+          style={[styles.sendButton, { backgroundColor: primaryColor, opacity: sendingComment ? 0.6 : 1 }]}
           onPress={handleAddComment}
+          disabled={sendingComment || !commentText.trim()}
         >
-          <MaterialIcons name="send" size={20} color="#FFFFFF" />
+          {sendingComment ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <MaterialIcons name="send" size={20} color="#FFFFFF" />
+          )}
         </TouchableOpacity>
       </View>
     </View>
@@ -478,7 +579,7 @@ export const TaskDetailScreen: React.FC = () => {
       <View style={styles.tabBar}>
         {(hasForm
           ? (['details', 'form', 'comments'] as TabKey[])
-          : (['details', 'checklist', 'comments'] as TabKey[])
+          : (['details', 'comments'] as TabKey[])
         ).map(tab => (
           <TouchableOpacity
             key={tab}
@@ -491,7 +592,11 @@ export const TaskDetailScreen: React.FC = () => {
                 activeTab === tab && { color: primaryColor },
               ]}
             >
-              {tab === 'form' ? 'Form' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {tab === 'form'
+                ? 'Form'
+                : tab === 'comments' && notes.length > 0
+                  ? `Comments (${notes.length})`
+                  : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -500,7 +605,6 @@ export const TaskDetailScreen: React.FC = () => {
       {/* Tab Content */}
       {activeTab === 'details' && renderDetailsTab()}
       {activeTab === 'form' && hasForm && renderFormTab()}
-      {activeTab === 'checklist' && !hasForm && renderChecklistTab()}
       {activeTab === 'comments' && renderCommentsTab()}
 
       {/* Action Buttons - Only show in details tab */}
@@ -828,30 +932,32 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodySemibold,
     color: '#FFFFFF',
   },
-  bottomAction: {
-    padding: 16,
-    backgroundColor: 'transparent',
-    position: 'relative',
-    ...shadows.subtle,
-  },
-  checklistItem: {
-    flexDirection: 'row',
+  commentsCenter: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: 16,
-    marginTop: 8,
-    padding: 16,
-    borderRadius: radius.md,
-    borderWidth: 1,
+    paddingHorizontal: 32,
   },
-  checklistText: {
-    marginLeft: 12,
-    fontSize: fontSizes.md,
+  commentsCenterText: {
+    marginTop: 12,
+    fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
-    color: '#1E2321',
+    textAlign: 'center',
   },
-  checklistTextCompleted: {
-    textDecorationLine: 'line-through',
-    color: '#757575',
+  commentsCenterHint: {
+    marginTop: 4,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
+    textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  retryText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
   commentsList: {
     padding: 16,

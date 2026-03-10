@@ -363,16 +363,21 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
   // Step 1: Pre-map ALL tasks once (expensive, only recomputes when data changes)
   // ---------------------------------------------------------------------------
+  // Filter out soft-deleted tasks before mapping
+  const activeTasks = useMemo(() => {
+    return data.tasks.filter((t) => !t.deleted_at);
+  }, [data.tasks]);
+
   const allMappedTasks = useMemo(() => {
-    if (data.tasks.length === 0) return [];
-    return data.tasks.map((t) =>
+    if (activeTasks.length === 0) return [];
+    return activeTasks.map((t) =>
       mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap),
     );
-  }, [data.tasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap]);
+  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap]);
 
-  // Build a workspace-id lookup from the pre-mapped tasks (index-aligned with data.tasks)
+  // Build a workspace-id lookup from the pre-mapped tasks (index-aligned with activeTasks)
   const taskWorkspaceIds = useMemo(() => {
-    return data.tasks.map((t) => t.workspace_id);
+    return activeTasks.map((t) => t.workspace_id);
   }, [data.tasks]);
 
   // ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
   const { compactCards, toggleCompactCards } = useTasks();
-  const { logout, user } = useAuth();
+  const { logout, user, subdomain } = useAuth();
   const { unreadCount: notificationCount } = useNotifications();
 
   const quoteIndex = getDailyIndex(quotes.length);
@@ -80,6 +80,14 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
               <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Field operations</Text>
             </View>
           </View>
+          {subdomain && (
+            <View style={[styles.tenantBadge, { backgroundColor: `${primaryColor}15` }]}>
+              <MaterialIcons name="business" size={14} color={primaryColor} />
+              <Text style={[styles.tenantName, { color: primaryColor }]}>
+                {subdomain.charAt(0).toUpperCase() + subdomain.slice(1)}
+              </Text>
+            </View>
+          )}
           {user && (
             <Text style={[styles.headerUser, { color: colors.textSecondary }]}>{user.name ?? user.email}</Text>
           )}
@@ -222,8 +230,23 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyMedium,
     letterSpacing: 0.3,
   },
-  headerUser: {
+  tenantBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
     marginTop: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: radius.pill,
+  },
+  tenantName: {
+    marginLeft: 6,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
+    letterSpacing: 0.2,
+  },
+  headerUser: {
+    marginTop: 6,
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
   },

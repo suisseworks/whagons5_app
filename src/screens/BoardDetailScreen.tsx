@@ -95,13 +95,13 @@ export const BoardDetailScreen: React.FC = () => {
 
     setIsSending(true);
     try {
-      const baseUrl = buildBaseUrl(subdomain);
+      const baseUrl = buildBaseUrl(subdomain ?? undefined);
       const response = await fetch(`${baseUrl}/board-messages`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
-          ...getTenantHeaders(subdomain),
+          ...getTenantHeaders(subdomain ?? undefined),
         },
         body: JSON.stringify({
           board_id: boardId,

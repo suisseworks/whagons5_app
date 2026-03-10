@@ -1,6 +1,16 @@
 import { TaskModel } from '../models/types';
 import { buildBaseUrl, getTenantHeaders } from '../config/api';
 
+export interface TaskNoteResponse {
+  id: number;
+  uuid: string;
+  task_id: number;
+  note: string;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
 interface ApiClientConfig {
   baseUrl: string;
   authToken?: string;
@@ -256,6 +266,50 @@ export class ApiClient {
     if (!response.ok) {
       console.warn(`[API] Send message notification failed: ${response.status}`);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Task notes / comments endpoints (tenant-level: /api/task-notes)
+  // ---------------------------------------------------------------------------
+
+  /** Fetch all notes for a given task. */
+  async getTaskNotes(taskId: number | string): Promise<TaskNoteResponse[]> {
+    const url = `${this.baseUrl}/task-notes?task_id=${taskId}`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch task notes: ${response.status}`);
+    }
+
+    const json = await response.json();
+    const items = json.data ?? json;
+    return Array.isArray(items) ? items : [];
+  }
+
+  /** Create a new note on a task. */
+  async createTaskNote(params: {
+    uuid: string;
+    task_id: number;
+    note: string;
+    user_id: number;
+  }): Promise<TaskNoteResponse> {
+    const url = `${this.baseUrl}/task-notes`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to create task note: ${response.status} ${body}`);
+    }
+
+    const json = await response.json();
+    return json.data ?? json;
   }
 
   // ---------------------------------------------------------------------------
