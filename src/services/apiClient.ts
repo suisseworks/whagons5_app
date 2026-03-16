@@ -624,6 +624,83 @@ export class ApiClient {
     return json.data ?? json;
   }
 
+  // ── Gamification ────────────────────────────────────────────
+
+  async getLeaderboard(period: 'all_time' | 'weekly' | 'monthly' = 'all_time', limit: number = 20): Promise<any[]> {
+    const endpoint = period === 'weekly' ? '/gamification/leaderboard/weekly'
+      : period === 'monthly' ? '/gamification/leaderboard/monthly'
+      : '/gamification/leaderboard';
+    const url = `${this.baseUrl}${endpoint}?limit=${limit}`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch leaderboard: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getMyPointsSummary(): Promise<any> {
+    const url = `${this.baseUrl}/gamification/my-points/summary`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch points summary: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getPointHistory(page: number = 1, perPage: number = 20): Promise<any> {
+    const url = `${this.baseUrl}/gamification/history?page=${page}&per_page=${perPage}`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch point history: ${response.status}`);
+    const json = await response.json();
+    return json;
+  }
+
+  async getRecentActivity(limit: number = 10): Promise<any[]> {
+    const url = `${this.baseUrl}/gamification/activity?limit=${limit}`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch activity: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getBadges(): Promise<any[]> {
+    const url = `${this.baseUrl}/gamification/badges`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch badges: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getMyBadges(): Promise<any[]> {
+    const url = `${this.baseUrl}/gamification/badges/my-badges`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch my badges: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getLevels(): Promise<any[]> {
+    const url = `${this.baseUrl}/gamification/levels`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch levels: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getMyLevelProgress(): Promise<any> {
+    const url = `${this.baseUrl}/gamification/levels/my-progress`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch level progress: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
+  async getTeamLevelDistribution(): Promise<any[]> {
+    const url = `${this.baseUrl}/gamification/levels/team-distribution`;
+    const response = await fetch(url, { method: 'GET', headers: this.getHeaders() });
+    if (!response.ok) throw new Error(`Failed to fetch level distribution: ${response.status}`);
+    const json = await response.json();
+    return json.data ?? json;
+  }
+
   setAuthToken(token: string): void {
     this.authToken = token;
   }

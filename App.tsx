@@ -10,6 +10,7 @@ import { AuthProvider } from './src/context/AuthContext';
 import { DataProvider } from './src/context/DataContext';
 import { TaskProvider } from './src/context/TaskContext';
 import { NotificationProvider } from './src/context/NotificationContext';
+import { GamificationProvider } from './src/context/GamificationContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 
 export default function App() {
@@ -37,8 +38,10 @@ export default function App() {
               <NotificationProvider>
                 <ThemeProvider>
                   <TaskProvider>
-                    <StatusBar style="auto" />
-                    <AppNavigator />
+                    <GamificationProvider>
+                      <StatusBar style="auto" />
+                      <AppNavigator />
+                    </GamificationProvider>
                   </TaskProvider>
                 </ThemeProvider>
               </NotificationProvider>

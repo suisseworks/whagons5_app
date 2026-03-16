@@ -16,6 +16,8 @@ import { ThemesScreen } from '../screens/ThemesScreen';
 import { BoardDetailScreen } from '../screens/BoardDetailScreen';
 import { TenantSelectScreen } from '../screens/TenantSelectScreen';
 import { SpotsMapScreen } from '../screens/SpotsMapScreen';
+import { GamificationScreen } from '../screens/GamificationScreen';
+import { PointHistoryScreen } from '../screens/PointHistoryScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -41,6 +43,8 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="Themes" component={ThemesScreen} />
         <Stack.Screen name="BoardDetail" component={BoardDetailScreen} />
         <Stack.Screen name="SpotsMap" component={SpotsMapScreen} />
+        <Stack.Screen name="Gamification" component={GamificationScreen} />
+        <Stack.Screen name="PointHistory" component={PointHistoryScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
