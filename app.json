@@ -41,6 +41,13 @@
         {
           "cameraPermission": "Allow Whagons to access your camera to scan barcodes."
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Whagons to use your location to map spots and rooms.",
+          "locationWhenInUsePermission": "Allow Whagons to use your location to map spots and rooms."
+        }
       ]
     ]
   }

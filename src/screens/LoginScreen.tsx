@@ -255,7 +255,7 @@ export const LoginScreen: React.FC = () => {
             <View style={styles.logoArea}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
               <Text style={styles.brandName}>Whagons</Text>
-              <Text style={styles.tagline}>Sign in to your account</Text>
+              <Text style={styles.tagline}>Operational Intelligence in Action.</Text>
             </View>
             <LoginForm />
           </View>
@@ -292,7 +292,7 @@ export const LoginScreen: React.FC = () => {
             <Animated.View style={[styles.logoSection, { opacity: logoFade }]}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
               <Text style={styles.brandName}>Whagons</Text>
-              <Text style={styles.tagline}>Sign in to your account</Text>
+              <Text style={styles.tagline}>Operational Intelligence in Action.</Text>
             </Animated.View>
 
             {/* Bottom: Form */}
@@ -300,7 +300,7 @@ export const LoginScreen: React.FC = () => {
 
             {/* Footer */}
             <View style={styles.footer}>
-              <Text style={styles.footerText}>Coordinating work, together.</Text>
+              <Text style={styles.footerText}>Operational Intelligence in Action.</Text>
             </View>
           </View>
         )}

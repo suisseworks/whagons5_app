@@ -96,6 +96,23 @@ export interface SyncedStatusTransition {
 export interface SyncedSpot {
   id: number | string;
   name: string;
+  alias?: string | null;
+  parent_id?: number | string | null;
+  spot_type_id?: number | string | null;
+  is_branch?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  cleaning_status_id?: number | string | null;
+  current_cleaning_task_id?: number | string | null;
+  last_cleaned_by?: number | string | null;
+  last_cleaned_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedSpotType {
+  id: number | string;
+  name: string;
+  color?: string | null;
   [key: string]: unknown;
 }
 
@@ -116,6 +133,16 @@ export interface SyncedTeam {
 export interface SyncedTag {
   id: number | string;
   name: string;
+  color?: string | null;
+  icon?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedTaskFlag {
+  id: number | string;
+  task_id: number | string;
+  user_id: number | string;
+  color: string;
   [key: string]: unknown;
 }
 
@@ -279,6 +306,33 @@ export interface SyncedWorkspaceChat {
   [key: string]: unknown;
 }
 
+export interface SyncedKpiCard {
+  id: number | string;
+  name: string;
+  type: string;
+  query_config: string | Record<string, unknown>;
+  display_config: string | Record<string, unknown>;
+  workspace_id?: number | string | null;
+  user_id?: number | string | null;
+  position: number;
+  is_enabled: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedPlugin {
+  id: number | string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  version?: string;
+  is_enabled: boolean;
+  settings?: string | Record<string, unknown> | null;
+  category_ids?: (number | string)[] | string;
+  [key: string]: unknown;
+}
+
 export interface SyncedData {
   tasks: SyncedTask[];
   workspaces: SyncedWorkspace[];
@@ -288,11 +342,13 @@ export interface SyncedData {
   statusTransitionGroups: SyncedStatusTransitionGroup[];
   statusTransitions: SyncedStatusTransition[];
   spots: SyncedSpot[];
+  spotTypes: SyncedSpotType[];
   users: SyncedUser[];
   teams: SyncedTeam[];
   tags: SyncedTag[];
   taskUsers: SyncedTaskUser[];
   taskTags: SyncedTaskTag[];
+  taskFlags: SyncedTaskFlag[];
   boards: SyncedBoard[];
   boardMembers: SyncedBoardMember[];
   boardMessages: SyncedBoardMessage[];
@@ -306,11 +362,14 @@ export interface SyncedData {
   messageReactions: SyncedMessageReaction[];
   linkPreviews: SyncedLinkPreview[];
   workspaceChat: SyncedWorkspaceChat[];
+  kpiCards: SyncedKpiCard[];
+  plugins: SyncedPlugin[];
 }
 
 interface DataContextType {
   data: SyncedData;
   isSyncing: boolean;
+  hasEverSynced: boolean;
   syncError: string | null;
   syncProgress: null;
   isInitialSync: boolean;
@@ -330,11 +389,13 @@ const EMPTY_DATA: SyncedData = {
   statusTransitionGroups: [],
   statusTransitions: [],
   spots: [],
+  spotTypes: [],
   users: [],
   teams: [],
   tags: [],
   taskUsers: [],
   taskTags: [],
+  taskFlags: [],
   boards: [],
   boardMembers: [],
   boardMessages: [],
@@ -348,6 +409,8 @@ const EMPTY_DATA: SyncedData = {
   messageReactions: [],
   linkPreviews: [],
   workspaceChat: [],
+  kpiCards: [],
+  plugins: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -677,10 +740,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
 
     return {
-      // Tasks (FK fields resolved to pgIds)
       tasks: rawTasks ? rawTasks.map((t: any) => mapTask(t, fk)) : EMPTY,
 
-      // Reference data from bulk query
       workspaces: refData ? mapIds(refData.workspaces) : EMPTY,
       statuses: refData ? refData.statuses.map((d: any) => mapStatus(d, fk)) : EMPTY,
       priorities: refData ? refData.priorities.map((d: any) => mapPriority(d, fk)) : EMPTY,
@@ -692,34 +753,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ? refData.statusTransitions.map(mapStatusTransition)
         : EMPTY,
       spots: refData ? mapIds(refData.spots) : EMPTY,
+      spotTypes: EMPTY,
       users: refData ? refData.users.map(mapUser) : EMPTY,
       teams: refData ? mapIds(refData.teams) : EMPTY,
       tags: refData ? mapIds(refData.tags) : EMPTY,
       templates: refData ? refData.templates.map(mapTemplate) : EMPTY,
       forms: refData ? refData.forms?.map(mapForm) ?? EMPTY : EMPTY,
       formVersions: refData ? refData.formVersions?.map(mapFormVersion) ?? EMPTY : EMPTY,
-      taskForms: EMPTY, // TODO: fetch task forms when needed
+      taskForms: EMPTY,
 
-      // Pivot tables (FK fields resolved to pgIds)
       taskUsers: pivotData ? pivotData.taskUsers.map((d: any) => mapTaskUser(d, fk)) : EMPTY,
       taskTags: pivotData ? pivotData.taskTags.map((d: any) => mapTaskTag(d, fk)) : EMPTY,
+      taskFlags: EMPTY,
 
-      // Boards
       boards: rawBoards ? rawBoards.map(mapBoard) : EMPTY,
-      boardMembers: EMPTY, // fetched per-board in UI
-      boardMessages: EMPTY, // fetched per-board in UI
+      boardMembers: EMPTY,
+      boardMessages: EMPTY,
 
-      // Chat
       conversations: rawConversations ? rawConversations.map(mapConversation) : EMPTY,
-      conversationParticipants: EMPTY, // fetched per-conversation
-      directMessages: EMPTY, // fetched per-conversation
-      messageReactions: EMPTY, // fetched per-message
+      conversationParticipants: EMPTY,
+      directMessages: EMPTY,
+      messageReactions: EMPTY,
       linkPreviews: EMPTY,
-      workspaceChat: EMPTY, // fetched per-workspace
+      workspaceChat: EMPTY,
+
+      kpiCards: EMPTY,
+      plugins: EMPTY,
     };
   }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawConversations]);
 
   const isLoading = !!tenantId && (refData === undefined || rawTasks === undefined);
+  const hasEverSynced = !!tenantId && refData !== undefined && rawTasks !== undefined;
 
   // refresh / forceResync are no-ops with Convex (data is always live)
   const refresh = useCallback(async () => {}, []);
@@ -730,6 +794,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       value={{
         data,
         isSyncing: isLoading,
+        hasEverSynced,
         syncError: null,
         syncProgress: null,
         isInitialSync: isLoading,

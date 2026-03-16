@@ -6,13 +6,15 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  Image,
   Alert,
   Modal,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
@@ -24,10 +26,9 @@ import { RootStackParamList } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
-import { priorityColor, statusColor, getInitials } from '../utils/helpers';
+import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
-/** Shape for a task note (matches Convex doc + mapped fields) */
 interface TaskNoteResponse {
   _id?: string;
   id?: string | number;
@@ -74,13 +75,12 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { setActiveTask, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId } = useTasks();
+  const { addWorkingTask, removeWorkingTask, isTaskWorking, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
   const { subdomain, token, user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
-  // Build a user lookup map from synced data
   const userMap = useMemo(() => {
     const map = new Map<number, string>();
     for (const u of data.users) {
@@ -89,7 +89,6 @@ export const TaskDetailScreen: React.FC = () => {
     return map;
   }, [data.users]);
 
-  // Determine if this task has a form
   const formSchema = useMemo(() => getFormSchema(task), [task, getFormSchema]);
   const existingSubmission = useMemo(() => getTaskFormSubmission(task.id || ''), [task.id, getTaskFormSubmission]);
   const hasForm = !!formSchema && formSchema.fields.length > 0;
@@ -97,27 +96,23 @@ export const TaskDetailScreen: React.FC = () => {
   type TabKey = 'details' | 'form' | 'comments';
   const [activeTab, setActiveTab] = useState<TabKey>('details');
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
-  // Track local status so changes reflect immediately on this screen
   const [currentStatus, setCurrentStatus] = useState(task.status);
   const [currentStatusColor, setCurrentStatusColor] = useState(task.statusColor);
   const [currentStatusId, setCurrentStatusId] = useState(task.statusId);
 
-  // Build a task object with the current local status so getAllowedStatuses
-  // computes valid transitions from the *current* status, not the original one.
   const currentTask = useMemo(
     () => ({ ...task, status: currentStatus, statusColor: currentStatusColor, statusId: currentStatusId }),
     [task, currentStatus, currentStatusColor, currentStatusId],
   );
   const [commentText, setCommentText] = useState('');
+  const [attachedImages, setAttachedImages] = useState<string[]>([]);
 
-  // Form state
   const [formValues, setFormValues] = useState<Record<string, unknown>>(
     existingSubmission?.data ?? {},
   );
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formShowValidation, setFormShowValidation] = useState(false);
 
-  // Real comments from Convex (live-reactive, no polling needed)
   const rawNotes = useQuery(
     api.taskResources.listTaskNotes,
     tenantId && task.id ? { tenantId, taskId: task.id as any } : 'skip',
@@ -141,11 +136,12 @@ export const TaskDetailScreen: React.FC = () => {
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
 
+  const isWorking = task.id ? isTaskWorking(task.id) : false;
+
   const handleStartWorking = async () => {
     const taskId = task.id;
     if (!taskId) return;
 
-    // 1. Change status to "In Progress" (or the first non-initial, non-final allowed status)
     const allowed = getAllowedStatuses(currentTask);
     const inProgressStatus =
       allowed.find((s) => /in\s*progress/i.test(s.name)) ??
@@ -158,22 +154,24 @@ export const TaskDetailScreen: React.FC = () => {
       setCurrentStatusId(inProgressStatus.id);
     }
 
-    // 2. Assign the current user to the task if not already assigned
     if (authUser?.id != null) {
       const existingUserIds = data.taskUsers
         .filter((tu) => tu.task_id === Number(taskId))
         .map((tu) => tu.user_id);
 
       if (!existingUserIds.includes(authUser.id)) {
-        // TODO: assign user via Convex mutation
         console.log('[TaskDetail] User assignment via Convex not yet implemented');
       }
     }
 
-    // 3. Set active task & navigate back
-    setActiveTask({ ...task, status: inProgressStatus?.name ?? currentStatus, statusColor: inProgressStatus?.color ?? currentStatusColor });
+    addWorkingTask(task);
     navigation.goBack();
-    Alert.alert('Started', `Now working on "${task.title}"`);
+  };
+
+  const handleStopWorking = () => {
+    if (task.id) {
+      removeWorkingTask(task.id);
+    }
   };
 
   const handleStatusChange = (status: StatusOption) => {
@@ -201,7 +199,6 @@ export const TaskDetailScreen: React.FC = () => {
         taskId: task.id as any,
         note: text,
       });
-      // Convex reactive query auto-updates notes — no manual state update needed
       setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to post comment');
@@ -210,14 +207,47 @@ export const TaskDetailScreen: React.FC = () => {
     }
   };
 
-  // Form submission via Convex
+  const pickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.85,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setAttachedImages(prev => [...prev, result.assets[0].uri]);
+    }
+  };
+
+  const takePhoto = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (permission.status !== 'granted') {
+      Alert.alert('Permission required', 'Camera permission is required to take photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      quality: 0.85,
+    });
+
+    if (!result.canceled && result.assets[0]) {
+      setAttachedImages(prev => [...prev, result.assets[0].uri]);
+    }
+  };
+
+  const showImageOptions = () => {
+    Alert.alert('Add Photo', 'Choose an option', [
+      { text: 'Take Photo', onPress: takePhoto },
+      { text: 'Choose from Gallery', onPress: pickImage },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  };
+
   const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
   const updateTaskFormMutation = useMutation(api.forms.updateTaskForm);
 
   const handleFormSubmit = useCallback(async () => {
     if (!formSchema || !task.formId || !task.id || !tenantId) return;
 
-    // Validate required fields
     const errors = formSchema.fields.filter(
       (f) => f.required && (formValues[f.id] === undefined || formValues[f.id] === null || formValues[f.id] === '' || (Array.isArray(formValues[f.id]) && (formValues[f.id] as unknown[]).length === 0)),
     );
@@ -270,7 +300,6 @@ export const TaskDetailScreen: React.FC = () => {
         <CustomChip label={task.priority} color={priorityColor(task.priority)} />
       </View>
 
-      {/* Details Card */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
       >
         <DetailRow icon="location-on" label="Location" value={task.spot} />
@@ -290,7 +319,6 @@ export const TaskDetailScreen: React.FC = () => {
         )}
       </View>
 
-      {/* Assignees Card */}
       <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
       >
         <View style={styles.cardHeader}>
@@ -309,7 +337,6 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Tags Card */}
         {task.tags.length > 0 && (
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
         >
@@ -318,16 +345,71 @@ export const TaskDetailScreen: React.FC = () => {
             <Text style={[styles.cardTitle, { color: colors.text }]}>Tags</Text>
           </View>
           <View style={styles.chipsRow}>
-            {task.tags.map((tag, index) => (
-              <View key={index} style={{ marginRight: 6, marginBottom: 6 }}>
-                <CustomChip label={tag} color="#F5F5F5" textColor="#212121" />
-              </View>
-            ))}
+            {task.tags.map((tag, index) => {
+              const info = tagInfoMap.get(tag);
+              const bgColor = info?.color || '#6B7280';
+              const textColor = contrastTextColor(bgColor);
+              const iconClass = info?.icon;
+              const { name: iconName, solid } = iconClass
+                ? parseWorkspaceIcon(iconClass)
+                : { name: 'tag', solid: true };
+              return (
+                <View key={index} style={{ marginRight: 6, marginBottom: 6, flexDirection: 'row', alignItems: 'center', backgroundColor: bgColor, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                  <FontAwesome5 name={iconName} size={11} color={textColor} solid={solid} style={{ marginRight: 5 }} />
+                  <Text style={{ fontSize: 13, fontFamily: 'Montserrat_500Medium', color: textColor }}>{tag}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
       )}
 
-      {/* Timestamps Card */}
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
+      >
+        <View style={styles.cardHeaderRow}>
+          <View style={styles.cardHeader}>
+            <MaterialIcons name="photo-library" size={20} color={colors.textSecondary} />
+            <Text style={[styles.cardTitle, { color: colors.text }]}>Attachments</Text>
+            {attachedImages.length > 0 && (
+              <View style={[styles.attachmentCount, { backgroundColor: `${primaryColor}1A` }]}
+              >
+                <Text style={[styles.attachmentCountText, { color: primaryColor }]}>
+                  {attachedImages.length}
+                </Text>
+              </View>
+            )}
+          </View>
+          <TouchableOpacity onPress={showImageOptions}>
+            <MaterialIcons name="add-photo-alternate" size={24} color={primaryColor} />
+          </TouchableOpacity>
+        </View>
+
+        {attachedImages.length === 0 ? (
+          <View style={styles.emptyAttachments}>
+            <MaterialIcons name="add-a-photo" size={48} color="#E0E0E0" />
+            <Text style={styles.emptyText}>No attachments yet</Text>
+            <TouchableOpacity style={[styles.addPhotoButton, { borderColor: primaryColor }]} onPress={showImageOptions}>
+              <MaterialIcons name="add" size={20} color={primaryColor} />
+              <Text style={[styles.addPhotoText, { color: primaryColor }]}>Add Photo</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.imagesGrid}>
+            {attachedImages.map((uri, index) => (
+              <TouchableOpacity key={index} style={styles.imageContainer}>
+                <Image source={{ uri }} style={styles.attachedImage} />
+                <TouchableOpacity
+                  style={styles.removeImageButton}
+                  onPress={() => setAttachedImages(prev => prev.filter((_, i) => i !== index))}
+                >
+                  <MaterialIcons name="close" size={16} color="#FFFFFF" />
+                </TouchableOpacity>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </View>
+
       <View style={[styles.card, styles.timestampsCard, { borderColor: cardBorder, backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.6)' : 'rgba(255, 255, 255, 0.6)' }]}
       >
         <View style={styles.timestampRow}>
@@ -434,7 +516,7 @@ export const TaskDetailScreen: React.FC = () => {
                       {authorName}
                     </Text>
                     <Text style={[styles.commentTime, { color: colors.textSecondary }]}>
-                      {timeAgo(note.created_at)}
+                      {timeAgo(note.created_at!)}
                     </Text>
                   </View>
                   <View
@@ -496,7 +578,6 @@ export const TaskDetailScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
-      {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.background }]}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
@@ -507,7 +588,6 @@ export const TaskDetailScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Tab Bar */}
       <View style={styles.tabBar}>
         {(hasForm
           ? (['details', 'form', 'comments'] as TabKey[])
@@ -534,12 +614,10 @@ export const TaskDetailScreen: React.FC = () => {
         ))}
       </View>
 
-      {/* Tab Content */}
       {activeTab === 'details' && renderDetailsTab()}
       {activeTab === 'form' && hasForm && renderFormTab()}
       {activeTab === 'comments' && renderCommentsTab()}
 
-      {/* Action Buttons - Only show in details tab */}
       {activeTab === 'details' && (
         <View
           style={[
@@ -547,13 +625,23 @@ export const TaskDetailScreen: React.FC = () => {
             { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
           ]}
         >
-          <TouchableOpacity
-            style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
-            onPress={handleStartWorking}
-          >
-            <MaterialIcons name="play-circle-outline" size={20} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>Start Working</Text>
-          </TouchableOpacity>
+          {isWorking ? (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.startButton, styles.stopButton, { borderColor: primaryColor }]}
+              onPress={handleStopWorking}
+            >
+              <MaterialIcons name="stop-circle" size={20} color={primaryColor} />
+              <Text style={[styles.actionButtonText, { color: primaryColor }]}>Stop Working</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
+              onPress={handleStartWorking}
+            >
+              <MaterialIcons name="play-circle-outline" size={20} color="#FFFFFF" />
+              <Text style={styles.actionButtonText}>Start Working</Text>
+            </TouchableOpacity>
+          )}
 
           {getAllowedStatuses(currentTask).length > 0 && (
             <TouchableOpacity
@@ -569,7 +657,6 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Status Picker Modal */}
       <Modal
         visible={statusPickerVisible}
         animationType="slide"
@@ -758,6 +845,68 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyMedium,
     color: '#1E2321',
   },
+  attachmentCount: {
+    marginLeft: 8,
+    backgroundColor: 'rgba(20, 183, 163, 0.1)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  attachmentCountText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#C77B43',
+  },
+  emptyAttachments: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  emptyText: {
+    marginTop: 8,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#8B8E84',
+  },
+  addPhotoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#14B7A3',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  addPhotoText: {
+    marginLeft: 4,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  imagesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 12,
+  },
+  imageContainer: {
+    width: '31%',
+    aspectRatio: 1,
+    marginRight: '2%',
+    marginBottom: 8,
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  attachedImage: {
+    width: '100%',
+    height: '100%',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: '#F44336',
+    borderRadius: 12,
+    padding: 4,
+  },
   timestampsCard: {
     borderWidth: 1,
   },
@@ -791,6 +940,10 @@ const styles = StyleSheet.create({
   },
   startButton: {
     marginRight: 12,
+  },
+  stopButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
   },
   doneButton: {
     backgroundColor: '#FFFFFF',

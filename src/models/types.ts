@@ -24,6 +24,8 @@ export interface TaskItem {
   formId?: string | number | null;
   /** Name of the form linked to this task */
   formName?: string | null;
+  /** Per-user flag color (null = not flagged) */
+  flagColor?: string | null;
 }
 
 // Notification item model
@@ -49,6 +51,9 @@ export interface ChecklistItem {
   title: string;
   completed: boolean;
 }
+
+// Card density display mode
+export type CardDensity = 'compact' | 'normal' | 'detailed';
 
 // Theme names
 export type ThemeName = 'default' | 'ocean' | 'sunset' | 'forest';
@@ -76,6 +81,143 @@ export interface TaskModel {
   description?: string;
 }
 
+// Gamification types
+export interface LeaderboardEntry {
+  rank: number;
+  user_id: number;
+  total_points: number;
+  weekly_points: number;
+  monthly_points: number;
+  user: {
+    id: number;
+    name: string;
+    email: string;
+    url_picture?: string | null;
+  };
+}
+
+export interface PointsSummary {
+  total_points: number;
+  weekly_points: number;
+  monthly_points: number;
+  rank: number;
+  total_users: number;
+}
+
+export interface PointTransaction {
+  id: number;
+  user_id: number;
+  team_id: number;
+  point_action_id: number;
+  points: number;
+  description: string;
+  reference_type: string | null;
+  reference_id: number | null;
+  created_at: string;
+  action?: {
+    slug: string;
+    name: string;
+    icon: string;
+  };
+  user?: {
+    id: number;
+    name: string;
+    url_picture?: string | null;
+  };
+}
+
+export interface GamificationBadge {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  category: string;
+  criteria_type: string;
+  criteria_value: number;
+  is_secret: boolean;
+  earned: boolean;
+  earned_at: string | null;
+  progress?: {
+    current: number;
+    target: number;
+    percentage: number;
+  };
+}
+
+export interface GamificationLevel {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  level_number: number;
+  min_points: number;
+  max_points: number | null;
+  perks: string[];
+  is_current: boolean;
+  is_unlocked: boolean;
+  progress: number;
+}
+
+export interface LevelProgress {
+  current_level: GamificationLevel | null;
+  total_points: number;
+  progress_percentage: number;
+  points_to_next_level: number | null;
+  next_level: GamificationLevel | null;
+}
+
+export interface LevelDistribution {
+  level: GamificationLevel;
+  user_count: number;
+}
+
+// ---------------------------------------------------------------------------
+// KPI Card types
+// ---------------------------------------------------------------------------
+
+/** Metric-type KPI card types supported on mobile (v1) */
+export type KpiCardMetricType =
+  | 'task_count'
+  | 'task_percentage'
+  | 'custom_query'
+  | 'count_completed_today'
+  | 'count_overdue'
+  | 'count_created_today'
+  | 'time_avg'
+  | 'trend'
+  | 'trend_7d'
+  | 'trend_30d';
+
+/** All possible KPI card types (including chart types not rendered on mobile) */
+export type KpiCardType =
+  | KpiCardMetricType
+  | 'gauge'
+  | 'line_chart'
+  | 'bar_chart'
+  | 'donut_chart'
+  | 'stacked_bar'
+  | 'burndown'
+  | 'burnup'
+  | 'velocity'
+  | 'table'
+  | 'heatmap'
+  | 'external';
+
+/** Computed result for a KPI card */
+export interface KpiComputedCard {
+  id: number;
+  label: string;
+  value: string;
+  iconName: string;
+  iconColor: string;
+  helperText?: string;
+  trendData?: number[];
+}
+
 // Navigation param types
 export type RootStackParamList = {
   Splash: undefined;
@@ -88,6 +230,9 @@ export type RootStackParamList = {
   Settings: undefined;
   Themes: undefined;
   BoardDetail: { boardId: string | number };
+  SpotsMap: { focusSpotId?: number } | undefined;
+  Gamification: undefined;
+  PointHistory: undefined;
 };
 
 export type MainTabParamList = {

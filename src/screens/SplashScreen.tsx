@@ -116,7 +116,7 @@ export const SplashScreen: React.FC = () => {
 
           {/* Tagline */}
           <Animated.Text style={[styles.subtitle, { opacity: textFade }]}>
-            Coordinating work, together.
+            Operational Intelligence in Action.
           </Animated.Text>
 
           {/* Loading indicator */}

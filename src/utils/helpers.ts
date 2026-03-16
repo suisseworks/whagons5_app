@@ -91,11 +91,60 @@ export const quotes = [
   { text: 'Great things never come from comfort zones.', author: 'Unknown' },
 ];
 
-// Image URLs for drawer
+/** Returns white or dark text color for good contrast on a hex background */
+export function contrastTextColor(hex: string): string {
+  const c = hex.replace('#', '');
+  const r = parseInt(c.substring(0, 2), 16);
+  const g = parseInt(c.substring(2, 4), 16);
+  const b = parseInt(c.substring(4, 6), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#1F2937' : '#FFFFFF';
+}
+
+// Costa Rica image URLs for drawer (matching backend/client images)
+// ---------------------------------------------------------------------------
+// Tag colors – deterministic pastel palette based on tag name (fallback)
+// ---------------------------------------------------------------------------
+
+export interface TagColor {
+  bg: string;
+  text: string;
+  bgDark: string;
+  textDark: string;
+}
+
+const TAG_PALETTE: TagColor[] = [
+  { bg: '#DBEAFE', text: '#1E40AF', bgDark: 'rgba(59,130,246,0.18)',  textDark: '#93C5FD' },  // blue
+  { bg: '#D1FAE5', text: '#065F46', bgDark: 'rgba(16,185,129,0.18)',  textDark: '#6EE7B7' },  // green
+  { bg: '#FEF3C7', text: '#92400E', bgDark: 'rgba(245,158,11,0.18)',  textDark: '#FCD34D' },  // amber
+  { bg: '#FCE7F3', text: '#9D174D', bgDark: 'rgba(236,72,153,0.18)',  textDark: '#F9A8D4' },  // pink
+  { bg: '#EDE9FE', text: '#5B21B6', bgDark: 'rgba(139,92,246,0.18)',  textDark: '#C4B5FD' },  // violet
+  { bg: '#E0E7FF', text: '#3730A3', bgDark: 'rgba(99,102,241,0.18)',  textDark: '#A5B4FC' },  // indigo
+  { bg: '#CCFBF1', text: '#115E59', bgDark: 'rgba(20,184,166,0.18)',  textDark: '#5EEAD4' },  // teal
+  { bg: '#FEE2E2', text: '#991B1B', bgDark: 'rgba(239,68,68,0.18)',   textDark: '#FCA5A5' },  // red
+  { bg: '#FFEDD5', text: '#9A3412', bgDark: 'rgba(249,115,22,0.18)',  textDark: '#FDBA74' },  // orange
+  { bg: '#F3E8FF', text: '#6B21A8', bgDark: 'rgba(168,85,247,0.18)',  textDark: '#D8B4FE' },  // purple
+];
+
+/** Get a deterministic color pair for a tag name */
+export function tagColor(name: string): TagColor {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  }
+  return TAG_PALETTE[Math.abs(hash) % TAG_PALETTE.length];
+}
+
+// ---------------------------------------------------------------------------
+
 export const inspirationalImages = [
-  'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80', // ocean waves
-  'https://images.unsplash.com/photo-1441974231531-c6227db76b6e?auto=format&fit=crop&w=800&q=80', // forest path
-  'https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=800&q=80', // mountain range
-  'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?auto=format&fit=crop&w=800&q=80', // mountain lake
-  'https://images.unsplash.com/photo-1502126324834-38f8e02d7160?auto=format&fit=crop&w=800&q=80', // climbing mountain
+  'https://images.pexels.com/photos/30670233/pexels-photo-30670233.jpeg?auto=compress&cs=tinysrgb&w=1200', // colorful keel-billed toucan
+  'https://images.pexels.com/photos/12832297/pexels-photo-12832297.jpeg?auto=compress&cs=tinysrgb&w=1200', // palm-lined Costa Rica beach
+  'https://images.pexels.com/photos/931007/pexels-photo-931007.jpeg?auto=compress&cs=tinysrgb&w=1200', // tropical waterfall in jungle
+  'https://images.pexels.com/photos/894695/pexels-photo-894695.jpeg?auto=compress&cs=tinysrgb&w=1200', // coffee beans roasting
+  'https://images.pexels.com/photos/12715260/pexels-photo-12715260.jpeg?auto=compress&cs=tinysrgb&w=1200', // vibrant scarlet macaw
+  'https://images.pexels.com/photos/12832380/pexels-photo-12832380.jpeg?auto=compress&cs=tinysrgb&w=1200', // sloth in tropical tree
+  'https://images.pexels.com/photos/762565/pexels-photo-762565.jpeg?auto=compress&cs=tinysrgb&w=1200', // golden sunset on beach
+  'https://images.pexels.com/photos/35819421/pexels-photo-35819421.jpeg?auto=compress&cs=tinysrgb&w=1200', // Costa Rica coffee jars
+  'https://images.pexels.com/photos/16322443/pexels-photo-16322443.jpeg?auto=compress&cs=tinysrgb&w=1200', // toucan vibrant portrait
 ];
