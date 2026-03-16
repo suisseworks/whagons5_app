@@ -9,9 +9,15 @@
  */
 
 import React, { createContext, useContext, useState, useMemo, useCallback, useRef, useEffect, ReactNode } from 'react';
-import { TaskItem } from '../models/types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Alert } from 'react-native';
+import { TaskItem, CardDensity } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
+import { useAuth } from './AuthContext';
 import { apiClient } from '../services/apiClient';
+
+const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
+const MAX_WORKING_TASKS = 5;
 
 // ---------------------------------------------------------------------------
 // Helpers – map synced backend data → UI TaskItem
@@ -69,12 +75,16 @@ function mapTaskToItem(
   tagMap: Map<number, string[]>,      // taskId → list of tag names
   initialStatus: { name: string; color: string | null } | null,
   templateFormMap: Map<number, { formId: number; formName: string }>, // templateId → form info
+  userFlagMap: Map<number, string>,   // taskId → flag color (current user)
 ): TaskItem {
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
 
   // Resolve form via template_id → template → form_id
   const templateId = task.template_id as number | undefined;
   const formInfo = templateId ? templateFormMap.get(templateId) : undefined;
+
+  // Flag: prefer per-user flag from task_user pivot, fall back to task-level field
+  const flagColor = userFlagMap.get(task.id) ?? (task as any).flag_color ?? null;
 
   return {
     id: String(task.id),
@@ -92,28 +102,14 @@ function mapTaskToItem(
     sla: null,
     formId: formInfo?.formId ?? null,
     formName: formInfo?.formName ?? null,
-    flagColor: (task as any).flag_color ?? null,
+    flagColor,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Static fallback data (shown before first sync)
+// Empty fallback (MainScreen handles the empty/syncing UI itself)
 // ---------------------------------------------------------------------------
-
-const staticTasks: TaskItem[] = [
-  {
-    id: '0',
-    title: 'Syncing data...',
-    spot: '',
-    priority: 'Medium',
-    status: '',
-    assignees: [],
-    createdAt: '',
-    tags: [],
-    approval: null,
-    sla: null,
-  },
-];
+const EMPTY_TASKS: TaskItem[] = [];
 
 // ---------------------------------------------------------------------------
 // Context interface (unchanged from the original)
@@ -123,8 +119,15 @@ export interface StatusOption {
   id: number;
   name: string;
   color: string | null;
+  categoryId?: number | null;
   initial?: boolean;
   final?: boolean;
+}
+
+export interface CategoryOption {
+  id: number;
+  name: string;
+  color?: string | null;
 }
 
 export interface TaskFilters {
@@ -132,6 +135,7 @@ export interface TaskFilters {
   priorities: string[];        // 'Low' | 'Medium' | 'High' (empty = all)
   assignees: string[];         // user names to include (empty = all)
   flagColors: string[];        // flag colors to include (empty = all)
+  tags: string[];              // tag names to include (empty = all)
 }
 
 export const emptyFilters: TaskFilters = {
@@ -139,6 +143,7 @@ export const emptyFilters: TaskFilters = {
   priorities: [],
   assignees: [],
   flagColors: [],
+  tags: [],
 };
 
 /** Parsed form schema matching the web client's FormVersion.fields structure */
@@ -174,28 +179,47 @@ interface TaskContextType {
   loadMoreTasks: () => void;
   /** Whether there are more tasks to load */
   hasMoreTasks: boolean;
+  /** @deprecated Use workingTasks instead. Returns the first working task for backward compat. */
   activeTask: TaskItem | null;
-  compactCards: boolean;
+  /** All tasks the user is currently working on (max 5) */
+  workingTasks: TaskItem[];
+  cardDensity: CardDensity;
   selectedWorkspace: string;
   workspaces: string[];
   workspaceObjects: SyncedWorkspace[];
   statuses: StatusOption[];
+  categories: CategoryOption[];
   initialStatus: { name: string; color: string | null } | null;
   finalStatus: { name: string; color: string | null } | null;
   getAllowedStatuses: (task: TaskItem) => StatusOption[];
   addTask: (task: TaskItem) => void;
   updateTask: (index: number, task: TaskItem) => void;
+  /** @deprecated Use addWorkingTask / removeWorkingTask instead */
   setActiveTask: (task: TaskItem | null, markDone?: boolean) => void;
-  toggleCompactCards: () => void;
+  /** Add a task to the working list (max 5, prevents duplicates) */
+  addWorkingTask: (task: TaskItem) => void;
+  /** Remove a task from the working list */
+  removeWorkingTask: (taskId: string) => void;
+  /** Mark a working task as done (final status) and remove it from the list */
+  completeWorkingTask: (taskId: string) => void;
+  /** Check if a task is currently in the working list */
+  isTaskWorking: (taskId: string) => boolean;
+  setCardDensity: (density: CardDensity) => void;
   setSelectedWorkspace: (workspace: string) => void;
   filters: TaskFilters;
   setFilters: (filters: TaskFilters) => void;
   hasActiveFilters: boolean;
   /** All unique assignee names across the current workspace's tasks */
   availableAssignees: string[];
+  /** Statuses relevant to the current workspace (filtered by category transition groups) */
+  availableStatuses: StatusOption[];
+  /** All unique tag names across the current workspace's tasks */
+  availableTags: string[];
+  /** Tag metadata: name → { color, icon } */
+  tagInfoMap: Map<string, { color: string | null; icon: string | null }>;
   changeTaskStatus: (taskId: string, status: StatusOption) => void;
   markTaskDone: (taskId: string) => void;
-  assignTaskToYou: (taskId: string) => void;
+  assignTaskToUser: (taskId: string, userId: number, userName: string) => void;
   /** Get the form schema for a task (returns null if no form) */
   getFormSchema: (task: TaskItem) => FormSchema | null;
   /** Get the existing task form submission for a task */
@@ -208,9 +232,33 @@ const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { data } = useData();
+  const { user: authUser } = useAuth();
 
-  const [activeTask, setActiveTaskState] = useState<TaskItem | null>(null);
-  const [compactCards, setCompactCards] = useState(false);
+  // Multi-task working state (persisted to AsyncStorage)
+  const [workingTaskIds, setWorkingTaskIds] = useState<string[]>([]);
+  const workingTaskIdsLoaded = useRef(false);
+
+  // Load persisted working task IDs on mount
+  useEffect(() => {
+    AsyncStorage.getItem(WORKING_TASKS_STORAGE_KEY).then((raw) => {
+      if (raw) {
+        try {
+          const ids = JSON.parse(raw);
+          if (Array.isArray(ids)) setWorkingTaskIds(ids.slice(0, MAX_WORKING_TASKS));
+        } catch {}
+      }
+      workingTaskIdsLoaded.current = true;
+    });
+  }, []);
+
+  // Persist working task IDs whenever they change (after initial load)
+  useEffect(() => {
+    if (workingTaskIdsLoaded.current) {
+      AsyncStorage.setItem(WORKING_TASKS_STORAGE_KEY, JSON.stringify(workingTaskIds));
+    }
+  }, [workingTaskIds]);
+
+  const [cardDensity, setCardDensity] = useState<CardDensity>('normal');
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
   // Local overrides for optimistic mutations (keyed by task id)
@@ -247,6 +295,15 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.tags]);
 
+  // Tag info map: tag name → { color, icon } for the UI to look up
+  const tagInfoMap = useMemo(() => {
+    const m = new Map<string, { color: string | null; icon: string | null }>();
+    for (const t of data.tags) {
+      m.set(t.name, { color: t.color ?? null, icon: t.icon ?? null });
+    }
+    return m;
+  }, [data.tags]);
+
   const assigneeMap = useMemo(() => {
     const m = new Map<number, string[]>();
     for (const tu of data.taskUsers) {
@@ -257,6 +314,20 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     return m;
   }, [data.taskUsers, userMap]);
+
+  // Build per-user flag map: taskId → flag color (for the current user)
+  // Flags live in wh_task_flags (separate table with task_id, user_id, color)
+  const userFlagMap = useMemo(() => {
+    const currentUserId = authUser?.id;
+    if (!currentUserId) return new Map<number, string>();
+    const m = new Map<number, string>();
+    for (const tf of data.taskFlags) {
+      if (tf.user_id === currentUserId && tf.color) {
+        m.set(tf.task_id, tf.color);
+      }
+    }
+    return m;
+  }, [data.taskFlags, authUser]);
 
   const tagMap = useMemo(() => {
     const m = new Map<number, string[]>();
@@ -300,10 +371,20 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       id: s.id,
       name: s.name,
       color: s.color ?? null,
+      categoryId: s.category_id ?? null,
       initial: s.initial,
       final: s.final,
     }));
   }, [data.statuses]);
+
+  // Expose categories for the filter sheet
+  const categories: CategoryOption[] = useMemo(() => {
+    return data.categories.map((c) => ({
+      id: c.id,
+      name: c.name,
+      color: c.color ?? null,
+    }));
+  }, [data.categories]);
 
   // Resolve the initial (default) and final (done) statuses from backend data
   const initialStatus = useMemo(() => {
@@ -344,6 +425,30 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.statusTransitions]);
 
+  // Category → all status IDs that participate in its transition group
+  const categoryStatusIdsMap = useMemo(() => {
+    const m = new Map<number, Set<number>>();
+    // Build groupId → Set<statusId> from transitions
+    const groupStatusIds = new Map<number, Set<number>>();
+    for (const t of data.statusTransitions) {
+      let set = groupStatusIds.get(t.status_transition_group_id);
+      if (!set) {
+        set = new Set();
+        groupStatusIds.set(t.status_transition_group_id, set);
+      }
+      set.add(t.from_status);
+      set.add(t.to_status);
+    }
+    // Map each category to its transition group's status IDs
+    for (const c of data.categories) {
+      if (c.status_transition_group_id) {
+        const ids = groupStatusIds.get(c.status_transition_group_id);
+        if (ids) m.set(c.id, ids);
+      }
+    }
+    return m;
+  }, [data.categories, data.statusTransitions]);
+
   // Given a task, return the list of statuses it can transition to
   const getAllowedStatuses = useCallback((task: TaskItem): StatusOption[] => {
     const categoryId = task.categoryId;
@@ -367,29 +472,29 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Step 1: Pre-map ALL tasks once (expensive, only recomputes when data changes)
   // ---------------------------------------------------------------------------
   // Filter out soft-deleted tasks before mapping
-  const activeTasks = useMemo(() => {
+  const nonDeletedTasks = useMemo(() => {
     return data.tasks.filter((t) => !t.deleted_at);
   }, [data.tasks]);
 
   const allMappedTasks = useMemo(() => {
-    if (activeTasks.length === 0) return [];
-    return activeTasks.map((t) =>
-      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap),
+    if (nonDeletedTasks.length === 0) return [];
+    return nonDeletedTasks.map((t) =>
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap),
     );
-  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap]);
+  }, [nonDeletedTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap]);
 
-  // Build a workspace-id lookup from the pre-mapped tasks (index-aligned with activeTasks)
+  // Build a workspace-id lookup from the pre-mapped tasks (index-aligned with nonDeletedTasks)
   const taskWorkspaceIds = useMemo(() => {
-    return activeTasks.map((t) => t.workspace_id);
+    return nonDeletedTasks.map((t) => t.workspace_id);
   }, [data.tasks]);
 
   // ---------------------------------------------------------------------------
   // Step 2: Filter by workspace + user filters
   // ---------------------------------------------------------------------------
-  const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0;
+  const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0 || filters.tags.length > 0;
 
   const filteredTasks = useMemo(() => {
-    if (allMappedTasks.length === 0) return staticTasks;
+    if (allMappedTasks.length === 0) return EMPTY_TASKS;
 
     let result: TaskItem[];
     if (selectedWorkspace === 'Everything') {
@@ -410,12 +515,14 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const prioritySet = filters.priorities.length > 0 ? new Set(filters.priorities) : null;
       const assigneeSet = filters.assignees.length > 0 ? new Set(filters.assignees) : null;
       const flagColorSet = filters.flagColors.length > 0 ? new Set(filters.flagColors) : null;
+      const tagSet = filters.tags.length > 0 ? new Set(filters.tags) : null;
 
       result = result.filter((t) => {
         if (statusSet && !statusSet.has(t.status)) return false;
         if (prioritySet && !prioritySet.has(t.priority)) return false;
         if (assigneeSet && !t.assignees.some((a) => assigneeSet.has(a))) return false;
         if (flagColorSet && (!t.flagColor || !flagColorSet.has(t.flagColor))) return false;
+        if (tagSet && !t.tags.some((tag) => tagSet.has(tag))) return false;
         return true;
       });
     }
@@ -427,6 +534,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return override ? { ...t, ...override } : t;
       });
     }
+
+    // Sort by id descending (newest first)
+    result.sort((a, b) => {
+      const idA = Number(a.id ?? 0);
+      const idB = Number(b.id ?? 0);
+      return idB - idA;
+    });
 
     return result;
   }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters]);
@@ -451,6 +565,67 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     return Array.from(names).sort();
   }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
+
+  // Unique tag names from the workspace-filtered (pre-user-filter) tasks
+  const availableTags = useMemo(() => {
+    let wsFiltered: TaskItem[];
+    if (selectedWorkspace === 'Everything') {
+      wsFiltered = allMappedTasks;
+    } else {
+      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+      if (ws) {
+        const wsId = ws.id;
+        wsFiltered = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+      } else {
+        wsFiltered = allMappedTasks;
+      }
+    }
+    const tagNames = new Set<string>();
+    for (const t of wsFiltered) {
+      for (const tag of t.tags) tagNames.add(tag);
+    }
+    return Array.from(tagNames).sort();
+  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
+
+  // Statuses relevant to the current workspace (derived from category transition groups)
+  const availableStatuses: StatusOption[] = useMemo(() => {
+    // Determine workspace-filtered tasks (pre-user-filter)
+    let wsFiltered: TaskItem[];
+    if (selectedWorkspace === 'Everything') {
+      wsFiltered = allMappedTasks;
+    } else {
+      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+      if (ws) {
+        const wsId = ws.id;
+        wsFiltered = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+      } else {
+        wsFiltered = allMappedTasks;
+      }
+    }
+
+    // Collect unique category IDs from these tasks
+    const catIds = new Set<number>();
+    for (const t of wsFiltered) {
+      if (t.categoryId) catIds.add(t.categoryId);
+    }
+
+    // If no categories found, show all statuses as fallback
+    if (catIds.size === 0) return statuses;
+
+    // Collect all status IDs from those categories' transition groups
+    const statusIds = new Set<number>();
+    for (const catId of catIds) {
+      const ids = categoryStatusIdsMap.get(catId);
+      if (ids) {
+        for (const id of ids) statusIds.add(id);
+      }
+    }
+
+    // If no transition data found, show all statuses as fallback
+    if (statusIds.size === 0) return statuses;
+
+    return statuses.filter((s) => statusIds.has(s.id));
+  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace, statuses, categoryStatusIdsMap]);
 
   // ---------------------------------------------------------------------------
   // Step 3: Paginate – only expose a slice, grow on loadMore (infinite scroll)
@@ -506,18 +681,102 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const setActiveTask = (task: TaskItem | null, markDone = false) => {
-    if (markDone && activeTask?.id && finalStatus) {
-      setLocalOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(activeTask.id!, { status: finalStatus.name, statusColor: finalStatus.color });
-        return next;
+  // ---------------------------------------------------------------------------
+  // Working tasks – derive TaskItem[] from workingTaskIds + allMappedTasks
+  // ---------------------------------------------------------------------------
+  const allMappedTaskMap = useMemo(() => {
+    const m = new Map<string, TaskItem>();
+    for (const t of allMappedTasks) {
+      if (t.id) m.set(t.id, t);
+    }
+    return m;
+  }, [allMappedTasks]);
+
+  const workingTasks = useMemo(() => {
+    // Rehydrate task items from IDs, drop any that no longer exist
+    const result: TaskItem[] = [];
+    for (const id of workingTaskIds) {
+      const task = allMappedTaskMap.get(id);
+      if (task) {
+        // Apply local overrides if any
+        const override = localOverrides.get(id);
+        result.push(override ? { ...task, ...override } : task);
+      }
+    }
+    return result;
+  }, [workingTaskIds, allMappedTaskMap, localOverrides]);
+
+  // Clean up stale IDs (tasks that were deleted externally)
+  useEffect(() => {
+    if (allMappedTasks.length === 0) return; // data not loaded yet
+    const validIds = workingTaskIds.filter((id) => allMappedTaskMap.has(id));
+    if (validIds.length !== workingTaskIds.length) {
+      setWorkingTaskIds(validIds);
+    }
+  }, [allMappedTaskMap]);
+
+  // Backward-compat: first working task
+  const activeTask = workingTasks.length > 0 ? workingTasks[0] : null;
+
+  const addWorkingTask = useCallback((task: TaskItem) => {
+    if (!task.id) return;
+    setWorkingTaskIds((prev) => {
+      if (prev.includes(task.id!)) return prev; // already working
+      if (prev.length >= MAX_WORKING_TASKS) {
+        Alert.alert(
+          'Limit Reached',
+          `You can work on up to ${MAX_WORKING_TASKS} tasks at once. Please complete or stop one first.`,
+        );
+        return prev;
+      }
+      return [...prev, task.id!];
+    });
+  }, []);
+
+  const removeWorkingTask = useCallback((taskId: string) => {
+    setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
+  }, []);
+
+  const completeWorkingTask = useCallback((taskId: string) => {
+    if (!finalStatus) return;
+    // Find the final status ID
+    const finalStatusObj = data.statuses.find((s) => s.final);
+    const finalStatusId = finalStatusObj?.id;
+
+    // Optimistic: mark task as done
+    setLocalOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
+      return next;
+    });
+
+    // Remove from working list
+    setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
+
+    // Persist to backend
+    if (finalStatusId) {
+      apiClient.patchTask(Number(taskId), { status_id: finalStatusId }).catch((err) => {
+        console.warn('[TaskContext] Failed to complete working task:', err);
       });
     }
-    setActiveTaskState(task);
-  };
+  }, [finalStatus, data.statuses]);
 
-  const toggleCompactCards = () => setCompactCards((p) => !p);
+  const isTaskWorking = useCallback((taskId: string) => {
+    return workingTaskIds.includes(taskId);
+  }, [workingTaskIds]);
+
+  // Legacy compat wrapper
+  const setActiveTask = useCallback((task: TaskItem | null, markDone = false) => {
+    if (markDone && task?.id && finalStatus) {
+      completeWorkingTask(task.id);
+    } else if (task) {
+      addWorkingTask(task);
+    }
+    // If task is null and not markDone, this is a "clear" — legacy callers
+    // should migrate to removeWorkingTask(id) instead.
+  }, [finalStatus, completeWorkingTask, addWorkingTask]);
+
+  // cardDensity is set via setCardDensity exposed on context
 
   const changeTaskStatus = useCallback((taskId: string, status: StatusOption) => {
     // Optimistic update
@@ -526,6 +785,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       next.set(taskId, { status: status.name, statusColor: status.color, statusId: status.id });
       return next;
     });
+
+    // Look up the full status metadata from the synced statuses
+    const fullStatus = data.statuses.find((s) => s.id === status.id);
+    const isFinal = status.final ?? fullStatus?.final ?? false;
+    const isInitial = status.initial ?? fullStatus?.initial ?? false;
+
+    // Auto-dock: if moving to a non-initial, non-final status → add to working tasks
+    // Auto-remove: if moving to initial or final status → remove from working tasks
+    if (isFinal || isInitial) {
+      setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
+    } else {
+      // It's an "in progress" type status — auto-dock this task
+      setWorkingTaskIds((prev) => {
+        if (prev.includes(taskId)) return prev;
+        if (prev.length >= MAX_WORKING_TASKS) return prev; // silently skip if at limit
+        return [...prev, taskId];
+      });
+    }
 
     // Persist to backend
     apiClient.patchTask(Number(taskId), { status_id: status.id }).catch((err) => {
@@ -537,7 +814,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return next;
       });
     });
-  }, []);
+  }, [data.statuses]);
 
   const markTaskDone = useCallback((taskId: string) => {
     if (!finalStatus) return;
@@ -551,7 +828,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
       return next;
     });
-    if (activeTask?.id === taskId) setActiveTaskState(null);
+    // Also remove from working tasks if it's there
+    setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 
     // Persist to backend
     if (finalStatusId) {
@@ -559,18 +837,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.warn('[TaskContext] Failed to mark task done:', err);
       });
     }
-  }, [finalStatus, data.statuses, activeTask]);
+  }, [finalStatus, data.statuses]);
 
-  const assignTaskToYou = (taskId: string) => {
+  const assignTaskToUser = useCallback((taskId: string, userId: number, userName: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
-    if (task && !task.assignees.includes('You')) {
+    if (task && !task.assignees.includes(userName)) {
+      // Optimistic update
       setLocalOverrides((prev) => {
         const next = new Map(prev);
-        next.set(taskId, { assignees: [...task.assignees, 'You'] });
+        next.set(taskId, { assignees: [...task.assignees, userName] });
         return next;
       });
+
+      // Persist to backend
+      apiClient.patchTask(Number(taskId), { assign_user_ids: [userId] }).catch((err) => {
+        console.warn('[TaskContext] Failed to assign user:', err);
+      });
     }
-  };
+  }, [filteredTasks]);
 
   // Form version map: formId → active form version (with parsed schema)
   const formVersionMap = useMemo(() => {
@@ -649,26 +933,35 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       loadMoreTasks,
       hasMoreTasks,
       activeTask,
-      compactCards,
+      workingTasks,
+      cardDensity,
       selectedWorkspace,
       workspaces,
       workspaceObjects,
       statuses,
+      categories,
       initialStatus,
       finalStatus,
       getAllowedStatuses,
       addTask,
       updateTask,
       setActiveTask,
-      toggleCompactCards,
+      addWorkingTask,
+      removeWorkingTask,
+      completeWorkingTask,
+      isTaskWorking,
+      setCardDensity,
       setSelectedWorkspace,
       filters,
       setFilters,
       hasActiveFilters,
       availableAssignees,
+      availableStatuses,
+      availableTags,
+      tagInfoMap,
       changeTaskStatus,
       markTaskDone,
-      assignTaskToYou,
+      assignTaskToUser,
       getFormSchema,
       getTaskFormSubmission,
       getFormVersionId,
@@ -679,17 +972,28 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       loadMoreTasks,
       hasMoreTasks,
       activeTask,
-      compactCards,
+      workingTasks,
+      cardDensity,
       selectedWorkspace,
       workspaces,
       workspaceObjects,
       statuses,
+      categories,
       initialStatus,
       finalStatus,
       getAllowedStatuses,
+      setActiveTask,
+      addWorkingTask,
+      removeWorkingTask,
+      completeWorkingTask,
+      isTaskWorking,
       filters,
       hasActiveFilters,
       availableAssignees,
+      availableTags,
+      tagInfoMap,
+      availableStatuses,
+      assignTaskToUser,
       getFormSchema,
       getTaskFormSubmission,
       getFormVersionId,

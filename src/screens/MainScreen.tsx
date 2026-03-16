@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,9 @@ import {
   Alert,
   Dimensions,
   RefreshControl,
+  ScrollView,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -24,13 +27,15 @@ import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { RootStackParamList, TaskItem } from '../models/types';
+import { RootStackParamList, TaskItem, CardDensity } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
-import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
+import { ActiveTaskStrip } from '../components/ActiveTaskStrip';
 import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
 import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
+import { KpiStrip } from '../components/KpiStrip';
 import { ColabScreen } from './ColabScreen';
+import { useKpiCards } from '../hooks/useKpiCards';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 
@@ -62,7 +67,7 @@ const ItemSeparator = () => <View style={{ height: 12 }} />;
 // ---------------------------------------------------------------------------
 interface SwipeableTaskItemProps {
   item: TaskItem;
-  compactCards: boolean;
+  cardDensity: CardDensity;
   isDarkMode: boolean;
   primaryColor: string;
   onPress: (task: TaskItem) => void;
@@ -71,7 +76,7 @@ interface SwipeableTaskItemProps {
 }
 
 const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
-  ({ item, compactCards, isDarkMode, primaryColor, onPress, onSwipeLeft, onSwipeRight }) => {
+  ({ item, cardDensity, isDarkMode, primaryColor, onPress, onSwipeLeft, onSwipeRight }) => {
     const translateX = useRef(new Animated.Value(0)).current;
 
     const panResponder = useMemo(
@@ -134,7 +139,7 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
         </View>
 
         <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
-          <TaskCard task={item} compact={compactCards} onPress={handlePress} />
+          <TaskCard task={item} density={cardDensity} onPress={handlePress} />
         </Animated.View>
       </View>
     );
@@ -144,27 +149,64 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
   const insets = useSafeAreaInsets();
-  const { colors, primaryColor, isDarkMode } = useTheme();
+  const { colors, primaryColor, isDarkMode, showKpiCards: showKpiPref } = useTheme();
   const {
     tasks,
     totalTaskCount,
     loadMoreTasks,
     hasMoreTasks,
-    activeTask,
-    compactCards,
+    workingTasks,
+    cardDensity,
     selectedWorkspace,
     workspaces,
     workspaceObjects,
     finalStatus,
     getAllowedStatuses,
-    setActiveTask,
+    completeWorkingTask,
+    removeWorkingTask,
     changeTaskStatus,
-    assignTaskToYou,
+    assignTaskToUser,
     setSelectedWorkspace,
     hasActiveFilters,
+    filters,
   } = useTasks();
 
-  const { data, isSyncing, refresh, syncError, isInitialSync } = useData();
+  const { data, isSyncing, hasEverSynced, refresh, syncError, isInitialSync } = useData();
+  const { cards: kpiCards, hasCards: hasKpiCards } = useKpiCards({ selectedWorkspace });
+
+  // -- Sync pill: show while syncing / offline, briefly after sync, then hide --
+  const wasSyncingRef = useRef(false);
+  const syncPillOpacity = useRef(new Animated.Value(0)).current;
+  const [showSyncPill, setShowSyncPill] = useState(false);
+  const syncHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (syncError) {
+      // Offline – always visible
+      if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
+      setShowSyncPill(true);
+      syncPillOpacity.setValue(1);
+    } else if (isSyncing) {
+      // Syncing started – show immediately
+      if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
+      wasSyncingRef.current = true;
+      setShowSyncPill(true);
+      syncPillOpacity.setValue(1);
+    } else if (wasSyncingRef.current) {
+      // Sync just finished – keep visible for 2s then fade out
+      wasSyncingRef.current = false;
+      syncHideTimer.current = setTimeout(() => {
+        Animated.timing(syncPillOpacity, {
+          toValue: 0,
+          duration: 400,
+          useNativeDriver: true,
+        }).start(() => setShowSyncPill(false));
+      }, 2000);
+    }
+    return () => {
+      if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
+    };
+  }, [isSyncing, syncError, syncPillOpacity]);
 
   // Build workspace lookup by name for icon/color access
   const workspaceLookup = useMemo(() => {
@@ -223,13 +265,29 @@ export const MainScreen: React.FC = () => {
   const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
   const [statusPickerTask, setStatusPickerTask] = useState<TaskItem | null>(null);
+  const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
+  const [assigneePickerTask, setAssigneePickerTask] = useState<TaskItem | null>(null);
+  const [assigneeSearch, setAssigneeSearch] = useState('');
   const [colabInChat, setColabInChat] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const onRefresh = useCallback(async () => {
     await refresh();
   }, [refresh]);
-  
 
+  // Client-side search filter
+  const displayedTasks = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return tasks;
+    return tasks.filter(
+      (t) =>
+        t.title.toLowerCase().includes(q) ||
+        t.spot.toLowerCase().includes(q) ||
+        t.status.toLowerCase().includes(q) ||
+        t.assignees.some((a) => a.toLowerCase().includes(q)) ||
+        t.tags.some((tag) => tag.toLowerCase().includes(q)),
+    );
+  }, [tasks, searchQuery]);
 
   const handleTaskPress = useCallback(
     (task: TaskItem) => {
@@ -242,16 +300,83 @@ export const MainScreen: React.FC = () => {
     navigation.navigate('CreateTask');
   }, [navigation]);
 
+  // Build workspace-scoped user set: IDs of users assigned to tasks in the selected workspace
+  const workspaceUserIds = useMemo(() => {
+    if (selectedWorkspace === 'Everything') return null; // show all users
+    const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+    if (!ws) return null;
+    // Collect task IDs belonging to this workspace
+    const wsTaskIds = new Set(
+      data.tasks.filter((t) => (t as any).workspace_id === ws.id).map((t) => t.id),
+    );
+    // Collect user IDs assigned to those tasks
+    const userIds = new Set<number>();
+    for (const tu of data.taskUsers) {
+      if (wsTaskIds.has(tu.task_id)) userIds.add(tu.user_id);
+    }
+    // Always include the current user so they can self-assign
+    const currentUserId = authUser?.id;
+    if (currentUserId) userIds.add(currentUserId);
+    return userIds;
+  }, [selectedWorkspace, data.workspaces, data.tasks, data.taskUsers, authUser]);
+
+  // Build sorted user list: workspace-filtered, current user first, then alphabetical
+  const sortedUsers = useMemo(() => {
+    const currentUserId = authUser?.id ?? 0;
+    let users = data.users;
+    if (workspaceUserIds) {
+      users = users.filter((u) => workspaceUserIds.has(u.id));
+    }
+    // Apply search filter
+    if (assigneeSearch.trim()) {
+      const q = assigneeSearch.trim().toLowerCase();
+      users = users.filter((u) => u.name.toLowerCase().includes(q));
+    }
+    return [...users].sort((a, b) => {
+      if (a.id === currentUserId) return -1;
+      if (b.id === currentUserId) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [data.users, authUser, workspaceUserIds, assigneeSearch]);
+
+  // Filter working tasks to the current workspace
+  const workspaceFilteredWorkingTasks = useMemo(() => {
+    if (selectedWorkspace === 'Everything') return workingTasks;
+    const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+    if (!ws) return workingTasks;
+    // We need task workspace IDs — get them from the raw synced tasks
+    const taskWsMap = new Map<number, number | null | undefined>();
+    for (const t of data.tasks) {
+      taskWsMap.set(t.id, (t as any).workspace_id);
+    }
+    return workingTasks.filter((wt) => {
+      const wtId = Number(wt.id);
+      return taskWsMap.get(wtId) === ws.id;
+    });
+  }, [workingTasks, selectedWorkspace, data.workspaces, data.tasks]);
+
   const handleSwipeLeft = useCallback(
     (task: TaskItem) => {
-      if (!task.assignees.includes('You')) {
-        assignTaskToYou(task.id || '');
-        Alert.alert('Assigned', 'Task assigned to You');
-      } else {
-        Alert.alert('Already Assigned', 'Already assigned to You');
-      }
+      setAssigneePickerTask(task);
+      setAssigneePickerVisible(true);
     },
-    [assignTaskToYou],
+    [],
+  );
+
+  const handleAssigneeSelect = useCallback(
+    (user: { id: number; name: string }) => {
+      if (assigneePickerTask?.id) {
+        if (assigneePickerTask.assignees.includes(user.name)) {
+          Alert.alert('Already Assigned', `${user.name} is already assigned to this task`);
+        } else {
+          assignTaskToUser(assigneePickerTask.id, user.id, user.name);
+        }
+      }
+      setAssigneePickerVisible(false);
+      setAssigneePickerTask(null);
+      setAssigneeSearch('');
+    },
+    [assigneePickerTask, assignTaskToUser],
   );
 
   const handleSwipeRight = useCallback(
@@ -277,7 +402,7 @@ export const MainScreen: React.FC = () => {
     ({ item }: { item: TaskItem }) => (
       <SwipeableTaskItem
         item={item}
-        compactCards={compactCards}
+        cardDensity={cardDensity}
         isDarkMode={isDarkMode}
         primaryColor={primaryColor}
         onPress={handleTaskPress}
@@ -285,27 +410,38 @@ export const MainScreen: React.FC = () => {
         onSwipeRight={handleSwipeRight}
       />
     ),
-    [compactCards, isDarkMode, primaryColor, handleTaskPress, handleSwipeLeft, handleSwipeRight],
+    [cardDensity, isDarkMode, primaryColor, handleTaskPress, handleSwipeLeft, handleSwipeRight],
   );
 
   const renderListHeader = () => {
+    const showKpi = hasKpiCards && showKpiPref;
+    if (!showSyncPill && !showKpi) return null;
+
     const syncLabel = syncError ? 'Offline' : isSyncing ? 'Syncing' : 'Updated';
     const syncColor = syncError ? '#D08F36' : isSyncing ? primaryColor : colors.textSecondary;
 
     return (
-      <View style={styles.listHeader}>
-        <View
-          style={[
-            styles.syncPill,
-            {
-              borderColor: `${syncColor}40`,
-              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            },
-          ]}
-        >
-          <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
-          <Text style={[styles.syncText, { color: syncColor }]}>{syncLabel}</Text>
-        </View>
+      <View>
+        {/* KPI Cards Strip */}
+        {showKpi && <KpiStrip cards={kpiCards} />}
+
+        {/* Sync Pill */}
+        {showSyncPill && (
+          <Animated.View style={[styles.listHeader, { opacity: syncPillOpacity }]}>
+            <View
+              style={[
+                styles.syncPill,
+                {
+                  borderColor: `${syncColor}40`,
+                  backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+                },
+              ]}
+            >
+              <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
+              <Text style={[styles.syncText, { color: syncColor }]}>{syncLabel}</Text>
+            </View>
+          </Animated.View>
+        )}
       </View>
     );
   };
@@ -404,15 +540,80 @@ export const MainScreen: React.FC = () => {
     );
   };
 
+  const renderTasksEmpty = () => {
+    // First sync in progress – no data has arrived yet
+    if (!hasEverSynced || (isSyncing && tasks.length === 0)) {
+      return (
+        <View style={styles.emptyContainer}>
+          <View
+            style={[
+              styles.emptyIconCircle,
+              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : `${primaryColor}18` },
+            ]}
+          >
+            <ActivityIndicator size="large" color={primaryColor} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>Syncing your tasks</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            This may take a moment on first launch
+          </Text>
+        </View>
+      );
+    }
+
+    // Search yielded no results
+    if (searchQuery.trim().length > 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <View
+            style={[
+              styles.emptyIconCircle,
+              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EDE7' },
+            ]}
+          >
+            <MaterialIcons name="search-off" size={40} color={colors.textSecondary} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No results</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            No tasks match "{searchQuery.trim()}"
+          </Text>
+        </View>
+      );
+    }
+
+    // Sync complete, genuinely no tasks
+    return (
+      <View style={styles.emptyContainer}>
+        <View
+          style={[
+            styles.emptyIconCircle,
+            { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EDE7' },
+          ]}
+        >
+          <MaterialIcons name="task-alt" size={40} color={isDarkMode ? 'rgba(255,255,255,0.18)' : '#C5BEB3'} />
+        </View>
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks yet</Text>
+        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+          Tasks will appear here once they are created
+        </Text>
+      </View>
+    );
+  };
+
   const renderContent = () => {
     if (selectedNav === 0) {
       return (
         <FlatList
-          data={tasks}
+          data={displayedTasks}
           renderItem={renderTaskItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={styles.listContent}
+          extraData={cardDensity}
+          contentContainerStyle={[
+            styles.listContent,
+            displayedTasks.length === 0 && styles.listContentEmpty,
+          ]}
           ListHeaderComponent={renderListHeader}
+          ListEmptyComponent={renderTasksEmpty}
           ItemSeparatorComponent={ItemSeparator}
           windowSize={7}
           maxToRenderPerBatch={10}
@@ -527,7 +728,11 @@ export const MainScreen: React.FC = () => {
               color={hasActiveFilters ? primaryColor : colors.textSecondary}
             />
             {hasActiveFilters && (
-              <View style={[styles.filterDot, { backgroundColor: primaryColor }]} />
+              <View style={[styles.filterCountBadge, { backgroundColor: primaryColor }]}>
+                <Text style={styles.filterCountBadgeText}>
+                  {filters.statuses.length + filters.priorities.length + filters.assignees.length + filters.flagColors.length + filters.tags.length}
+                </Text>
+              </View>
             )}
           </TouchableOpacity>
 
@@ -547,15 +752,49 @@ export const MainScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Active Task Banner */}
-      {activeTask && (
-        <View style={styles.bannerContainer}>
-          <ActiveTaskBanner
-            task={activeTask}
-            doneLabel={finalStatus?.name}
-            onDone={() => setActiveTask(null, true)}
-            onClear={() => setActiveTask(null)}
-          />
+      {/* Search bar – Tasks tab only */}
+      {selectedNav === 0 && (
+        <View
+          style={[
+            styles.searchBarContainer,
+            {
+              borderBottomColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#E8E1D6',
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.searchBar,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : '#E6E0D7',
+              },
+            ]}
+          >
+            <MaterialIcons
+              name="search"
+              size={20}
+              color={colors.textSecondary}
+              style={{ marginRight: 8 }}
+            />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search tasks..."
+              placeholderTextColor={colors.textSecondary}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              returnKeyType="search"
+              autoCorrect={false}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setSearchQuery('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       )}
 
@@ -563,6 +802,17 @@ export const MainScreen: React.FC = () => {
       <View style={styles.content}>
         {renderContent()}
       </View>
+
+      {/* Active Task Strip — above bottom nav, workspace-filtered */}
+      {!(selectedNav === 1 && colabInChat) && workspaceFilteredWorkingTasks.length > 0 && (
+        <ActiveTaskStrip
+          tasks={workspaceFilteredWorkingTasks}
+          doneLabel={finalStatus?.name}
+          onDone={(taskId) => completeWorkingTask(taskId)}
+          onRemove={(taskId) => removeWorkingTask(taskId)}
+          onPress={(task) => navigation.navigate('TaskDetail', { task })}
+        />
+      )}
 
       {/* Bottom Navigation — hidden when inside a colab chat */}
       {!(selectedNav === 1 && colabInChat) && (
@@ -774,6 +1024,124 @@ export const MainScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Assignee Picker Modal */}
+      <Modal
+        visible={assigneePickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setAssigneePickerVisible(false);
+          setAssigneePickerTask(null);
+          setAssigneeSearch('');
+        }}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setAssigneePickerVisible(false);
+            setAssigneePickerTask(null);
+            setAssigneeSearch('');
+          }}
+        >
+          <View
+            style={[
+              styles.statusPickerSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
+              Assign To
+            </Text>
+            {assigneePickerTask && (
+              <Text
+                style={[styles.statusPickerSubtitle, { color: colors.textSecondary }]}
+                numberOfLines={1}
+              >
+                {assigneePickerTask.title}
+              </Text>
+            )}
+            <View
+              style={[
+                styles.assigneeSearchContainer,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F2EC',
+                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : '#E6E1D7',
+                },
+              ]}
+            >
+              <MaterialIcons
+                name="search"
+                size={20}
+                color={colors.textSecondary}
+                style={{ marginRight: 8 }}
+              />
+              <TextInput
+                style={[styles.assigneeSearchInput, { color: colors.text }]}
+                placeholder="Search users..."
+                placeholderTextColor={colors.textSecondary}
+                value={assigneeSearch}
+                onChangeText={setAssigneeSearch}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {assigneeSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setAssigneeSearch('')}>
+                  <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+            <ScrollView style={styles.assigneeScrollList} bounces={false} keyboardShouldPersistTaps="handled">
+              <View style={styles.statusPickerList}>
+                {sortedUsers.map((u) => {
+                  const isAssigned = assigneePickerTask?.assignees.includes(u.name) ?? false;
+                  const isCurrentUser = u.id === (authUser?.id ?? 0);
+                  return (
+                    <TouchableOpacity
+                      key={u.id}
+                      style={[
+                        styles.statusPickerItem,
+                        {
+                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
+                        },
+                        isAssigned && {
+                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                        },
+                      ]}
+                      onPress={() => handleAssigneeSelect({ id: u.id, name: u.name })}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.assigneeAvatar}>
+                        <Text style={styles.assigneeAvatarText}>
+                          {u.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.statusPickerItemText,
+                          { color: colors.text },
+                          isAssigned && { fontFamily: fontFamilies.bodySemibold },
+                        ]}
+                      >
+                        {u.name}{isCurrentUser ? ' (You)' : ''}
+                      </Text>
+                      {isAssigned && (
+                        <MaterialIcons name="check" size={20} color="#2196F3" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -825,6 +1193,22 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
   },
+  filterCountBadge: {
+    position: 'absolute',
+    right: 1,
+    top: 1,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  filterCountBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontFamily: 'Montserrat_700Bold',
+  },
   notificationBadge: {
     position: 'absolute',
     right: 2,
@@ -843,22 +1227,70 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: fontFamilies.bodyBold,
   },
-  bannerContainer: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
   content: {
     flex: 1,
   },
+  // Search bar
+  searchBarContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  searchBar: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    paddingVertical: 0,
+  },
+  // Task list
   listContent: {
     padding: spacing.md,
     paddingBottom: spacing.xl,
+  },
+  listContentEmpty: {
+    flexGrow: 1,
+    justifyContent: 'center' as const,
+  },
+  // Empty / syncing states
+  emptyContainer: {
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: 32,
+    paddingVertical: 48,
+  },
+  emptyIconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+    textAlign: 'center' as const,
+  },
+  emptySubtitle: {
+    marginTop: 8,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    textAlign: 'center' as const,
+    lineHeight: 20,
   },
   listHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
   },
   listTitle: {
     fontSize: fontSizes.xl,
@@ -874,8 +1306,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radius.pill,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
     backgroundColor: 'rgba(255, 255, 255, 0.7)',
   },
   syncDot: {
@@ -1089,6 +1521,40 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  assigneeSearchContainer: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  assigneeSearchInput: {
+    flex: 1,
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
+    paddingVertical: 2,
+  },
+  assigneeScrollList: {
+    maxHeight: Dimensions.get('window').height * 0.45,
+  },
+  assigneeAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#2196F3',
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginRight: 12,
+  },
+  assigneeAvatarText: {
+    color: '#FFFFFF',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
 
   // Board list styles

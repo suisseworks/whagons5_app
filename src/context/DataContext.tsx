@@ -136,6 +136,16 @@ export interface SyncedTeam {
 export interface SyncedTag {
   id: number;
   name: string;
+  color?: string | null;
+  icon?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedTaskFlag {
+  id: number;
+  task_id: number;
+  user_id: number;
+  color: string;
   [key: string]: unknown;
 }
 
@@ -303,6 +313,37 @@ export interface SyncedWorkspaceChat {
   [key: string]: unknown;
 }
 
+// ---------------------------------------------------------------------------
+// KPI & Powerup types
+// ---------------------------------------------------------------------------
+
+export interface SyncedKpiCard {
+  id: number;
+  name: string;
+  type: string;
+  query_config: string | Record<string, unknown>;
+  display_config: string | Record<string, unknown>;
+  workspace_id?: number | null;
+  user_id?: number | null;
+  position: number;
+  is_enabled: boolean;
+  created_at?: string | null;
+  updated_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedPlugin {
+  id: number;
+  slug: string;
+  name: string;
+  description?: string | null;
+  version?: string;
+  is_enabled: boolean;
+  settings?: string | Record<string, unknown> | null;
+  category_ids?: number[] | string;
+  [key: string]: unknown;
+}
+
 export interface SyncedData {
   tasks: SyncedTask[];
   workspaces: SyncedWorkspace[];
@@ -318,6 +359,7 @@ export interface SyncedData {
   tags: SyncedTag[];
   taskUsers: SyncedTaskUser[];
   taskTags: SyncedTaskTag[];
+  taskFlags: SyncedTaskFlag[];
   boards: SyncedBoard[];
   boardMembers: SyncedBoardMember[];
   boardMessages: SyncedBoardMessage[];
@@ -333,6 +375,9 @@ export interface SyncedData {
   linkPreviews: SyncedLinkPreview[];
   // Workspace-scoped chat (Spaces / Collab)
   workspaceChat: SyncedWorkspaceChat[];
+  // KPI & Powerups
+  kpiCards: SyncedKpiCard[];
+  plugins: SyncedPlugin[];
 }
 
 interface DataContextType {
@@ -340,6 +385,8 @@ interface DataContextType {
   data: SyncedData;
   /** Whether a sync is currently in progress. */
   isSyncing: boolean;
+  /** Whether at least one sync has completed (true after first hydrate). */
+  hasEverSynced: boolean;
   /** The last sync error, if any. */
   syncError: string | null;
   /** Sync progress info (percentage, processed/total records). */
@@ -369,6 +416,7 @@ const EMPTY_DATA: SyncedData = {
   tags: [],
   taskUsers: [],
   taskTags: [],
+  taskFlags: [],
   boards: [],
   boardMembers: [],
   boardMessages: [],
@@ -382,6 +430,8 @@ const EMPTY_DATA: SyncedData = {
   messageReactions: [],
   linkPreviews: [],
   workspaceChat: [],
+  kpiCards: [],
+  plugins: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -395,6 +445,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const [data, setData] = useState<SyncedData>(EMPTY_DATA);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [hasEverSynced, setHasEverSynced] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [isInitialSync, setIsInitialSync] = useState(false);
@@ -448,6 +499,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         tags,
         taskUsers,
         taskTags,
+        taskFlags,
         boards,
         boardMembers,
         boardMessages,
@@ -461,6 +513,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         messageReactions,
         linkPreviews,
         workspaceChat,
+        kpiCards,
+        plugins,
       ] = await Promise.all([
         DB.getAllRows<SyncedTask>('wh_tasks'),
         DB.getAllRows<SyncedWorkspace>('wh_workspaces'),
@@ -476,6 +530,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedTag>('wh_tags'),
         DB.getAllRows<SyncedTaskUser>('wh_task_user'),
         DB.getAllRows<SyncedTaskTag>('wh_task_tag'),
+        DB.getAllRows<SyncedTaskFlag>('wh_task_flags'),
         DB.getAllRows<SyncedBoard>('wh_boards'),
         DB.getAllRows<SyncedBoardMember>('wh_board_members'),
         DB.getAllRows<SyncedBoardMessage>('wh_board_messages'),
@@ -489,6 +544,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedMessageReaction>('wh_message_reactions'),
         DB.getAllRows<SyncedLinkPreview>('wh_link_previews'),
         DB.getAllRows<SyncedWorkspaceChat>('wh_workspace_chat'),
+        DB.getAllRows<SyncedKpiCard>('wh_kpi_cards'),
+        DB.getAllRows<SyncedPlugin>('wh_plugins'),
       ]);
       console.log(`[DataContext] hydrate counts: tasks=${tasks.length} workspaces=${workspaces.length} statuses=${statuses.length} users=${users.length} conversations=${conversations.length} boards=${boards.length}`);
       setData({
@@ -506,6 +563,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         tags,
         taskUsers,
         taskTags,
+        taskFlags,
         boards,
         boardMembers,
         boardMessages,
@@ -519,6 +577,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         messageReactions,
         linkPreviews,
         workspaceChat,
+        kpiCards,
+        plugins,
       });
     } catch (err) {
       console.warn('DataContext: hydrate failed', err);
@@ -554,6 +614,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setIsSyncing(false);
     setSyncProgress(null);
     setIsInitialSync(false);
+    setHasEverSynced(true);
     console.log('[DataContext] runSync: done');
   }, [hydrateFromCache]);
 
@@ -598,6 +659,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       value={{
         data,
         isSyncing,
+        hasEverSynced,
         syncError,
         syncProgress,
         isInitialSync,

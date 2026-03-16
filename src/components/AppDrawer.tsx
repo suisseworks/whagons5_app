@@ -16,7 +16,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { RootStackParamList } from '../models/types';
+import { RootStackParamList, CardDensity } from '../models/types';
 import { quotes, inspirationalImages, getDailyIndex } from '../utils/helpers';
 import { clearAllData } from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -30,7 +30,7 @@ interface AppDrawerProps {
 export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
-  const { compactCards, toggleCompactCards } = useTasks();
+  const { cardDensity, setCardDensity } = useTasks();
   const { logout, user, subdomain } = useAuth();
   const { unreadCount: notificationCount } = useNotifications();
 
@@ -77,7 +77,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
             </View>
             <View>
               <Text style={[styles.headerTitle, { color: colors.text }]}>Whagons</Text>
-              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Field operations</Text>
+              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Operational Intelligence in Action.</Text>
             </View>
           </View>
           {subdomain && (
@@ -132,6 +132,11 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
           <Text style={[styles.menuText, { color: colors.text }]}>Themes</Text>
         </TouchableOpacity>
 
+        <TouchableOpacity style={styles.menuItem} onPress={() => { onClose(); navigation.navigate('Gamification'); }}>
+          <MaterialIcons name="emoji-events" size={22} color={colors.textSecondary} />
+          <Text style={[styles.menuText, { color: colors.text }]}>Gamification</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.menuItem} onPress={handleSettings}>
           <MaterialIcons name="settings" size={22} color={colors.textSecondary} />
           <Text style={[styles.menuText, { color: colors.text }]}>Settings</Text>
@@ -155,19 +160,51 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
           />
         </View>
 
-        <View style={styles.switchItem}>
-          <MaterialIcons
-            name={compactCards ? 'view-agenda' : 'view-day'}
-            size={22}
-            color={colors.textSecondary}
-          />
-          <Text style={[styles.menuText, { color: colors.text }]}>Compact Cards</Text>
-          <Switch
-            value={compactCards}
-            onValueChange={toggleCompactCards}
-            trackColor={{ false: '#E0E0E0', true: `${primaryColor}80` }}
-            thumbColor={compactCards ? primaryColor : '#FAFAFA'}
-          />
+        <View style={styles.densitySection}>
+          <View style={styles.densityLabelRow}>
+            <MaterialIcons
+              name={cardDensity === 'compact' ? 'view-agenda' : cardDensity === 'detailed' ? 'view-stream' : 'view-day'}
+              size={22}
+              color={colors.textSecondary}
+            />
+            <Text style={[styles.menuText, { color: colors.text }]}>Card Density</Text>
+          </View>
+          <View
+            style={[
+              styles.densityToggle,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE3',
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
+              },
+            ]}
+          >
+            {(['compact', 'normal', 'detailed'] as CardDensity[]).map((d) => {
+              const isActive = cardDensity === d;
+              return (
+                <TouchableOpacity
+                  key={d}
+                  style={[
+                    styles.densityOption,
+                    isActive && {
+                      backgroundColor: isDarkMode ? primaryColor : primaryColor,
+                    },
+                  ]}
+                  onPress={() => setCardDensity(d)}
+                  activeOpacity={0.7}
+                >
+                  <Text
+                    style={[
+                      styles.densityOptionText,
+                      { color: isActive ? '#FFFFFF' : colors.textSecondary },
+                      isActive && { fontFamily: fontFamilies.bodySemibold },
+                    ]}
+                  >
+                    {d.charAt(0).toUpperCase() + d.slice(1)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         <View style={styles.divider} />
@@ -311,6 +348,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     paddingHorizontal: 20,
+  },
+  densitySection: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  densityLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  densityToggle: {
+    flexDirection: 'row',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  densityOption: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderRadius: radius.sm - 1,
+  },
+  densityOptionText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
   },
   inspirationalSection: {
     margin: 16,

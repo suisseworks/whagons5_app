@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,13 +6,22 @@ import {
   TouchableOpacity,
   ScrollView,
   Modal,
+  TextInput,
+  LayoutAnimation,
+  Platform,
+  UIManager,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { emptyFilters } from '../context/TaskContext';
-import type { TaskFilters, StatusOption } from '../context/TaskContext';
-import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import type { TaskFilters } from '../context/TaskContext';
+import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface TaskFilterSheetProps {
   visible: boolean;
@@ -34,17 +43,89 @@ const FLAG_COLOR_OPTIONS: { value: string; label: string; color: string }[] = [
   { value: 'purple', label: 'Purple', color: '#a855f7' },
 ];
 
+const INITIAL_ASSIGNEE_COUNT = 5;
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClose }) => {
   const { isDarkMode, primaryColor, colors } = useTheme();
-  const { filters, setFilters, statuses, availableAssignees } = useTasks();
+  const { filters, setFilters, availableStatuses, categories, availableAssignees, availableTags, selectedWorkspace } = useTasks();
 
   // Local draft so the user can adjust before applying
   const [draft, setDraft] = useState<TaskFilters>(filters);
 
-  // Sync draft whenever the sheet opens
+  // Section collapse state — all collapsed by default, expand sections that have active filters
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({
+    status: true,
+    priority: true,
+    assignee: true,
+    tag: true,
+    flag: true,
+  });
+
+  // Category filter for statuses
+  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+
+  // Assignee search
+  const [assigneeSearch, setAssigneeSearch] = useState('');
+  const [showAllAssignees, setShowAllAssignees] = useState(false);
+
+  // Sync draft whenever the sheet opens — auto-expand sections with active filters
   React.useEffect(() => {
-    if (visible) setDraft(filters);
+    if (visible) {
+      setDraft(filters);
+      setAssigneeSearch('');
+      setShowAllAssignees(false);
+      setCollapsedSections({
+        status: filters.statuses.length === 0,
+        priority: filters.priorities.length === 0,
+        assignee: filters.assignees.length === 0,
+        tag: filters.tags.length === 0,
+        flag: filters.flagColors.length === 0,
+      });
+    }
   }, [visible, filters]);
+
+  const isEverything = selectedWorkspace === 'Everything';
+
+  // ---------------------------------------------------------------------------
+  // Derived data
+  // ---------------------------------------------------------------------------
+
+  // Visible statuses — context-aware, filtered by workspace category transition groups
+  const visibleStatuses = availableStatuses;
+
+  // Filtered assignees (search + limit)
+  const filteredAssignees = useMemo(() => {
+    let list = availableAssignees;
+    if (assigneeSearch.trim()) {
+      const q = assigneeSearch.toLowerCase().trim();
+      list = list.filter((n) => n.toLowerCase().includes(q));
+    }
+    if (!showAllAssignees && list.length > INITIAL_ASSIGNEE_COUNT) {
+      return { items: list.slice(0, INITIAL_ASSIGNEE_COUNT), total: list.length, hasMore: true };
+    }
+    return { items: list, total: list.length, hasMore: false };
+  }, [availableAssignees, assigneeSearch, showAllAssignees]);
+
+  // Active filter count
+  const activeFilterCount =
+    draft.statuses.length + draft.priorities.length + draft.assignees.length + draft.flagColors.length + draft.tags.length;
+
+  // ---------------------------------------------------------------------------
+  // Callbacks
+  // ---------------------------------------------------------------------------
+
+  const toggleSection = useCallback((section: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }));
+  }, []);
+
+  const selectCategory = useCallback((catId: number | null) => {
+    setSelectedCategory((prev) => (prev === catId ? null : catId));
+  }, []);
 
   const toggleStatus = useCallback((name: string) => {
     setDraft((prev) => ({
@@ -82,18 +163,111 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
     }));
   }, []);
 
+  const toggleTag = useCallback((tag: string) => {
+    setDraft((prev) => ({
+      ...prev,
+      tags: prev.tags.includes(tag)
+        ? prev.tags.filter((t) => t !== tag)
+        : [...prev.tags, tag],
+    }));
+  }, []);
+
   const handleApply = useCallback(() => {
     setFilters(draft);
     onClose();
   }, [draft, setFilters, onClose]);
 
-  const handleClear = useCallback(() => {
-    setFilters(emptyFilters);
-    onClose();
-  }, [setFilters, onClose]);
+  const handleReset = useCallback(() => {
+    setDraft(emptyFilters);
+    setSelectedCategory(null);
+  }, []);
 
-  const draftHasFilters =
-    draft.statuses.length > 0 || draft.priorities.length > 0 || draft.assignees.length > 0 || draft.flagColors.length > 0;
+  // ---------------------------------------------------------------------------
+  // Style helpers
+  // ---------------------------------------------------------------------------
+
+  const chipBorderDefault = isDarkMode ? 'rgba(255,255,255,0.12)' : '#E0DBD2';
+  const chipBgDefault = isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5F0';
+  const sectionBorder = isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EDE7';
+  const inputBg = isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F3EE';
+  const inputBorder = isDarkMode ? 'rgba(255,255,255,0.1)' : '#E6E1D7';
+
+  // ---------------------------------------------------------------------------
+  // Section header renderer
+  // ---------------------------------------------------------------------------
+
+  const renderSectionHeader = (label: string, section: string, count: number) => {
+    const collapsed = collapsedSections[section];
+    return (
+      <TouchableOpacity
+        style={[styles.sectionHeader, { borderBottomColor: sectionBorder }]}
+        onPress={() => toggleSection(section)}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`${label} section, ${collapsed ? 'collapsed' : 'expanded'}${count > 0 ? `, ${count} selected` : ''}`}
+      >
+        <MaterialIcons
+          name={collapsed ? 'chevron-right' : 'expand-more'}
+          size={20}
+          color={colors.textSecondary}
+        />
+        <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{label}</Text>
+        {count > 0 && (
+          <View style={[styles.countBadge, { backgroundColor: primaryColor }]}>
+            <Text style={styles.countBadgeText}>{count}</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // Chip renderer
+  // ---------------------------------------------------------------------------
+
+  const renderChip = (
+    key: string,
+    label: string,
+    selected: boolean,
+    accentColor: string,
+    onPress: () => void,
+    icon?: React.ReactNode,
+  ) => (
+    <TouchableOpacity
+      key={key}
+      style={[
+        styles.chip,
+        {
+          borderColor: selected ? accentColor : chipBorderDefault,
+          backgroundColor: selected ? `${accentColor}18` : chipBgDefault,
+        },
+      ]}
+      onPress={onPress}
+      activeOpacity={0.7}
+      accessibilityRole="checkbox"
+      accessibilityState={{ selected }}
+      accessibilityLabel={label}
+    >
+      {icon}
+      <Text
+        style={[
+          styles.chipText,
+          { color: selected ? colors.text : colors.textSecondary },
+          selected && { fontFamily: fontFamilies.bodySemibold },
+        ]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {selected && (
+        <MaterialIcons name="check" size={14} color={accentColor} style={{ marginLeft: 4 }} />
+      )}
+    </TouchableOpacity>
+  );
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <Modal
@@ -123,217 +297,270 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
           {/* Header */}
           <View style={styles.header}>
             <Text style={[styles.title, { color: colors.text }]}>Filters</Text>
-            {draftHasFilters && (
-              <TouchableOpacity onPress={handleClear} hitSlop={8}>
-                <Text style={[styles.clearText, { color: primaryColor }]}>Clear all</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Close filters"
+            >
+              <MaterialIcons name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
           </View>
 
+          {/* Scrollable content */}
           <ScrollView
             style={styles.scroll}
+            contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             bounces={false}
+            keyboardShouldPersistTaps="handled"
           >
-            {/* Status section */}
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Status</Text>
-            <View style={styles.chipGrid}>
-              {statuses.map((s: StatusOption) => {
-                const selected = draft.statuses.includes(s.name);
-                return (
+            {/* ── Category selector ── */}
+            {isEverything && categories.length > 1 && (
+              <View style={styles.categorySection}>
+                <Text style={[styles.categorySectionLabel, { color: colors.textSecondary }]}>
+                  Category
+                </Text>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.categoryRow}
+                >
                   <TouchableOpacity
-                    key={s.id}
                     style={[
-                      styles.chip,
+                      styles.categoryChip,
                       {
-                        borderColor: selected
-                          ? (s.color || primaryColor)
-                          : isDarkMode ? 'rgba(255,255,255,0.12)' : '#E0DBD2',
-                        backgroundColor: selected
-                          ? `${s.color || primaryColor}18`
-                          : isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5F0',
+                        borderColor: selectedCategory === null ? primaryColor : chipBorderDefault,
+                        backgroundColor: selectedCategory === null ? `${primaryColor}18` : chipBgDefault,
                       },
                     ]}
-                    onPress={() => toggleStatus(s.name)}
+                    onPress={() => selectCategory(null)}
                     activeOpacity={0.7}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: selectedCategory === null }}
                   >
-                    <View
-                      style={[
-                        styles.statusDot,
-                        { backgroundColor: s.color || '#9E9E9E' },
-                      ]}
-                    />
                     <Text
                       style={[
-                        styles.chipText,
-                        { color: selected ? colors.text : colors.textSecondary },
-                        selected && { fontFamily: fontFamilies.bodySemibold },
+                        styles.categoryChipText,
+                        {
+                          color: selectedCategory === null ? colors.text : colors.textSecondary,
+                        },
+                        selectedCategory === null && { fontFamily: fontFamilies.bodySemibold },
                       ]}
                     >
-                      {s.name}
+                      All
                     </Text>
-                    {selected && (
-                      <MaterialIcons name="check" size={14} color={s.color || primaryColor} style={{ marginLeft: 2 }} />
-                    )}
                   </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Priority section */}
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>
-              Priority
-            </Text>
-            <View style={styles.chipGrid}>
-              {PRIORITIES.map((p) => {
-                const selected = draft.priorities.includes(p.label);
-                return (
-                  <TouchableOpacity
-                    key={p.label}
-                    style={[
-                      styles.chip,
-                      {
-                        borderColor: selected
-                          ? p.color
-                          : isDarkMode ? 'rgba(255,255,255,0.12)' : '#E0DBD2',
-                        backgroundColor: selected
-                          ? `${p.color}18`
-                          : isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5F0',
-                      },
-                    ]}
-                    onPress={() => togglePriority(p.label)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.statusDot, { backgroundColor: p.color }]} />
-                    <Text
+                  {categories.map((cat) => (
+                    <TouchableOpacity
+                      key={cat.id}
                       style={[
-                        styles.chipText,
-                        { color: selected ? colors.text : colors.textSecondary },
-                        selected && { fontFamily: fontFamilies.bodySemibold },
+                        styles.categoryChip,
+                        {
+                          borderColor: selectedCategory === cat.id ? primaryColor : chipBorderDefault,
+                          backgroundColor: selectedCategory === cat.id ? `${primaryColor}18` : chipBgDefault,
+                        },
                       ]}
+                      onPress={() => selectCategory(cat.id)}
+                      activeOpacity={0.7}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: selectedCategory === cat.id }}
                     >
-                      {p.label}
-                    </Text>
-                    {selected && (
-                      <MaterialIcons name="check" size={14} color={p.color} style={{ marginLeft: 2 }} />
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      <Text
+                        style={[
+                          styles.categoryChipText,
+                          {
+                            color: selectedCategory === cat.id ? colors.text : colors.textSecondary,
+                          },
+                          selectedCategory === cat.id && { fontFamily: fontFamilies.bodySemibold },
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {cat.name}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
 
-            {/* Assignee section */}
+            {/* ── Status section ── */}
+            {renderSectionHeader('Status', 'status', draft.statuses.length)}
+            {!collapsedSections.status && (
+              <View style={styles.chipGrid}>
+                {visibleStatuses.map((s) =>
+                  renderChip(
+                    `status-${s.id}`,
+                    s.name,
+                    draft.statuses.includes(s.name),
+                    s.color || primaryColor,
+                    () => toggleStatus(s.name),
+                    <View style={[styles.statusDot, { backgroundColor: s.color || '#9E9E9E' }]} />,
+                  ),
+                )}
+              </View>
+            )}
+
+            {/* ── Priority section ── */}
+            {renderSectionHeader('Priority', 'priority', draft.priorities.length)}
+            {!collapsedSections.priority && (
+              <View style={styles.chipGrid}>
+                {PRIORITIES.map((p) =>
+                  renderChip(
+                    `priority-${p.label}`,
+                    p.label,
+                    draft.priorities.includes(p.label),
+                    p.color,
+                    () => togglePriority(p.label),
+                    <View style={[styles.statusDot, { backgroundColor: p.color }]} />,
+                  ),
+                )}
+              </View>
+            )}
+
+            {/* ── Assignee section ── */}
             {availableAssignees.length > 0 && (
               <>
-                <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>
-                  Assignee
-                </Text>
-                <View style={styles.chipGrid}>
-                  {availableAssignees.map((name) => {
-                    const selected = draft.assignees.includes(name);
-                    return (
-                      <TouchableOpacity
-                        key={name}
+                {renderSectionHeader('Assignee', 'assignee', draft.assignees.length)}
+                {!collapsedSections.assignee && (
+                  <View>
+                    {/* Search input */}
+                    {availableAssignees.length > INITIAL_ASSIGNEE_COUNT && (
+                      <View
                         style={[
-                          styles.chip,
-                          {
-                            borderColor: selected
-                              ? primaryColor
-                              : isDarkMode ? 'rgba(255,255,255,0.12)' : '#E0DBD2',
-                            backgroundColor: selected
-                              ? `${primaryColor}18`
-                              : isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5F0',
-                          },
+                          styles.searchContainer,
+                          { backgroundColor: inputBg, borderColor: inputBorder },
                         ]}
-                        onPress={() => toggleAssignee(name)}
+                      >
+                        <MaterialIcons name="search" size={16} color={colors.textSecondary} />
+                        <TextInput
+                          style={[styles.searchInput, { color: colors.text }]}
+                          placeholder="Search assignees..."
+                          placeholderTextColor={colors.textSecondary}
+                          value={assigneeSearch}
+                          onChangeText={setAssigneeSearch}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                        />
+                        {assigneeSearch !== '' && (
+                          <TouchableOpacity onPress={() => setAssigneeSearch('')} hitSlop={8}>
+                            <MaterialIcons name="close" size={14} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    )}
+                    <View style={styles.chipGrid}>
+                      {filteredAssignees.items.map((name) =>
+                        renderChip(
+                          `assignee-${name}`,
+                          name,
+                          draft.assignees.includes(name),
+                          primaryColor,
+                          () => toggleAssignee(name),
+                          <MaterialIcons
+                            name="person-outline"
+                            size={14}
+                            color={draft.assignees.includes(name) ? primaryColor : colors.textSecondary}
+                            style={{ marginRight: 2 }}
+                          />,
+                        ),
+                      )}
+                    </View>
+                    {filteredAssignees.hasMore && (
+                      <TouchableOpacity
+                        style={styles.showAllButton}
+                        onPress={() => {
+                          LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+                          setShowAllAssignees(true);
+                        }}
                         activeOpacity={0.7}
                       >
-                        <MaterialIcons
-                          name="person-outline"
-                          size={14}
-                          color={selected ? primaryColor : colors.textSecondary}
-                          style={{ marginRight: 2 }}
-                        />
-                        <Text
-                          style={[
-                            styles.chipText,
-                            { color: selected ? colors.text : colors.textSecondary },
-                            selected && { fontFamily: fontFamilies.bodySemibold },
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {name}
+                        <Text style={[styles.showAllText, { color: primaryColor }]}>
+                          Show all ({filteredAssignees.total})
                         </Text>
-                        {selected && (
-                          <MaterialIcons name="check" size={14} color={primaryColor} style={{ marginLeft: 2 }} />
-                        )}
                       </TouchableOpacity>
-                    );
-                  })}
-                </View>
+                    )}
+                  </View>
+                )}
               </>
             )}
 
-            {/* Flag section */}
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>
-              Flag
-            </Text>
-            <View style={styles.chipGrid}>
-              {FLAG_COLOR_OPTIONS.map(({ label, color, value }) => {
-                const selected = draft.flagColors.includes(value);
-                return (
-                  <TouchableOpacity
-                    key={value}
-                    style={[
-                      styles.chip,
-                      {
-                        borderColor: selected
-                          ? color
-                          : isDarkMode ? 'rgba(255,255,255,0.12)' : '#E0DBD2',
-                        backgroundColor: selected
-                          ? `${color}18`
-                          : isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5F0',
-                      },
-                    ]}
-                    onPress={() => toggleFlagColor(value)}
-                    activeOpacity={0.7}
-                  >
-                    <MaterialIcons
-                      name="flag"
-                      size={14}
-                      color={selected ? color : colors.textSecondary}
-                      style={{ marginRight: 2 }}
-                    />
-                    <Text
-                      style={[
-                        styles.chipText,
-                        { color: selected ? colors.text : colors.textSecondary },
-                        selected && { fontFamily: fontFamilies.bodySemibold },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {label}
-                    </Text>
-                    {selected && (
-                      <MaterialIcons name="check" size={14} color={color} style={{ marginLeft: 2 }} />
+            {/* ── Tags section ── */}
+            {availableTags.length > 0 && (
+              <>
+                {renderSectionHeader('Tags', 'tag', draft.tags.length)}
+                {!collapsedSections.tag && (
+                  <View style={styles.chipGrid}>
+                    {availableTags.map((tag) =>
+                      renderChip(
+                        `tag-${tag}`,
+                        tag,
+                        draft.tags.includes(tag),
+                        primaryColor,
+                        () => toggleTag(tag),
+                        <MaterialIcons
+                          name="label-outline"
+                          size={14}
+                          color={draft.tags.includes(tag) ? primaryColor : colors.textSecondary}
+                          style={{ marginRight: 2 }}
+                        />,
+                      ),
                     )}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                  </View>
+                )}
+              </>
+            )}
 
-            {/* Bottom spacer */}
-            <View style={{ height: spacing.lg }} />
+            {/* ── Flag section ── */}
+            {renderSectionHeader('Flag', 'flag', draft.flagColors.length)}
+            {!collapsedSections.flag && (
+              <View style={styles.chipGrid}>
+                {FLAG_COLOR_OPTIONS.map(({ label, color, value }) =>
+                  renderChip(
+                    `flag-${value}`,
+                    label,
+                    draft.flagColors.includes(value),
+                    color,
+                    () => toggleFlagColor(value),
+                    <View style={[styles.flagDot, { backgroundColor: color }]} />,
+                  ),
+                )}
+              </View>
+            )}
+
+            {/* Bottom spacer for scroll */}
+            <View style={{ height: spacing.md }} />
           </ScrollView>
 
-          {/* Apply button */}
-          <View style={styles.footer}>
+          {/* ── Sticky footer ── */}
+          <View style={[styles.footer, { borderTopColor: sectionBorder }]}>
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={handleReset}
+              activeOpacity={0.7}
+              disabled={activeFilterCount === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Reset all filters"
+            >
+              <Text
+                style={[
+                  styles.resetText,
+                  { color: activeFilterCount > 0 ? colors.text : colors.textSecondary },
+                ]}
+              >
+                Reset
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.applyButton, { backgroundColor: primaryColor }]}
               onPress={handleApply}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={`Apply ${activeFilterCount} filters`}
             >
-              <Text style={styles.applyText}>Apply filters</Text>
+              <Text style={styles.applyText}>
+                {activeFilterCount > 0 ? `Apply filters (${activeFilterCount})` : 'Apply filters'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -341,6 +568,10 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
     </Modal>
   );
 };
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
   overlay: {
@@ -354,8 +585,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderBottomWidth: 0,
     paddingTop: 12,
-    maxHeight: '75%',
-    ...shadows.subtle,
+    maxHeight: '80%',
   },
   handle: {
     width: 36,
@@ -369,36 +599,89 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   title: {
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
   },
-  clearText: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
-  },
   scroll: {
+    flexShrink: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 20,
   },
-  sectionLabel: {
+
+  // Category selector
+  categorySection: {
+    marginBottom: spacing.sm,
+  },
+  categorySectionLabel: {
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodySemibold,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    marginBottom: 10,
+    marginBottom: 8,
   },
+  categoryRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingRight: 4,
+  },
+  categoryChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  categoryChipText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+
+  // Section headers
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 4,
+  },
+  sectionLabel: {
+    flex: 1,
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  countBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  countBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+
+  // Chip grid
   chipGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
+    paddingTop: 10,
+    paddingBottom: 4,
   },
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     borderRadius: radius.pill,
     borderWidth: 1,
   },
@@ -408,16 +691,64 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginRight: 6,
   },
+  flagDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 6,
+  },
   chipText: {
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
   },
+
+  // Assignee search
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    height: 40,
+    marginTop: 10,
+    marginBottom: 4,
+    gap: 6,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    paddingVertical: 0,
+  },
+  showAllButton: {
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  showAllText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+
+  // Footer
   footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 20,
     paddingTop: 12,
     paddingBottom: 32,
+    borderTopWidth: 1,
+    gap: 12,
+  },
+  resetButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+  },
+  resetText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
   applyButton: {
+    flex: 1,
     height: 48,
     borderRadius: radius.md,
     alignItems: 'center',

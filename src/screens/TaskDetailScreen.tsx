@@ -12,7 +12,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
@@ -24,7 +24,7 @@ import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
 import { apiClient, TaskNoteResponse } from '../services/apiClient';
-import { priorityColor, statusColor, getInitials } from '../utils/helpers';
+import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 function generateUUID(): string {
@@ -59,7 +59,7 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { setActiveTask, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId } = useTasks();
+  const { addWorkingTask, removeWorkingTask, isTaskWorking, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
   const { subdomain, token, user: authUser } = useAuth();
   const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
@@ -146,6 +146,8 @@ export const TaskDetailScreen: React.FC = () => {
     }, [fetchNotes]),
   );
 
+  const isWorking = task.id ? isTaskWorking(task.id) : false;
+
   const handleStartWorking = async () => {
     const taskId = task.id;
     if (!taskId) return;
@@ -177,10 +179,15 @@ export const TaskDetailScreen: React.FC = () => {
       }
     }
 
-    // 3. Set active task & navigate back
-    setActiveTask({ ...task, status: inProgressStatus?.name ?? currentStatus, statusColor: inProgressStatus?.color ?? currentStatusColor });
+    // 3. Add to working tasks & navigate back
+    addWorkingTask(task);
     navigation.goBack();
-    Alert.alert('Started', `Now working on "${task.title}"`);
+  };
+
+  const handleStopWorking = () => {
+    if (task.id) {
+      removeWorkingTask(task.id);
+    }
   };
 
   const handleStatusChange = (status: StatusOption) => {
@@ -374,11 +381,21 @@ export const TaskDetailScreen: React.FC = () => {
             <Text style={[styles.cardTitle, { color: colors.text }]}>Tags</Text>
           </View>
           <View style={styles.chipsRow}>
-            {task.tags.map((tag, index) => (
-              <View key={index} style={{ marginRight: 6, marginBottom: 6 }}>
-                <CustomChip label={tag} color="#F5F5F5" textColor="#212121" />
-              </View>
-            ))}
+            {task.tags.map((tag, index) => {
+              const info = tagInfoMap.get(tag);
+              const bgColor = info?.color || '#6B7280';
+              const textColor = contrastTextColor(bgColor);
+              const iconClass = info?.icon;
+              const { name: iconName, solid } = iconClass
+                ? parseWorkspaceIcon(iconClass)
+                : { name: 'tag', solid: true };
+              return (
+                <View key={index} style={{ marginRight: 6, marginBottom: 6, flexDirection: 'row', alignItems: 'center', backgroundColor: bgColor, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
+                  <FontAwesome5 name={iconName} size={11} color={textColor} solid={solid} style={{ marginRight: 5 }} />
+                  <Text style={{ fontSize: 13, fontFamily: 'Montserrat_500Medium', color: textColor }}>{tag}</Text>
+                </View>
+              );
+            })}
           </View>
         </View>
       )}
@@ -660,13 +677,23 @@ export const TaskDetailScreen: React.FC = () => {
             { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
           ]}
         >
-          <TouchableOpacity
-            style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
-            onPress={handleStartWorking}
-          >
-            <MaterialIcons name="play-circle-outline" size={20} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>Start Working</Text>
-          </TouchableOpacity>
+          {isWorking ? (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.startButton, styles.stopButton, { borderColor: primaryColor }]}
+              onPress={handleStopWorking}
+            >
+              <MaterialIcons name="stop-circle" size={20} color={primaryColor} />
+              <Text style={[styles.actionButtonText, { color: primaryColor }]}>Stop Working</Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
+              onPress={handleStartWorking}
+            >
+              <MaterialIcons name="play-circle-outline" size={20} color="#FFFFFF" />
+              <Text style={styles.actionButtonText}>Start Working</Text>
+            </TouchableOpacity>
+          )}
 
           {getAllowedStatuses(currentTask).length > 0 && (
             <TouchableOpacity
@@ -966,6 +993,10 @@ const styles = StyleSheet.create({
   },
   startButton: {
     marginRight: 12,
+  },
+  stopButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 1,
   },
   doneButton: {
     backgroundColor: '#FFFFFF',
