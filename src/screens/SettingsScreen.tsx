@@ -18,6 +18,7 @@ import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
+import { VERSION_DISPLAY } from '../config/version';
 import { useData } from '../context/DataContext';
 import { clearAllData } from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
@@ -473,7 +474,7 @@ export const SettingsScreen: React.FC = () => {
           <ListTile
             icon="info-outline"
             title="App Version"
-            subtitle="1.0.0 (Build 1)"
+            subtitle={VERSION_DISPLAY}
             onPress={() => {}}
           />
           <View style={styles.divider} />

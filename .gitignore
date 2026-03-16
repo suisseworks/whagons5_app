@@ -38,6 +38,12 @@ yarn-error.*
 # Firebase config
 google-services.json
 
+# Play Store service account
+play-store-service-account.json
+
+# Upload keystore
+*.jks
+
 # typescript
 *.tsbuildinfo
 

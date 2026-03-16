@@ -18,7 +18,7 @@ import React, {
   ReactNode,
 } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
-import { DataManager } from '../store/DataManager';
+import { DataManager, SyncProgress } from '../store/DataManager';
 import { useAuth } from './AuthContext';
 import * as DB from '../store/database';
 import { apiClient } from '../services/apiClient';
@@ -324,6 +324,10 @@ interface DataContextType {
   isSyncing: boolean;
   /** The last sync error, if any. */
   syncError: string | null;
+  /** Sync progress info (percentage, processed/total records). */
+  syncProgress: SyncProgress | null;
+  /** Whether this is the very first sync (no cached data). */
+  isInitialSync: boolean;
   /** Trigger a manual sync (for pull-to-refresh). */
   refresh: () => Promise<void>;
   /** Force clear all cached data and do a full resync. */
@@ -373,8 +377,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [data, setData] = useState<SyncedData>(EMPTY_DATA);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [isInitialSync, setIsInitialSync] = useState(false);
 
   const dmRef = useRef<DataManager | null>(null);
+  const progressUnsubRef = useRef<(() => void) | null>(null);
 
   // Create / update the DataManager + apiClient when auth changes
   useEffect(() => {
@@ -385,7 +392,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       // Always recreate DataManager when subdomain changes
       if (!dmRef.current || dmRef.current.getSubdomain() !== subdomain) {
+        // Unsubscribe old progress listener
+        if (progressUnsubRef.current) {
+          progressUnsubRef.current();
+          progressUnsubRef.current = null;
+        }
         dmRef.current = new DataManager({ subdomain, authToken: token });
+        progressUnsubRef.current = dmRef.current.onProgress((progress) => {
+          setSyncProgress(progress);
+          setIsInitialSync(progress.isInitialSync);
+        });
         console.log(`[DataContext] Created DataManager for tenant: ${subdomain}`);
       } else {
         dmRef.current.setAuthToken(token);
@@ -514,6 +530,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     console.log('[DataContext] hydrating from cache...');
     await hydrateFromCache();
     setIsSyncing(false);
+    setSyncProgress(null);
+    setIsInitialSync(false);
     console.log('[DataContext] runSync: done');
   }, [hydrateFromCache]);
 
@@ -559,6 +577,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         data,
         isSyncing,
         syncError,
+        syncProgress,
+        isInitialSync,
         refresh,
         forceResync,
         dataManager: dmRef.current,

@@ -25,6 +25,7 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
 import { buildBaseUrl, getTenantHeaders } from '../config/api';
+import { APP_VERSION } from '../config/version';
 import {
   requestNotificationPermission,
   getFCMToken,
@@ -187,7 +188,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
           body: JSON.stringify({
             fcm_token: deviceToken,
             platform: Platform.OS === 'ios' ? 'ios' : 'android',
-            app_version: '1.0.0',
+            app_version: APP_VERSION,
           }),
         });
 

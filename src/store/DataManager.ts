@@ -34,8 +34,23 @@ export interface SyncResult {
   error?: string;
 }
 
+/** Progress info emitted during sync stream processing. */
+export interface SyncProgress {
+  /** Records processed so far */
+  processed: number;
+  /** Total records the server will send (0 if unknown / delta sync) */
+  total: number;
+  /** 0–100 percentage (or -1 if indeterminate) */
+  percent: number;
+  /** Whether this is the initial full sync (no cursor) */
+  isInitialSync: boolean;
+}
+
 /** Callback invoked after sync completes so the UI can refresh. */
 export type SyncListener = (result: SyncResult) => void;
+
+/** Callback invoked periodically during sync with progress info. */
+export type SyncProgressListener = (progress: SyncProgress) => void;
 
 // ---------------------------------------------------------------------------
 // DataManager
@@ -45,6 +60,7 @@ export class DataManager {
   private subdomain: string;
   private authToken: string;
   private listeners: SyncListener[] = [];
+  private progressListeners: SyncProgressListener[] = [];
   private syncInProgress: Promise<SyncResult> | null = null;
 
   constructor(config: DataManagerConfig) {
@@ -68,6 +84,22 @@ export class DataManager {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== listener);
     };
+  }
+
+  /** Register a listener for sync progress updates. */
+  onProgress(listener: SyncProgressListener): () => void {
+    this.progressListeners.push(listener);
+    return () => {
+      this.progressListeners = this.progressListeners.filter((l) => l !== listener);
+    };
+  }
+
+  private notifyProgress(progress: SyncProgress) {
+    for (const l of this.progressListeners) {
+      try {
+        l(progress);
+      } catch {}
+    }
   }
 
   private notifyListeners(result: SyncResult) {
@@ -198,6 +230,12 @@ export class DataManager {
     let doneReceived = false;
     let needsResync = false;
 
+    // Progress tracking
+    const isInitialSync = !cursor;
+    let totalRecords = 0;
+    let processedRecords = 0;
+    let lastProgressNotify = 0;
+
     // Batching for wh_tasks (highest-volume table)
     const taskUpserts: Array<{ id: string; record: Record<string, unknown> }> = [];
     const taskDeletes: string[] = [];
@@ -242,6 +280,15 @@ export class DataManager {
         if (requires.includes('visibility')) {
           needsResync = true;
         }
+        if (typeof msg.total_records === 'number' && msg.total_records > 0) {
+          totalRecords = msg.total_records;
+        }
+        this.notifyProgress({
+          processed: 0,
+          total: totalRecords,
+          percent: totalRecords > 0 ? 0 : -1,
+          isInitialSync,
+        });
         return;
       }
 
@@ -294,6 +341,19 @@ export class DataManager {
       // Track for active snapshot
       const snap = activeSnapshots.get(table);
       if (snap) snap.add(String(id));
+
+      // Track progress for every record
+      processedRecords++;
+      const now = Date.now();
+      if (totalRecords > 0 && now - lastProgressNotify > 150) {
+        lastProgressNotify = now;
+        this.notifyProgress({
+          processed: processedRecords,
+          total: totalRecords,
+          percent: Math.min(99, Math.round((processedRecords / totalRecords) * 100)),
+          isInitialSync,
+        });
+      }
 
       // Special batching for tasks
       if (table === 'wh_tasks') {
@@ -384,6 +444,14 @@ export class DataManager {
       // Verify tasks in DB
       const dbTaskCount = await DB.getRowCount('wh_tasks');
       console.log(`[DataManager] Tasks in SQLite after sync: ${dbTaskCount}`);
+
+      // Emit final 100% progress
+      this.notifyProgress({
+        processed: processedRecords,
+        total: totalRecords || processedRecords,
+        percent: 100,
+        isInitialSync,
+      });
 
       console.log(`[DataManager] syncStream done. touched=${Array.from(touchedTables).join(',')} doneReceived=${doneReceived}`);
 

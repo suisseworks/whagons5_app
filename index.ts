@@ -1,10 +1,13 @@
 import { registerRootComponent } from 'expo';
+import { LogBox } from 'react-native';
 import {
   registerBackgroundMessageHandler,
   registerBackgroundNotifeeHandler,
 } from './src/firebase/notificationService';
 
 import App from './App';
+
+LogBox.ignoreAllLogs();
 
 // Register background message handlers BEFORE registerRootComponent.
 // These must be at the top level so they execute even when the app

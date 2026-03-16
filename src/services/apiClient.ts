@@ -47,7 +47,7 @@ export class ApiClient {
   }
 
   async getTasks(page: number = 1, perPage: number = 20): Promise<TaskModel[]> {
-    const url = `${this.baseUrl}/api/tasks?page=${page}&per_page=${perPage}`;
+    const url = `${this.baseUrl}/tasks?page=${page}&per_page=${perPage}`;
     
     const response = await fetch(url, {
       method: 'GET',
@@ -73,7 +73,7 @@ export class ApiClient {
   }
 
   async getTask(id: number): Promise<TaskModel | null> {
-    const url = `${this.baseUrl}/api/tasks/${id}`;
+    const url = `${this.baseUrl}/tasks/${id}`;
     
     const response = await fetch(url, {
       method: 'GET',
@@ -89,7 +89,7 @@ export class ApiClient {
   }
 
   async createTask(task: Partial<TaskModel>): Promise<TaskModel> {
-    const url = `${this.baseUrl}/api/tasks`;
+    const url = `${this.baseUrl}/tasks`;
     
     const response = await fetch(url, {
       method: 'POST',
@@ -106,7 +106,7 @@ export class ApiClient {
   }
 
   async updateTask(id: number, task: Partial<TaskModel>): Promise<TaskModel> {
-    const url = `${this.baseUrl}/api/tasks/${id}`;
+    const url = `${this.baseUrl}/tasks/${id}`;
     
     const response = await fetch(url, {
       method: 'PUT',
@@ -123,7 +123,7 @@ export class ApiClient {
   }
 
   async deleteTask(id: number): Promise<void> {
-    const url = `${this.baseUrl}/api/tasks/${id}`;
+    const url = `${this.baseUrl}/tasks/${id}`;
     
     const response = await fetch(url, {
       method: 'DELETE',

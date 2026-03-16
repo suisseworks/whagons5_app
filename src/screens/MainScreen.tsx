@@ -28,6 +28,7 @@ import { RootStackParamList, TaskItem } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskBanner } from '../components/ActiveTaskBanner';
 import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
+import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -163,7 +164,7 @@ export const MainScreen: React.FC = () => {
     hasActiveFilters,
   } = useTasks();
 
-  const { data, isSyncing, refresh, syncError } = useData();
+  const { data, isSyncing, refresh, syncError, isInitialSync } = useData();
 
   // Build workspace lookup by name for icon/color access
   const workspaceLookup = useMemo(() => {
@@ -456,6 +457,11 @@ export const MainScreen: React.FC = () => {
       </View>
     );
   };
+
+  // Show full-screen sync screen on initial sync with no data
+  if (isInitialSync && isSyncing && data.tasks.length === 0) {
+    return <InitialSyncScreen />;
+  }
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>

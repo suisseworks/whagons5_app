@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks, StatusOption } from '../context/TaskContext';
@@ -107,13 +107,14 @@ export const TaskDetailScreen: React.FC = () => {
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [sendingComment, setSendingComment] = useState(false);
-  const notesFetched = useRef(false);
   const commentsScrollRef = useRef<ScrollView>(null);
 
   // Fetch task notes from API
-  const fetchNotes = useCallback(async () => {
+  const fetchNotes = useCallback(async (silent = false) => {
     if (!task.id) return;
-    setNotesLoading(true);
+    if (!silent) {
+      setNotesLoading(true);
+    }
     setNotesError(null);
     try {
       const result = await apiClient.getTaskNotes(task.id);
@@ -125,23 +126,59 @@ export const TaskDetailScreen: React.FC = () => {
       });
       setNotes(result);
     } catch (err: any) {
-      console.warn('[TaskDetail] Failed to fetch notes:', err?.message);
-      setNotesError(err?.message || 'Failed to load comments');
+      if (!silent) {
+        console.warn('[TaskDetail] Failed to fetch notes:', err?.message);
+        setNotesError(err?.message || 'Failed to load comments');
+      }
     } finally {
-      setNotesLoading(false);
+      if (!silent) {
+        setNotesLoading(false);
+      }
     }
   }, [task.id]);
 
-  // Fetch notes on mount (so count is ready even before switching to comments tab)
-  useEffect(() => {
-    if (!notesFetched.current && task.id) {
-      notesFetched.current = true;
+  // Fetch notes on screen focus + poll every 15s while screen is visible
+  useFocusEffect(
+    useCallback(() => {
       fetchNotes();
-    }
-  }, [fetchNotes]);
+      const interval = setInterval(() => fetchNotes(true), 15_000);
+      return () => clearInterval(interval);
+    }, [fetchNotes]),
+  );
 
-  const handleStartWorking = () => {
-    setActiveTask(task);
+  const handleStartWorking = async () => {
+    const taskId = task.id;
+    if (!taskId) return;
+
+    // 1. Change status to "In Progress" (or the first non-initial, non-final allowed status)
+    const allowed = getAllowedStatuses(currentTask);
+    const inProgressStatus =
+      allowed.find((s) => /in\s*progress/i.test(s.name)) ??
+      allowed.find((s) => !s.initial && !s.final);
+
+    if (inProgressStatus && currentStatusId !== inProgressStatus.id) {
+      changeTaskStatus(taskId, inProgressStatus);
+      setCurrentStatus(inProgressStatus.name);
+      setCurrentStatusColor(inProgressStatus.color);
+      setCurrentStatusId(inProgressStatus.id);
+    }
+
+    // 2. Assign the current user to the task if not already assigned
+    if (authUser?.id != null) {
+      const existingUserIds = data.taskUsers
+        .filter((tu) => tu.task_id === Number(taskId))
+        .map((tu) => tu.user_id);
+
+      if (!existingUserIds.includes(authUser.id)) {
+        const updatedUserIds = [...existingUserIds, authUser.id];
+        apiClient
+          .patchTask(Number(taskId), { user_ids: updatedUserIds })
+          .catch((err) => console.warn('[TaskDetail] Failed to assign user:', err));
+      }
+    }
+
+    // 3. Set active task & navigate back
+    setActiveTask({ ...task, status: inProgressStatus?.name ?? currentStatus, statusColor: inProgressStatus?.color ?? currentStatusColor });
     navigation.goBack();
     Alert.alert('Started', `Now working on "${task.title}"`);
   };
@@ -156,7 +193,15 @@ export const TaskDetailScreen: React.FC = () => {
 
   const handleAddComment = async () => {
     const text = commentText.trim();
-    if (!text || !task.id || !authUser?.id) return;
+    if (!text) return;
+    if (!task.id) {
+      Alert.alert('Error', 'Cannot add comment: task ID is missing.');
+      return;
+    }
+    if (authUser?.id == null) {
+      Alert.alert('Error', 'Cannot add comment: you are not signed in.');
+      return;
+    }
 
     setSendingComment(true);
     const optimistic: TaskNoteResponse = {
@@ -461,7 +506,7 @@ export const TaskDetailScreen: React.FC = () => {
           <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
             {notesError}
           </Text>
-          <TouchableOpacity onPress={fetchNotes} style={styles.retryButton}>
+          <TouchableOpacity onPress={() => fetchNotes()} style={styles.retryButton}>
             <Text style={[styles.retryText, { color: primaryColor }]}>Retry</Text>
           </TouchableOpacity>
         </View>

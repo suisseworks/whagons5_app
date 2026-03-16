@@ -1,4 +1,5 @@
 export { SplashScreen } from './SplashScreen';
+export { InitialSyncScreen } from './InitialSyncScreen';
 export { LoginScreen } from './LoginScreen';
 export { MainScreen } from './MainScreen';
 export { ColabScreen } from './ColabScreen';

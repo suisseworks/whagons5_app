@@ -86,7 +86,7 @@ export const SplashScreen: React.FC = () => {
         end={{ x: 1, y: 1 }}
         style={styles.container}
       >
-        <StatusBar barStyle="light-content" backgroundColor="#121614" translucent={false} />
+        <StatusBar barStyle="light-content" backgroundColor="transparent" translucent={true} />
 
         {/* Subtle ambient glow */}
         <View style={styles.glowTop} />
