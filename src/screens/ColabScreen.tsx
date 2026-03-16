@@ -167,8 +167,8 @@ type ColabTab = 'workspaces' | 'chats';
 
 type ChatView =
   | { type: 'list' }
-  | { type: 'conversation'; conversationId: number }
-  | { type: 'spaceChat'; workspaceId: number };
+  | { type: 'conversation'; conversationId: number | string }
+  | { type: 'spaceChat'; workspaceId: number | string };
 
 // ---------------------------------------------------------------------------
 // Sub-components

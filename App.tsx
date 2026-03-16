@@ -5,6 +5,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { useFonts as useMontserratFonts, Montserrat_400Regular, Montserrat_500Medium, Montserrat_600SemiBold, Montserrat_700Bold } from '@expo-google-fonts/montserrat';
+import { ConvexClientProvider } from './src/providers/ConvexClientProvider';
 import { ThemeProvider } from './src/context/ThemeContext';
 import { AuthProvider } from './src/context/AuthContext';
 import { DataProvider } from './src/context/DataContext';
@@ -32,18 +33,20 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <KeyboardProvider>
-          <AuthProvider>
-            <DataProvider>
-              <NotificationProvider>
-                <ThemeProvider>
-                  <TaskProvider>
-                    <StatusBar style="auto" />
-                    <AppNavigator />
-                  </TaskProvider>
-                </ThemeProvider>
-              </NotificationProvider>
-            </DataProvider>
-          </AuthProvider>
+          <ConvexClientProvider>
+            <AuthProvider>
+              <DataProvider>
+                <NotificationProvider>
+                  <ThemeProvider>
+                    <TaskProvider>
+                      <StatusBar style="auto" />
+                      <AppNavigator />
+                    </TaskProvider>
+                  </ThemeProvider>
+                </NotificationProvider>
+              </DataProvider>
+            </AuthProvider>
+          </ConvexClientProvider>
         </KeyboardProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

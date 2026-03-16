@@ -18,7 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList } from '../models/types';
 import { quotes, inspirationalImages, getDailyIndex } from '../utils/helpers';
-import { clearAllData } from '../store/database';
+// SQLite cache removed — Convex handles all data
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -56,7 +56,6 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
 
   const handleLogout = async () => {
     onClose();
-    await clearAllData();
     await logout();
     navigation.dispatch(
       CommonActions.reset({

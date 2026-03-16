@@ -2,24 +2,28 @@
  * TaskContext – Bridges the synced data from DataContext into the existing
  * TaskItem interface that all the UI components consume.
  *
- * If synced data is available (user is logged in + sync completed),
+ * If synced data is available (user is logged in + Convex connected),
  * tasks are derived from DataContext. Otherwise the original static
- * data is used as a fallback so the UI never shows an empty screen
- * before the first sync.
+ * data is used as a fallback so the UI never shows an empty screen.
  */
 
 import React, { createContext, useContext, useState, useMemo, useCallback, useRef, useEffect, ReactNode } from 'react';
 import { TaskItem } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
-import { apiClient } from '../services/apiClient';
+import { useMutation } from 'convex/react';
+import { api } from '../../convex/_generated/api';
+import { useTenant } from '../hooks/useTenant';
 
 // ---------------------------------------------------------------------------
 // Helpers – map synced backend data → UI TaskItem
 // ---------------------------------------------------------------------------
 
+// Use `any` for map keys since IDs can be string (Convex) or number (legacy)
+type AnyId = any;
+
 function mapPriority(
-  priorityId: number | null | undefined,
-  priorityMap: Map<number, { name: string; color?: string | null }>,
+  priorityId: AnyId,
+  priorityMap: Map<AnyId, { name: string; color?: string | null }>,
 ): TaskItem['priority'] {
   if (!priorityId) return 'Medium';
   const p = priorityMap.get(priorityId);
@@ -31,8 +35,8 @@ function mapPriority(
 }
 
 function resolveStatus(
-  statusId: number | null | undefined,
-  statusMap: Map<number, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
+  statusId: AnyId,
+  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
   initialStatus: { name: string; color: string | null } | null,
 ): { name: string; color: string | null } {
   if (!statusId) return initialStatus ?? { name: '', color: null };
@@ -62,18 +66,18 @@ function formatDate(dateStr?: string | null): string {
 
 function mapTaskToItem(
   task: SyncedTask,
-  spotMap: Map<number, string>,
-  priorityMap: Map<number, { name: string; color?: string | null }>,
-  statusMap: Map<number, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
-  assigneeMap: Map<number, string[]>, // taskId → list of user names
-  tagMap: Map<number, string[]>,      // taskId → list of tag names
+  spotMap: Map<AnyId, string>,
+  priorityMap: Map<AnyId, { name: string; color?: string | null }>,
+  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
+  assigneeMap: Map<AnyId, string[]>,
+  tagMap: Map<AnyId, string[]>,
   initialStatus: { name: string; color: string | null } | null,
-  templateFormMap: Map<number, { formId: number; formName: string }>, // templateId → form info
+  templateFormMap: Map<AnyId, { formId: AnyId; formName: string }>,
 ): TaskItem {
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
 
   // Resolve form via template_id → template → form_id
-  const templateId = task.template_id as number | undefined;
+  const templateId = task.template_id;
   const formInfo = templateId ? templateFormMap.get(templateId) : undefined;
 
   return {
@@ -102,7 +106,7 @@ function mapTaskToItem(
 const staticTasks: TaskItem[] = [
   {
     id: '0',
-    title: 'Syncing data...',
+    title: 'Loading...',
     spot: '',
     priority: 'Medium',
     status: '',
@@ -119,7 +123,7 @@ const staticTasks: TaskItem[] = [
 // ---------------------------------------------------------------------------
 
 export interface StatusOption {
-  id: number;
+  id: AnyId;
   name: string;
   color: string | null;
   initial?: boolean;
@@ -127,9 +131,9 @@ export interface StatusOption {
 }
 
 export interface TaskFilters {
-  statuses: string[];          // status names to include (empty = all)
-  priorities: string[];        // 'Low' | 'Medium' | 'High' (empty = all)
-  assignees: string[];         // user names to include (empty = all)
+  statuses: string[];
+  priorities: string[];
+  assignees: string[];
 }
 
 export const emptyFilters: TaskFilters = {
@@ -138,7 +142,6 @@ export const emptyFilters: TaskFilters = {
   assignees: [],
 };
 
-/** Parsed form schema matching the web client's FormVersion.fields structure */
 export interface FormSchema {
   title?: string;
   description?: string;
@@ -165,11 +168,8 @@ export interface FormSchemaField {
 
 interface TaskContextType {
   tasks: TaskItem[];
-  /** Total number of tasks for the selected workspace (before pagination) */
   totalTaskCount: number;
-  /** Load the next page of tasks (infinite scroll) */
   loadMoreTasks: () => void;
-  /** Whether there are more tasks to load */
   hasMoreTasks: boolean;
   activeTask: TaskItem | null;
   compactCards: boolean;
@@ -188,64 +188,63 @@ interface TaskContextType {
   filters: TaskFilters;
   setFilters: (filters: TaskFilters) => void;
   hasActiveFilters: boolean;
-  /** All unique assignee names across the current workspace's tasks */
   availableAssignees: string[];
   changeTaskStatus: (taskId: string, status: StatusOption) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
-  /** Get the form schema for a task (returns null if no form) */
   getFormSchema: (task: TaskItem) => FormSchema | null;
-  /** Get the existing task form submission for a task */
-  getTaskFormSubmission: (taskId: string) => { id: number; formVersionId: number; data: Record<string, unknown> } | null;
-  /** Get the active form version ID for a given form */
-  getFormVersionId: (formId: number) => number | null;
+  getTaskFormSubmission: (taskId: string) => { id: AnyId; formVersionId: AnyId; data: Record<string, unknown> } | null;
+  getFormVersionId: (formId: AnyId) => AnyId | null;
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { data } = useData();
+  const { tenantId } = useTenant();
+
+  // Convex mutations
+  const patchTaskMutation = useMutation(api.tasks.update);
 
   const [activeTask, setActiveTaskState] = useState<TaskItem | null>(null);
   const [compactCards, setCompactCards] = useState(false);
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
-  // Local overrides for optimistic mutations (keyed by task id)
   const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
 
   // Build lookup maps from synced reference data
   const spotMap = useMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<AnyId, string>();
     for (const s of data.spots) m.set(s.id, s.name);
     return m;
   }, [data.spots]);
 
   const priorityMap = useMemo(() => {
-    const m = new Map<number, { name: string; color?: string | null }>();
+    const m = new Map<AnyId, { name: string; color?: string | null }>();
     for (const p of data.priorities) m.set(p.id, { name: p.name, color: p.color });
     return m;
   }, [data.priorities]);
 
   const statusMap = useMemo(() => {
-    const m = new Map<number, { name: string; color?: string | null; final?: boolean; initial?: boolean }>();
+    const m = new Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>();
     for (const s of data.statuses) m.set(s.id, { name: s.name, color: s.color, final: s.final, initial: s.initial });
     return m;
   }, [data.statuses]);
 
   const userMap = useMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<AnyId, string>();
     for (const u of data.users) m.set(u.id, u.name);
     return m;
   }, [data.users]);
 
   const tagNameMap = useMemo(() => {
-    const m = new Map<number, string>();
+    const m = new Map<AnyId, string>();
     for (const t of data.tags) m.set(t.id, t.name);
     return m;
   }, [data.tags]);
 
   const assigneeMap = useMemo(() => {
-    const m = new Map<number, string[]>();
+    const m = new Map<AnyId, string[]>();
     for (const tu of data.taskUsers) {
       const list = m.get(tu.task_id) ?? [];
       const name = userMap.get(tu.user_id);
@@ -256,7 +255,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [data.taskUsers, userMap]);
 
   const tagMap = useMemo(() => {
-    const m = new Map<number, string[]>();
+    const m = new Map<AnyId, string[]>();
     for (const tt of data.taskTags) {
       const list = m.get(tt.task_id) ?? [];
       const name = tagNameMap.get(tt.tag_id);
@@ -266,12 +265,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.taskTags, tagNameMap]);
 
-  // Build template → form lookup: templateId → { formId, formName }
+  // Build template → form lookup
   const templateFormMap = useMemo(() => {
-    const formMap = new Map<number, string>();
+    const formMap = new Map<AnyId, string>();
     for (const f of data.forms) formMap.set(f.id, f.name);
 
-    const m = new Map<number, { formId: number; formName: string }>();
+    const m = new Map<AnyId, { formId: AnyId; formName: string }>();
     for (const tpl of data.templates) {
       if (tpl.form_id) {
         const formName = formMap.get(tpl.form_id) ?? 'Form';
@@ -281,17 +280,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.templates, data.forms]);
 
-  // Build workspace list (names for backward compat) + full objects
   const workspaces = useMemo(() => {
     const names = data.workspaces.map((w) => w.name);
     return ['Everything', ...names];
   }, [data.workspaces]);
 
-  const workspaceObjects = useMemo(() => {
-    return data.workspaces;
-  }, [data.workspaces]);
+  const workspaceObjects = useMemo(() => data.workspaces, [data.workspaces]);
 
-  // Expose all statuses as a flat list for the status picker
   const statuses: StatusOption[] = useMemo(() => {
     return data.statuses.map((s) => ({
       id: s.id,
@@ -302,7 +297,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }));
   }, [data.statuses]);
 
-  // Resolve the initial (default) and final (done) statuses from backend data
   const initialStatus = useMemo(() => {
     for (const s of data.statuses) {
       if (s.initial) return { name: s.name, color: s.color ?? null };
@@ -317,18 +311,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return null;
   }, [data.statuses]);
 
-  // Category → transition group mapping
+  // Status transition logic
   const categoryTransitionGroupMap = useMemo(() => {
-    const m = new Map<number, number>();
+    const m = new Map<AnyId, AnyId>();
     for (const c of data.categories) {
       if (c.status_transition_group_id) m.set(c.id, c.status_transition_group_id);
     }
     return m;
   }, [data.categories]);
 
-  // Transition lookup: (groupId, fromStatusId) → Set<toStatusId>
   const transitionMap = useMemo(() => {
-    const m = new Map<string, Set<number>>();
+    const m = new Map<string, Set<AnyId>>();
     for (const t of data.statusTransitions) {
       const key = `${t.status_transition_group_id}:${t.from_status}`;
       let set = m.get(key);
@@ -341,29 +334,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.statusTransitions]);
 
-  // Given a task, return the list of statuses it can transition to
   const getAllowedStatuses = useCallback((task: TaskItem): StatusOption[] => {
     const categoryId = task.categoryId;
     const statusId = task.statusId;
-
-    // If no category or no current status, can't look up transitions
     if (!categoryId || !statusId) return statuses;
 
     const groupId = categoryTransitionGroupMap.get(categoryId);
-    if (!groupId) return statuses; // no transition group → show all
+    if (!groupId) return statuses;
 
     const key = `${groupId}:${statusId}`;
     const allowedIds = transitionMap.get(key);
-    if (!allowedIds || allowedIds.size === 0) return statuses; // no transitions defined → show all
+    if (!allowedIds || allowedIds.size === 0) return statuses;
 
-    // Include the current status + all allowed target statuses
     return statuses.filter((s) => s.id === statusId || allowedIds.has(s.id));
   }, [statuses, categoryTransitionGroupMap, transitionMap]);
 
   // ---------------------------------------------------------------------------
-  // Step 1: Pre-map ALL tasks once (expensive, only recomputes when data changes)
+  // Map tasks
   // ---------------------------------------------------------------------------
-  // Filter out soft-deleted tasks before mapping
   const activeTasks = useMemo(() => {
     return data.tasks.filter((t) => !t.deleted_at);
   }, [data.tasks]);
@@ -375,13 +363,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     );
   }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap]);
 
-  // Build a workspace-id lookup from the pre-mapped tasks (index-aligned with activeTasks)
   const taskWorkspaceIds = useMemo(() => {
     return activeTasks.map((t) => t.workspace_id);
-  }, [data.tasks]);
+  }, [activeTasks]);
 
   // ---------------------------------------------------------------------------
-  // Step 2: Filter by workspace + user filters
+  // Filter + paginate
   // ---------------------------------------------------------------------------
   const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0;
 
@@ -401,7 +388,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     }
 
-    // Apply user-selected filters
     if (hasActiveFilters) {
       const statusSet = filters.statuses.length > 0 ? new Set(filters.statuses) : null;
       const prioritySet = filters.priorities.length > 0 ? new Set(filters.priorities) : null;
@@ -415,7 +401,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
     }
 
-    // Apply local overrides
     if (localOverrides.size > 0) {
       result = result.map((t) => {
         const override = localOverrides.get(t.id ?? '');
@@ -426,7 +411,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return result;
   }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters]);
 
-  // Unique assignee names from the workspace-filtered (pre-user-filter) tasks
   const availableAssignees = useMemo(() => {
     let wsFiltered: TaskItem[];
     if (selectedWorkspace === 'Everything') {
@@ -447,13 +431,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return Array.from(names).sort();
   }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
 
-  // ---------------------------------------------------------------------------
-  // Step 3: Paginate – only expose a slice, grow on loadMore (infinite scroll)
-  // ---------------------------------------------------------------------------
+  // Pagination
   const PAGE_SIZE = 30;
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
-  // Reset visible count (and filters) when workspace changes
   const prevWorkspaceRef = useRef(selectedWorkspace);
   useEffect(() => {
     if (prevWorkspaceRef.current !== selectedWorkspace) {
@@ -463,7 +444,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [selectedWorkspace]);
 
-  // Reset pagination when filters change
   const prevFiltersRef = useRef(filters);
   useEffect(() => {
     if (prevFiltersRef.current !== filters) {
@@ -472,10 +452,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [filters]);
 
-  const tasks = useMemo(() => {
-    return filteredTasks.slice(0, visibleCount);
-  }, [filteredTasks, visibleCount]);
-
+  const tasks = useMemo(() => filteredTasks.slice(0, visibleCount), [filteredTasks, visibleCount]);
   const totalTaskCount = filteredTasks.length;
   const hasMoreTasks = visibleCount < filteredTasks.length;
 
@@ -485,10 +462,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [hasMoreTasks, filteredTasks.length]);
 
-  // ---- Mutations (optimistic, client-side only for now) --------------------
+  // ---------------------------------------------------------------------------
+  // Mutations (Convex)
+  // ---------------------------------------------------------------------------
 
   const addTask = (_task: TaskItem) => {
-    // In the future, POST to API and re-sync
+    // TODO: implement via Convex mutation
   };
 
   const updateTask = (index: number, task: TaskItem) => {
@@ -522,25 +501,28 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return next;
     });
 
-    // Persist to backend
-    apiClient.patchTask(Number(taskId), { status_id: status.id }).catch((err) => {
-      console.warn('[TaskContext] Failed to change status:', err);
-      // Rollback optimistic update
-      setLocalOverrides((prev) => {
-        const next = new Map(prev);
-        next.delete(taskId);
-        return next;
+    // Persist via Convex
+    if (tenantId) {
+      patchTaskMutation({
+        tenantId,
+        id: taskId as any,
+        statusId: status.id,
+      }).catch((err: any) => {
+        console.warn('[TaskContext] Failed to change status:', err);
+        setLocalOverrides((prev) => {
+          const next = new Map(prev);
+          next.delete(taskId);
+          return next;
+        });
       });
-    });
-  }, []);
+    }
+  }, [tenantId, patchTaskMutation]);
 
   const markTaskDone = useCallback((taskId: string) => {
     if (!finalStatus) return;
-    // Find the final status ID
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
 
-    // Optimistic update
     setLocalOverrides((prev) => {
       const next = new Map(prev);
       next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
@@ -548,13 +530,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
     if (activeTask?.id === taskId) setActiveTaskState(null);
 
-    // Persist to backend
-    if (finalStatusId) {
-      apiClient.patchTask(Number(taskId), { status_id: finalStatusId }).catch((err) => {
+    if (finalStatusId && tenantId) {
+      patchTaskMutation({
+        tenantId,
+        id: taskId as any,
+        statusId: finalStatusId,
+      }).catch((err: any) => {
         console.warn('[TaskContext] Failed to mark task done:', err);
       });
     }
-  }, [finalStatus, data.statuses, activeTask]);
+  }, [finalStatus, data.statuses, activeTask, tenantId, patchTaskMutation]);
 
   const assignTaskToYou = (taskId: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
@@ -567,16 +552,15 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  // Form version map: formId → active form version (with parsed schema)
+  // Form version map
   const formVersionMap = useMemo(() => {
-    const formToCurrentVersion = new Map<number, number>();
+    const formToCurrentVersion = new Map<AnyId, AnyId>();
     for (const f of data.forms) {
       if (f.current_version_id) formToCurrentVersion.set(f.id, f.current_version_id);
     }
 
-    const m = new Map<number, SyncedFormVersion>();
+    const m = new Map<AnyId, SyncedFormVersion>();
     for (const fv of data.formVersions) {
-      // Check if this version is the current active one for its form
       const currentVersionId = formToCurrentVersion.get(fv.form_id);
       if (currentVersionId === fv.id) {
         m.set(fv.form_id, fv);
@@ -585,9 +569,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.forms, data.formVersions]);
 
-  // Task form submissions map: taskId → TaskForm
   const taskFormMap = useMemo(() => {
-    const m = new Map<number, SyncedTaskForm>();
+    const m = new Map<AnyId, SyncedTaskForm>();
     for (const tf of data.taskForms) {
       m.set(tf.task_id, tf);
     }
@@ -612,13 +595,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [formVersionMap]);
 
-  const getFormVersionId = useCallback((formId: number): number | null => {
+  const getFormVersionId = useCallback((formId: AnyId): AnyId | null => {
     const fv = formVersionMap.get(formId);
     return fv?.id ?? null;
   }, [formVersionMap]);
 
-  const getTaskFormSubmission = useCallback((taskId: string): { id: number; formVersionId: number; data: Record<string, unknown> } | null => {
-    const tf = taskFormMap.get(Number(taskId));
+  const getTaskFormSubmission = useCallback((taskId: string): { id: AnyId; formVersionId: AnyId; data: Record<string, unknown> } | null => {
+    const tf = taskFormMap.get(taskId) ?? taskFormMap.get(Number(taskId));
     if (!tf) return null;
 
     let parsedData: Record<string, unknown> = {};
@@ -685,6 +668,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       filters,
       hasActiveFilters,
       availableAssignees,
+      changeTaskStatus,
+      markTaskDone,
       getFormSchema,
       getTaskFormSubmission,
       getFormVersionId,

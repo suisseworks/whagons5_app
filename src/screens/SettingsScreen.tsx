@@ -20,7 +20,6 @@ import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { VERSION_DISPLAY } from '../config/version';
 import { useData } from '../context/DataContext';
-import { clearAllData } from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 type SettingsNavProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
@@ -90,7 +89,6 @@ export const SettingsScreen: React.FC = () => {
           onPress: async () => {
             setIsSwitching(true);
             try {
-              await clearAllData();
               const { tenants, firebaseIdToken } = await switchTenant();
               navigation.dispatch(
                 CommonActions.reset({
@@ -119,7 +117,6 @@ export const SettingsScreen: React.FC = () => {
           text: 'Logout',
           style: 'destructive',
           onPress: async () => {
-            await clearAllData();
             await logout();
             navigation.dispatch(
               CommonActions.reset({

@@ -13,15 +13,15 @@ export interface TaskItem {
   priority: 'Low' | 'Medium' | 'High';
   status: string;
   statusColor?: string | null;
-  statusId?: number | null;
-  categoryId?: number | null;
+  statusId?: string | number | null;
+  categoryId?: string | number | null;
   assignees: string[];
   createdAt: string;
   tags: string[];
   approval?: string | null;
   sla?: string | null;
   /** Form ID linked via task's template (null if no form) */
-  formId?: number | null;
+  formId?: string | number | null;
   /** Name of the form linked to this task */
   formName?: string | null;
 }
@@ -87,7 +87,7 @@ export type RootStackParamList = {
   Notifications: undefined;
   Settings: undefined;
   Themes: undefined;
-  BoardDetail: { boardId: number };
+  BoardDetail: { boardId: string | number };
 };
 
 export type MainTabParamList = {

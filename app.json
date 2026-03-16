@@ -32,13 +32,6 @@
       "bundler": "metro"
     },
     "plugins": [
-      [
-        "expo-image-picker",
-        {
-          "photosPermission": "The app accesses your photos to let you attach images to tasks.",
-          "cameraPermission": "The app accesses your camera to let you take photos for tasks."
-        }
-      ],
       "./node_modules/@react-native-firebase/app/app.plugin.js",
       "./node_modules/@react-native-firebase/auth/app.plugin.js",
       "./node_modules/@react-native-firebase/messaging/app.plugin.js",

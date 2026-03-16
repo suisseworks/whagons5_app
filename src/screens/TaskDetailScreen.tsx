@@ -6,26 +6,41 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Image,
   Alert,
   Modal,
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from '../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
+import { useTenant } from '../hooks/useTenant';
 import { RootStackParamList } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
-import { apiClient, TaskNoteResponse } from '../services/apiClient';
 import { priorityColor, statusColor, getInitials } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+
+/** Shape for a task note (matches Convex doc + mapped fields) */
+interface TaskNoteResponse {
+  _id?: string;
+  id?: string | number;
+  uuid?: string;
+  taskId?: string;
+  task_id?: number;
+  note: string;
+  userId?: string;
+  user_id?: number;
+  _creationTime?: number;
+  created_at?: string;
+  updated_at?: string;
+}
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -61,6 +76,7 @@ export const TaskDetailScreen: React.FC = () => {
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { setActiveTask, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId } = useTasks();
   const { subdomain, token, user: authUser } = useAuth();
+  const { tenantId } = useTenant();
   const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
@@ -93,7 +109,6 @@ export const TaskDetailScreen: React.FC = () => {
     [task, currentStatus, currentStatusColor, currentStatusId],
   );
   const [commentText, setCommentText] = useState('');
-  const [attachedImages, setAttachedImages] = useState<string[]>([]);
 
   // Form state
   const [formValues, setFormValues] = useState<Record<string, unknown>>(
@@ -102,49 +117,29 @@ export const TaskDetailScreen: React.FC = () => {
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formShowValidation, setFormShowValidation] = useState(false);
 
-  // Real comments from API
-  const [notes, setNotes] = useState<TaskNoteResponse[]>([]);
-  const [notesLoading, setNotesLoading] = useState(false);
-  const [notesError, setNotesError] = useState<string | null>(null);
+  // Real comments from Convex (live-reactive, no polling needed)
+  const rawNotes = useQuery(
+    api.taskResources.listTaskNotes,
+    tenantId && task.id ? { tenantId, taskId: task.id as any } : 'skip',
+  );
+  const createNoteMutation = useMutation(api.taskResources.createNote);
+
+  const notes: TaskNoteResponse[] = useMemo(() => {
+    if (!rawNotes) return [];
+    return rawNotes.map((n: any) => ({
+      ...n,
+      id: n._id,
+      task_id: n.taskId,
+      user_id: n.userId,
+      created_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
+      updated_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
+    }));
+  }, [rawNotes]);
+
+  const notesLoading = tenantId && task.id ? rawNotes === undefined : false;
+  const notesError: string | null = null;
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
-
-  // Fetch task notes from API
-  const fetchNotes = useCallback(async (silent = false) => {
-    if (!task.id) return;
-    if (!silent) {
-      setNotesLoading(true);
-    }
-    setNotesError(null);
-    try {
-      const result = await apiClient.getTaskNotes(task.id);
-      // Sort oldest first
-      result.sort((a, b) => {
-        const ta = new Date(a.created_at).getTime();
-        const tb = new Date(b.created_at).getTime();
-        return ta - tb;
-      });
-      setNotes(result);
-    } catch (err: any) {
-      if (!silent) {
-        console.warn('[TaskDetail] Failed to fetch notes:', err?.message);
-        setNotesError(err?.message || 'Failed to load comments');
-      }
-    } finally {
-      if (!silent) {
-        setNotesLoading(false);
-      }
-    }
-  }, [task.id]);
-
-  // Fetch notes on screen focus + poll every 15s while screen is visible
-  useFocusEffect(
-    useCallback(() => {
-      fetchNotes();
-      const interval = setInterval(() => fetchNotes(true), 15_000);
-      return () => clearInterval(interval);
-    }, [fetchNotes]),
-  );
 
   const handleStartWorking = async () => {
     const taskId = task.id;
@@ -170,10 +165,8 @@ export const TaskDetailScreen: React.FC = () => {
         .map((tu) => tu.user_id);
 
       if (!existingUserIds.includes(authUser.id)) {
-        const updatedUserIds = [...existingUserIds, authUser.id];
-        apiClient
-          .patchTask(Number(taskId), { user_ids: updatedUserIds })
-          .catch((err) => console.warn('[TaskDetail] Failed to assign user:', err));
+        // TODO: assign user via Convex mutation
+        console.log('[TaskDetail] User assignment via Convex not yet implemented');
       }
     }
 
@@ -194,89 +187,35 @@ export const TaskDetailScreen: React.FC = () => {
   const handleAddComment = async () => {
     const text = commentText.trim();
     if (!text) return;
-    if (!task.id) {
-      Alert.alert('Error', 'Cannot add comment: task ID is missing.');
-      return;
-    }
-    if (authUser?.id == null) {
-      Alert.alert('Error', 'Cannot add comment: you are not signed in.');
+    if (!task.id || !tenantId) {
+      Alert.alert('Error', 'Cannot add comment: task ID or tenant is missing.');
       return;
     }
 
     setSendingComment(true);
-    const optimistic: TaskNoteResponse = {
-      id: 0,
-      uuid: generateUUID(),
-      task_id: Number(task.id),
-      note: text,
-      user_id: authUser.id,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    // Optimistic update
-    setNotes(prev => [...prev, optimistic]);
     setCommentText('');
 
-    // Scroll to bottom after optimistic insert
-    setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 100);
-
     try {
-      const created = await apiClient.createTaskNote({
-        uuid: optimistic.uuid,
-        task_id: Number(task.id),
+      await createNoteMutation({
+        tenantId,
+        taskId: task.id as any,
         note: text,
-        user_id: authUser.id,
       });
-      // Replace optimistic entry with real server response
-      setNotes(prev => prev.map(n => (n.uuid === optimistic.uuid ? created : n)));
+      // Convex reactive query auto-updates notes — no manual state update needed
+      setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (err: any) {
-      // Remove optimistic entry on failure
-      setNotes(prev => prev.filter(n => n.uuid !== optimistic.uuid));
       Alert.alert('Error', err?.message || 'Failed to post comment');
     } finally {
       setSendingComment(false);
     }
   };
 
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-    });
+  // Form submission via Convex
+  const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
+  const updateTaskFormMutation = useMutation(api.forms.updateTaskForm);
 
-    if (!result.canceled && result.assets[0]) {
-      setAttachedImages(prev => [...prev, result.assets[0].uri]);
-    }
-  };
-
-  const takePhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (permission.status !== 'granted') {
-      Alert.alert('Permission required', 'Camera permission is required to take photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.85,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAttachedImages(prev => [...prev, result.assets[0].uri]);
-    }
-  };
-
-  const showImageOptions = () => {
-    Alert.alert('Add Photo', 'Choose an option', [
-      { text: 'Take Photo', onPress: takePhoto },
-      { text: 'Choose from Gallery', onPress: pickImage },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
-
-  // Form submission
   const handleFormSubmit = useCallback(async () => {
-    if (!formSchema || !task.formId || !task.id) return;
+    if (!formSchema || !task.formId || !task.id || !tenantId) return;
 
     // Validate required fields
     const errors = formSchema.fields.filter(
@@ -292,11 +231,16 @@ export const TaskDetailScreen: React.FC = () => {
     const formVersionId = existingSubmission?.formVersionId ?? (task.formId ? getFormVersionId(task.formId) : null) ?? 0;
     try {
       if (existingSubmission) {
-        await apiClient.updateTaskForm(existingSubmission.id, { data: formValues });
+        await updateTaskFormMutation({
+          tenantId,
+          id: existingSubmission.id as any,
+          data: formValues,
+        });
       } else {
-        await apiClient.createTaskForm({
-          task_id: Number(task.id),
-          form_version_id: formVersionId,
+        await createTaskFormMutation({
+          tenantId,
+          taskId: task.id as any,
+          formVersionId: formVersionId as any,
           data: formValues,
         });
       }
@@ -307,7 +251,7 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       setFormSubmitting(false);
     }
-  }, [formSchema, formValues, task, existingSubmission, subdomain, token]);
+  }, [formSchema, formValues, task, existingSubmission, tenantId]);
 
   const renderDetailsTab = () => (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
@@ -383,53 +327,6 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Attachments Card */}
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
-      >
-        <View style={styles.cardHeaderRow}>
-          <View style={styles.cardHeader}>
-            <MaterialIcons name="photo-library" size={20} color={colors.textSecondary} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Attachments</Text>
-            {attachedImages.length > 0 && (
-              <View style={[styles.attachmentCount, { backgroundColor: `${primaryColor}1A` }]}
-              >
-                <Text style={[styles.attachmentCountText, { color: primaryColor }]}>
-                  {attachedImages.length}
-                </Text>
-              </View>
-            )}
-          </View>
-          <TouchableOpacity onPress={showImageOptions}>
-            <MaterialIcons name="add-photo-alternate" size={24} color={primaryColor} />
-          </TouchableOpacity>
-        </View>
-
-        {attachedImages.length === 0 ? (
-          <View style={styles.emptyAttachments}>
-            <MaterialIcons name="add-a-photo" size={48} color="#E0E0E0" />
-            <Text style={styles.emptyText}>No attachments yet</Text>
-            <TouchableOpacity style={[styles.addPhotoButton, { borderColor: primaryColor }]} onPress={showImageOptions}>
-              <MaterialIcons name="add" size={20} color={primaryColor} />
-              <Text style={[styles.addPhotoText, { color: primaryColor }]}>Add Photo</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.imagesGrid}>
-            {attachedImages.map((uri, index) => (
-              <TouchableOpacity key={index} style={styles.imageContainer}>
-                <Image source={{ uri }} style={styles.attachedImage} />
-                <TouchableOpacity
-                  style={styles.removeImageButton}
-                  onPress={() => setAttachedImages(prev => prev.filter((_, i) => i !== index))}
-                >
-                  <MaterialIcons name="close" size={16} color="#FFFFFF" />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </View>
-
       {/* Timestamps Card */}
       <View style={[styles.card, styles.timestampsCard, { borderColor: cardBorder, backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.6)' : 'rgba(255, 255, 255, 0.6)' }]}
       >
@@ -499,16 +396,6 @@ export const TaskDetailScreen: React.FC = () => {
           <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
             Loading comments...
           </Text>
-        </View>
-      ) : notesError && notes.length === 0 ? (
-        <View style={styles.commentsCenter}>
-          <MaterialIcons name="error-outline" size={40} color="#BDBDBD" />
-          <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
-            {notesError}
-          </Text>
-          <TouchableOpacity onPress={() => fetchNotes()} style={styles.retryButton}>
-            <Text style={[styles.retryText, { color: primaryColor }]}>Retry</Text>
-          </TouchableOpacity>
         </View>
       ) : notes.length === 0 ? (
         <View style={styles.commentsCenter}>
@@ -870,68 +757,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
     color: '#1E2321',
-  },
-  attachmentCount: {
-    marginLeft: 8,
-    backgroundColor: 'rgba(20, 183, 163, 0.1)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  attachmentCountText: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodySemibold,
-    color: '#C77B43',
-  },
-  emptyAttachments: {
-    alignItems: 'center',
-    paddingVertical: 16,
-  },
-  emptyText: {
-    marginTop: 8,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyMedium,
-    color: '#8B8E84',
-  },
-  addPhotoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#14B7A3',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  addPhotoText: {
-    marginLeft: 4,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  imagesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 12,
-  },
-  imageContainer: {
-    width: '31%',
-    aspectRatio: 1,
-    marginRight: '2%',
-    marginBottom: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  attachedImage: {
-    width: '100%',
-    height: '100%',
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: '#F44336',
-    borderRadius: 12,
-    padding: 4,
   },
   timestampsCard: {
     borderWidth: 1,

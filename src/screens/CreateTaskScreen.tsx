@@ -6,13 +6,11 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Image,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { TaskItem } from '../models/types';
@@ -33,7 +31,6 @@ export const CreateTaskScreen: React.FC = () => {
   const [assignees, setAssignees] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
-  const [attachedImages, setAttachedImages] = useState<string[]>([]);
   const [showPriorityDropdown, setShowPriorityDropdown] = useState(false);
 
   const handleCreateTask = () => {
@@ -73,41 +70,6 @@ export const CreateTaskScreen: React.FC = () => {
       setTags(prev => [...prev, tagInput.trim()]);
       setTagInput('');
     }
-  };
-
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAttachedImages(prev => [...prev, result.assets[0].uri]);
-    }
-  };
-
-  const takePhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (permission.status !== 'granted') {
-      Alert.alert('Permission required', 'Camera permission is required to take photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.85,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAttachedImages(prev => [...prev, result.assets[0].uri]);
-    }
-  };
-
-  const showImageOptions = () => {
-    Alert.alert('Add Photo', 'Choose an option', [
-      { text: 'Take Photo', onPress: takePhoto },
-      { text: 'Choose from Gallery', onPress: pickImage },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
   };
 
   return (
@@ -240,48 +202,6 @@ export const CreateTaskScreen: React.FC = () => {
           </View>
         )}
 
-        {/* Attachments */}
-        <Text style={[styles.label, { color: colors.text }]}>Attachments</Text>
-        <View style={[styles.attachmentsCard, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' }]}
-        >
-          {attachedImages.length === 0 ? (
-            <View style={styles.emptyAttachments}>
-              <MaterialIcons name="add-a-photo" size={48} color="#E0E0E0" />
-              <Text style={styles.emptyText}>No attachments yet</Text>
-              <TouchableOpacity style={[styles.addPhotoButton, { borderColor: primaryColor }]} onPress={showImageOptions}>
-                <MaterialIcons name="add" size={20} color={primaryColor} />
-                <Text style={[styles.addPhotoText, { color: primaryColor }]}>Add Photo</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              <View style={styles.attachmentsHeader}>
-                <View style={styles.attachmentsHeaderLeft}>
-                  <MaterialIcons name="photo-library" size={20} color={colors.textSecondary} />
-                  <Text style={[styles.attachmentsCount, { color: colors.text }]}>
-                    {attachedImages.length} photo{attachedImages.length !== 1 ? 's' : ''}
-                  </Text>
-                </View>
-                <TouchableOpacity onPress={showImageOptions}>
-                  <MaterialIcons name="add-photo-alternate" size={24} color={primaryColor} />
-                </TouchableOpacity>
-              </View>
-              <View style={styles.imagesGrid}>
-                {attachedImages.map((uri, index) => (
-                  <View key={index} style={styles.imageContainer}>
-                    <Image source={{ uri }} style={styles.attachedImage} />
-                    <TouchableOpacity
-                      style={styles.removeImageButton}
-                      onPress={() => setAttachedImages(prev => prev.filter((_, i) => i !== index))}
-                    >
-                      <MaterialIcons name="close" size={16} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  </View>
-                ))}
-              </View>
-            </>
-          )}
-        </View>
       </ScrollView>
 
       {/* Create Button */}
@@ -414,77 +334,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
     color: '#1E2321',
-  },
-  attachmentsCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    padding: 16,
-  },
-  emptyAttachments: {
-    alignItems: 'center',
-    paddingVertical: 16,
-  },
-  emptyText: {
-    marginTop: 8,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyMedium,
-    color: '#8B8E84',
-  },
-  addPhotoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#14B7A3',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  addPhotoText: {
-    marginLeft: 4,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  attachmentsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  attachmentsHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  attachmentsCount: {
-    marginLeft: 8,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
-    color: '#1E2321',
-  },
-  imagesGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  imageContainer: {
-    width: '31%',
-    aspectRatio: 1,
-    marginRight: '2%',
-    marginBottom: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  attachedImage: {
-    width: '100%',
-    height: '100%',
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: '#F44336',
-    borderRadius: 12,
-    padding: 4,
   },
   footer: {
     padding: 16,
