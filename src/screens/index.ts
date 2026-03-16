@@ -10,3 +10,4 @@ export { SettingsScreen } from './SettingsScreen';
 export { ThemesScreen } from './ThemesScreen';
 export { BoardDetailScreen } from './BoardDetailScreen';
 export { TenantSelectScreen } from './TenantSelectScreen';
+export { SpotsMapScreen } from './SpotsMapScreen';

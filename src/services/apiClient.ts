@@ -37,7 +37,9 @@ export class ApiClient {
 
   private getHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
+      Accept: 'application/json',
       'Content-Type': 'application/json',
+      'X-Requested-With': 'XMLHttpRequest',
       ...getTenantHeaders(this.subdomain),
     };
     if (this.authToken) {
@@ -577,6 +579,49 @@ export class ApiClient {
     if (!response.ok) {
       throw new Error(`Failed to delete workspace chat message: ${response.status}`);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Spot endpoints (tenant-level: /api/spots)
+  // ---------------------------------------------------------------------------
+
+  /** Fetch all spots. */
+  async getSpots(): Promise<any[]> {
+    const url = `${this.baseUrl}/spots`;
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: this.getHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch spots: ${response.status}`);
+    }
+
+    const json = await response.json();
+    const items = json.data ?? json;
+    return Array.isArray(items) ? items : [];
+  }
+
+  /** Update a spot's GPS coordinates (PATCH /api/spots/:id). */
+  async updateSpotLocation(
+    spotId: number,
+    latitude: number,
+    longitude: number,
+  ): Promise<any> {
+    const url = `${this.baseUrl}/spots/${spotId}`;
+    const response = await fetch(url, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ latitude, longitude }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to update spot location: ${response.status} ${body}`);
+    }
+
+    const json = await response.json();
+    return json.data ?? json;
   }
 
   setAuthToken(token: string): void {

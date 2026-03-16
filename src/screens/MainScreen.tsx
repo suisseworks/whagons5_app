@@ -512,6 +512,13 @@ export const MainScreen: React.FC = () => {
         <View style={styles.appBarActions}>
           <TouchableOpacity
             style={styles.iconButton}
+            onPress={() => navigation.navigate('SpotsMap')}
+          >
+            <MaterialIcons name="map" size={22} color={colors.textSecondary} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.iconButton}
             onPress={() => setFilterSheetVisible(true)}
           >
             <MaterialIcons

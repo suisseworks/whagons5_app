@@ -24,6 +24,8 @@ export interface TaskItem {
   formId?: number | null;
   /** Name of the form linked to this task */
   formName?: string | null;
+  /** Per-user flag color (null = not flagged) */
+  flagColor?: string | null;
 }
 
 // Notification item model
@@ -88,6 +90,7 @@ export type RootStackParamList = {
   Settings: undefined;
   Themes: undefined;
   BoardDetail: { boardId: number };
+  SpotsMap: { focusSpotId?: number } | undefined;
 };
 
 export type MainTabParamList = {

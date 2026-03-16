@@ -25,6 +25,15 @@ const PRIORITIES: { label: string; color: string }[] = [
   { label: 'Low', color: '#6B7280' },
 ];
 
+const FLAG_COLOR_OPTIONS: { value: string; label: string; color: string }[] = [
+  { value: 'red', label: 'Red', color: '#ef4444' },
+  { value: 'orange', label: 'Orange', color: '#f97316' },
+  { value: 'yellow', label: 'Yellow', color: '#eab308' },
+  { value: 'green', label: 'Green', color: '#22c55e' },
+  { value: 'blue', label: 'Blue', color: '#3b82f6' },
+  { value: 'purple', label: 'Purple', color: '#a855f7' },
+];
+
 export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClose }) => {
   const { isDarkMode, primaryColor, colors } = useTheme();
   const { filters, setFilters, statuses, availableAssignees } = useTasks();
@@ -64,6 +73,15 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
     }));
   }, []);
 
+  const toggleFlagColor = useCallback((color: string) => {
+    setDraft((prev) => ({
+      ...prev,
+      flagColors: prev.flagColors.includes(color)
+        ? prev.flagColors.filter((c) => c !== color)
+        : [...prev.flagColors, color],
+    }));
+  }, []);
+
   const handleApply = useCallback(() => {
     setFilters(draft);
     onClose();
@@ -75,7 +93,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
   }, [setFilters, onClose]);
 
   const draftHasFilters =
-    draft.statuses.length > 0 || draft.priorities.length > 0 || draft.assignees.length > 0;
+    draft.statuses.length > 0 || draft.priorities.length > 0 || draft.assignees.length > 0 || draft.flagColors.length > 0;
 
   return (
     <Modal
@@ -255,6 +273,54 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
                 </View>
               </>
             )}
+
+            {/* Flag section */}
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary, marginTop: spacing.md }]}>
+              Flag
+            </Text>
+            <View style={styles.chipGrid}>
+              {FLAG_COLOR_OPTIONS.map(({ label, color, value }) => {
+                const selected = draft.flagColors.includes(value);
+                return (
+                  <TouchableOpacity
+                    key={value}
+                    style={[
+                      styles.chip,
+                      {
+                        borderColor: selected
+                          ? color
+                          : isDarkMode ? 'rgba(255,255,255,0.12)' : '#E0DBD2',
+                        backgroundColor: selected
+                          ? `${color}18`
+                          : isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5F0',
+                      },
+                    ]}
+                    onPress={() => toggleFlagColor(value)}
+                    activeOpacity={0.7}
+                  >
+                    <MaterialIcons
+                      name="flag"
+                      size={14}
+                      color={selected ? color : colors.textSecondary}
+                      style={{ marginRight: 2 }}
+                    />
+                    <Text
+                      style={[
+                        styles.chipText,
+                        { color: selected ? colors.text : colors.textSecondary },
+                        selected && { fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {label}
+                    </Text>
+                    {selected && (
+                      <MaterialIcons name="check" size={14} color={color} style={{ marginLeft: 2 }} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
             {/* Bottom spacer */}
             <View style={{ height: spacing.lg }} />

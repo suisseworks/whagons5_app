@@ -92,6 +92,7 @@ function mapTaskToItem(
     sla: null,
     formId: formInfo?.formId ?? null,
     formName: formInfo?.formName ?? null,
+    flagColor: (task as any).flag_color ?? null,
   };
 }
 
@@ -130,12 +131,14 @@ export interface TaskFilters {
   statuses: string[];          // status names to include (empty = all)
   priorities: string[];        // 'Low' | 'Medium' | 'High' (empty = all)
   assignees: string[];         // user names to include (empty = all)
+  flagColors: string[];        // flag colors to include (empty = all)
 }
 
 export const emptyFilters: TaskFilters = {
   statuses: [],
   priorities: [],
   assignees: [],
+  flagColors: [],
 };
 
 /** Parsed form schema matching the web client's FormVersion.fields structure */
@@ -383,7 +386,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
   // Step 2: Filter by workspace + user filters
   // ---------------------------------------------------------------------------
-  const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0;
+  const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0;
 
   const filteredTasks = useMemo(() => {
     if (allMappedTasks.length === 0) return staticTasks;
@@ -406,11 +409,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const statusSet = filters.statuses.length > 0 ? new Set(filters.statuses) : null;
       const prioritySet = filters.priorities.length > 0 ? new Set(filters.priorities) : null;
       const assigneeSet = filters.assignees.length > 0 ? new Set(filters.assignees) : null;
+      const flagColorSet = filters.flagColors.length > 0 ? new Set(filters.flagColors) : null;
 
       result = result.filter((t) => {
         if (statusSet && !statusSet.has(t.status)) return false;
         if (prioritySet && !prioritySet.has(t.priority)) return false;
         if (assigneeSet && !t.assignees.some((a) => assigneeSet.has(a))) return false;
+        if (flagColorSet && (!t.flagColor || !flagColorSet.has(t.flagColor))) return false;
         return true;
       });
     }

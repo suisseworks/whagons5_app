@@ -99,6 +99,23 @@ export interface SyncedStatusTransition {
 export interface SyncedSpot {
   id: number;
   name: string;
+  alias?: string | null;
+  parent_id?: number | null;
+  spot_type_id?: number | null;
+  is_branch?: boolean;
+  latitude?: number | null;
+  longitude?: number | null;
+  cleaning_status_id?: number | null;
+  current_cleaning_task_id?: number | null;
+  last_cleaned_by?: number | null;
+  last_cleaned_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface SyncedSpotType {
+  id: number;
+  name: string;
+  color?: string | null;
   [key: string]: unknown;
 }
 
@@ -295,6 +312,7 @@ export interface SyncedData {
   statusTransitionGroups: SyncedStatusTransitionGroup[];
   statusTransitions: SyncedStatusTransition[];
   spots: SyncedSpot[];
+  spotTypes: SyncedSpotType[];
   users: SyncedUser[];
   teams: SyncedTeam[];
   tags: SyncedTag[];
@@ -345,6 +363,7 @@ const EMPTY_DATA: SyncedData = {
   statusTransitionGroups: [],
   statusTransitions: [],
   spots: [],
+  spotTypes: [],
   users: [],
   teams: [],
   tags: [],
@@ -423,6 +442,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         statusTransitionGroups,
         statusTransitions,
         spots,
+        spotTypes,
         users,
         teams,
         tags,
@@ -450,6 +470,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         DB.getAllRows<SyncedStatusTransitionGroup>('wh_status_transition_groups'),
         DB.getAllRows<SyncedStatusTransition>('wh_status_transitions'),
         DB.getAllRows<SyncedSpot>('wh_spots'),
+        DB.getAllRows<SyncedSpotType>('wh_spot_types'),
         DB.getAllRows<SyncedUser>('wh_users'),
         DB.getAllRows<SyncedTeam>('wh_teams'),
         DB.getAllRows<SyncedTag>('wh_tags'),
@@ -479,6 +500,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         statusTransitionGroups,
         statusTransitions,
         spots,
+        spotTypes,
         users,
         teams,
         tags,
