@@ -14,7 +14,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.whagons.app5",
+      "bundleIdentifier": "com.whagons.v5",
       "googleServicesFile": "./GoogleService-Info.plist"
     },
     "android": {
@@ -22,7 +22,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A3B30"
       },
-      "package": "com.whagons.app5",
+      "package": "com.whagons.v5",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "googleServicesFile": "./google-services.json"

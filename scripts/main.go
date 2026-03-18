@@ -36,7 +36,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.Flags().StringVarP(&config.PackageName, "package", "p", "com.whagons.app5", "Android package name")
+	rootCmd.Flags().StringVarP(&config.PackageName, "package", "p", "com.whagons.v5", "Android package name")
 	rootCmd.Flags().StringVarP(&config.ServiceAccountPath, "service-account", "s", "whagons5-service-account.json", "Path to service account JSON file")
 	rootCmd.Flags().StringVarP(&config.BundlePath, "bundle", "b", "", "Path to the app bundle (.aab file)")
 	rootCmd.Flags().StringVarP(&config.Track, "track", "t", "internal", "Release track (internal, alpha, beta, production)")
