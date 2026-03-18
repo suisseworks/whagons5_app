@@ -595,6 +595,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     console.log('[DataContext] runSync: starting...');
     setIsSyncing(true);
+    // Set isInitialSync eagerly if we have no data yet, so the loading screen
+    // shows immediately instead of briefly flashing the task list
+    if (!hasEverSynced || data.tasks.length === 0) {
+      setIsInitialSync(true);
+    }
     setSyncError(null);
 
     try {

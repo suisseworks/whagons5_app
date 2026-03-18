@@ -12,7 +12,8 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { MaterialIcons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { FaIcon } from '../components/FaIcon';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTheme } from '../context/ThemeContext';
@@ -322,6 +323,11 @@ export const TaskDetailScreen: React.FC = () => {
       {task.id && (
         <Text style={[styles.taskId, { color: colors.textSecondary }]}>#{task.id}</Text>
       )}
+      {!!task.description && (
+        <Text style={[styles.descriptionText, { color: colors.textSecondary }]}>
+          {task.description}
+        </Text>
+      )}
 
       <View style={styles.statusRow}>
         {currentStatus !== '' && (
@@ -361,12 +367,16 @@ export const TaskDetailScreen: React.FC = () => {
           <Text style={[styles.cardTitle, { color: colors.text }]}>Assignees</Text>
         </View>
         <View style={styles.chipsRow}>
-          {task.assignees.map((name, index) => (
+          {task.assignees.map((assignee, index) => (
             <View key={index} style={styles.assigneeChip}>
-              <View style={styles.assigneeAvatar}>
-                <Text style={styles.assigneeInitial}>{getInitials(name)}</Text>
-              </View>
-              <Text style={[styles.assigneeName, { color: colors.text }]}>{name}</Text>
+              {assignee.picture ? (
+                <Image source={{ uri: assignee.picture }} style={styles.assigneeAvatarImage} />
+              ) : (
+                <View style={styles.assigneeAvatar}>
+                  <Text style={styles.assigneeInitial}>{getInitials(assignee.name)}</Text>
+                </View>
+              )}
+              <Text style={[styles.assigneeName, { color: colors.text }]}>{assignee.name}</Text>
             </View>
           ))}
         </View>
@@ -386,12 +396,14 @@ export const TaskDetailScreen: React.FC = () => {
               const bgColor = info?.color || '#6B7280';
               const textColor = contrastTextColor(bgColor);
               const iconClass = info?.icon;
-              const { name: iconName, solid } = iconClass
+              const { name: iconName, solid, brand } = iconClass
                 ? parseWorkspaceIcon(iconClass)
-                : { name: 'tag', solid: true };
+                : { name: 'tag', solid: true, brand: false };
               return (
                 <View key={index} style={{ marginRight: 6, marginBottom: 6, flexDirection: 'row', alignItems: 'center', backgroundColor: bgColor, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
-                  <FontAwesome5 name={iconName} size={11} color={textColor} solid={solid} style={{ marginRight: 5 }} />
+                  <View style={{ marginRight: 5 }}>
+                    <FaIcon name={iconName} size={11} color={textColor} solid={solid} brand={brand} />
+                  </View>
                   <Text style={{ fontSize: 13, fontFamily: 'Montserrat_500Medium', color: textColor }}>{tag}</Text>
                 </View>
               );
@@ -399,53 +411,6 @@ export const TaskDetailScreen: React.FC = () => {
           </View>
         </View>
       )}
-
-      {/* Attachments Card */}
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
-      >
-        <View style={styles.cardHeaderRow}>
-          <View style={styles.cardHeader}>
-            <MaterialIcons name="photo-library" size={20} color={colors.textSecondary} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Attachments</Text>
-            {attachedImages.length > 0 && (
-              <View style={[styles.attachmentCount, { backgroundColor: `${primaryColor}1A` }]}
-              >
-                <Text style={[styles.attachmentCountText, { color: primaryColor }]}>
-                  {attachedImages.length}
-                </Text>
-              </View>
-            )}
-          </View>
-          <TouchableOpacity onPress={showImageOptions}>
-            <MaterialIcons name="add-photo-alternate" size={24} color={primaryColor} />
-          </TouchableOpacity>
-        </View>
-
-        {attachedImages.length === 0 ? (
-          <View style={styles.emptyAttachments}>
-            <MaterialIcons name="add-a-photo" size={48} color="#E0E0E0" />
-            <Text style={styles.emptyText}>No attachments yet</Text>
-            <TouchableOpacity style={[styles.addPhotoButton, { borderColor: primaryColor }]} onPress={showImageOptions}>
-              <MaterialIcons name="add" size={20} color={primaryColor} />
-              <Text style={[styles.addPhotoText, { color: primaryColor }]}>Add Photo</Text>
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <View style={styles.imagesGrid}>
-            {attachedImages.map((uri, index) => (
-              <TouchableOpacity key={index} style={styles.imageContainer}>
-                <Image source={{ uri }} style={styles.attachedImage} />
-                <TouchableOpacity
-                  style={styles.removeImageButton}
-                  onPress={() => setAttachedImages(prev => prev.filter((_, i) => i !== index))}
-                >
-                  <MaterialIcons name="close" size={16} color="#FFFFFF" />
-                </TouchableOpacity>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </View>
 
       {/* Timestamps Card */}
       <View style={[styles.card, styles.timestampsCard, { borderColor: cardBorder, backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.6)' : 'rgba(255, 255, 255, 0.6)' }]}
@@ -831,6 +796,12 @@ const styles = StyleSheet.create({
   taskId: {
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
+    marginBottom: 4,
+  },
+  descriptionText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    lineHeight: 20,
     marginBottom: 12,
   },
   statusRow: {
@@ -880,12 +851,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   assigneeAvatar: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: '#E0E0E0',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  assigneeAvatarImage: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
   },
   assigneeInitial: {
     fontSize: fontSizes.xs,

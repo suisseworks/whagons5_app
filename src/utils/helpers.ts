@@ -1,25 +1,26 @@
 // Parse FontAwesome class string from backend (e.g. "fas fa-broom") into
-// a name usable by @expo/vector-icons FontAwesome5 and a solid/regular flag.
+// a name and solid/brand flag for use with the FaIcon component (FA6 Pro).
 export const parseWorkspaceIcon = (
   iconStr?: string | null,
-): { name: string; solid: boolean } => {
-  if (!iconStr) return { name: 'building', solid: false };
+): { name: string; solid: boolean; brand: boolean } => {
+  if (!iconStr) return { name: 'building', solid: false, brand: false };
 
   // Extract prefix (fas/far/fab) and icon name (fa-xxx)
   const parts = iconStr.trim().split(/\s+/);
   let solid = true;
+  let brand = false;
   let name = 'building';
 
   for (const part of parts) {
-    if (part === 'far') solid = false;
-    else if (part === 'fas') solid = true;
-    else if (part === 'fab') solid = false;
+    if (part === 'far') { solid = false; brand = false; }
+    else if (part === 'fas') { solid = true; brand = false; }
+    else if (part === 'fab') { solid = false; brand = true; }
     else if (part.startsWith('fa-')) {
       name = part.replace('fa-', '');
     }
   }
 
-  return { name, solid };
+  return { name, solid, brand };
 };
 
 // Default workspace color fallback

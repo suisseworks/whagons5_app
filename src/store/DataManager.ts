@@ -44,6 +44,8 @@ export interface SyncProgress {
   percent: number;
   /** Whether this is the initial full sync (no cursor) */
   isInitialSync: boolean;
+  /** Human-readable description of the current sync step */
+  step?: string;
 }
 
 /** Callback invoked after sync completes so the UI can refresh. */
@@ -135,11 +137,29 @@ export class DataManager {
   }
 
   private async _doSync(): Promise<SyncResult> {
+    const isInitialSync = !await DB.getMeta(this.cursorKey()).catch(() => null);
+
+    // Emit progress immediately so UI shows the sync screen right away
+    this.notifyProgress({
+      processed: 0,
+      total: 0,
+      percent: -1,
+      isInitialSync,
+      step: 'Initializing',
+    });
+
     await DB.initDb();
 
     const baseUrl = buildBaseUrl(this.subdomain);
 
     // 1. Bootstrap
+    this.notifyProgress({
+      processed: 0,
+      total: 0,
+      percent: -1,
+      isInitialSync,
+      step: 'Connecting to server',
+    });
     try {
       await fetch(`${baseUrl}/bootstrap`, {
         method: 'GET',
@@ -159,6 +179,13 @@ export class DataManager {
     // Check if we have local data (must have tasks AND reference tables)
     let hasLocalData = false;
     let taskCount = 0;
+    this.notifyProgress({
+      processed: 0,
+      total: 0,
+      percent: -1,
+      isInitialSync: !cursor,
+      step: 'Checking local data',
+    });
     try {
       const counts = await Promise.all([
         DB.getRowCount('wh_tasks'),
@@ -194,6 +221,13 @@ export class DataManager {
     }
 
     // 3. Stream sync
+    this.notifyProgress({
+      processed: 0,
+      total: 0,
+      percent: -1,
+      isInitialSync: !cursor || !hasLocalData,
+      step: 'Downloading data',
+    });
     const syncCursor = hasLocalData ? cursor ?? undefined : undefined;
     const result = await this.syncStream(syncCursor);
 
@@ -288,6 +322,7 @@ export class DataManager {
           total: totalRecords,
           percent: totalRecords > 0 ? 0 : -1,
           isInitialSync,
+          step: totalRecords > 0 ? 'Syncing records' : 'Preparing sync',
         });
         return;
       }
@@ -352,6 +387,7 @@ export class DataManager {
           total: totalRecords,
           percent: Math.min(99, Math.round((processedRecords / totalRecords) * 100)),
           isInitialSync,
+          step: 'Syncing records',
         });
       }
 
@@ -451,6 +487,7 @@ export class DataManager {
         total: totalRecords || processedRecords,
         percent: 100,
         isInitialSync,
+        step: 'Finalizing',
       });
 
       console.log(`[DataManager] syncStream done. touched=${Array.from(touchedTables).join(',')} doneReceived=${doneReceived}`);

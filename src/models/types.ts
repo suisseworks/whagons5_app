@@ -6,16 +6,22 @@ export interface NavItem {
 }
 
 // Task item model
+export interface Assignee {
+  name: string;
+  picture?: string | null;
+}
+
 export interface TaskItem {
   id?: string;
   title: string;
+  description?: string | null;
   spot: string;
   priority: 'Low' | 'Medium' | 'High';
   status: string;
   statusColor?: string | null;
   statusId?: number | null;
   categoryId?: number | null;
-  assignees: string[];
+  assignees: Assignee[];
   createdAt: string;
   tags: string[];
   approval?: string | null;

@@ -1,6 +1,7 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { MaterialIcons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import React, { useCallback, useRef } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, Animated } from 'react-native';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { FaIcon } from './FaIcon';
 import { TaskItem, CardDensity } from '../models/types';
 import { CustomChip } from './CustomChip';
 import { AssigneeAvatars } from './AssigneeAvatars';
@@ -41,20 +42,40 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
   const spotTextColor = isDarkMode ? 'rgba(244, 241, 234, 0.7)' : '#666';
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
 
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = useCallback(() => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.97,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 4,
+    }).start();
+  }, [scaleAnim]);
+
+  const handlePressOut = useCallback(() => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      speed: 50,
+      bounciness: 4,
+    }).start();
+  }, [scaleAnim]);
+
   return (
-    <TouchableOpacity
-      style={[
-        styles.card,
-        {
-          backgroundColor: colors.surface,
-          borderLeftColor: statusColor(task.status, task.statusColor),
-          borderColor,
-        },
-      ]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      {/* Line 1: Flag icon + Title + overflow menu */}
+    <Pressable onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut}>
+      <Animated.View
+        style={[
+          styles.card,
+          {
+            backgroundColor: colors.surface,
+            borderLeftColor: statusColor(task.status, task.statusColor),
+            borderColor,
+            transform: [{ scale: scaleAnim }],
+          },
+        ]}
+      >
+      {/* Line 1: Flag icon + Title */}
       <View style={styles.titleRow}>
         {flagHex && (
           <MaterialCommunityIcons
@@ -67,8 +88,15 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
           {task.title}
         </Text>
-        <MaterialIcons name="more-vert" size={20} color={mutedText} style={styles.menuIcon} />
+
       </View>
+
+      {/* Description preview (only in detailed mode) */}
+      {effectiveDensity === 'detailed' && !!task.description && (
+        <Text style={[styles.descriptionPreview, { color: mutedText }]} numberOfLines={2}>
+          {task.description}
+        </Text>
+      )}
 
       {/* Line 2: Priority + location + form icon + assignee avatars */}
       <View style={styles.infoRow}>
@@ -130,19 +158,22 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
             const bgColor = info?.color || '#6B7280';
             const textColor = contrastTextColor(bgColor);
             const iconClass = info?.icon;
-            const { name: iconName, solid } = iconClass
+            const { name: iconName, solid, brand } = iconClass
               ? parseWorkspaceIcon(iconClass)
-              : { name: 'tag', solid: true };
+              : { name: 'tag', solid: true, brand: false };
             return (
               <View key={tag} style={[styles.tagChip, { backgroundColor: bgColor }]}>
-                <FontAwesome5 name={iconName} size={9} color={textColor} solid={solid} style={styles.tagChipIcon} />
+                <View style={styles.tagChipIcon}>
+                  <FaIcon name={iconName} size={9} color={textColor} solid={solid} brand={brand} />
+                </View>
                 <Text style={[styles.tagText, { color: textColor }]}>{tag}</Text>
               </View>
             );
           })}
         </ScrollView>
       )}
-    </TouchableOpacity>
+      </Animated.View>
+    </Pressable>
   );
 });
 
@@ -170,8 +201,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
   },
-  menuIcon: {
-    flexShrink: 0,
+  descriptionPreview: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+    lineHeight: 17,
+    marginTop: 2,
   },
   infoRow: {
     flexDirection: 'row',
