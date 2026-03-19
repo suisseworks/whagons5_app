@@ -46,6 +46,7 @@ import { useTasks } from '../context/TaskContext';
 import { useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
+import { useConvexUpload } from '../hooks/useConvexUpload';
 import { apiClient } from '../services/apiClient';
 import * as DB from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -333,6 +334,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const { tenantId } = useTenant();
   const { selectedWorkspace, workspaceObjects } = useTasks();
   const markAsReadMutation = useMutation(api.chat.markAsRead);
+  const cvxSendMessage = useMutation(api.chat.sendMessage);
+  const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
@@ -657,6 +660,32 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       }
     }
   }, [activeConversationId, conversationMessages.length, data.conversations, tenantId, markAsReadMutation]);
+
+  // Attach file to conversation
+  const handleAttachFile = useCallback(async () => {
+    if (!activeConversationId || !currentUserId || !tenantId) return;
+    const attachments = await pickAndUpload();
+    if (attachments.length === 0) return;
+    // Send each attachment as a markdown-style link message
+    for (const a of attachments) {
+      const uuid = generateUUID();
+      const now = new Date().toISOString();
+      // Get the Convex serving URL
+      const convexUrl = `{{convex-file:${a.storageId}}}`;
+      const text = a.fileType.startsWith('image/')
+        ? `![${a.fileName}](${convexUrl})`
+        : `[${a.fileName}](${convexUrl})`;
+      try {
+        const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
+        const convexConvId = (conv as any)?._id;
+        if (tenantId && convexConvId) {
+          await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
+        }
+      } catch {
+        Alert.alert('Error', `Failed to send ${a.fileName}`);
+      }
+    }
+  }, [activeConversationId, currentUserId, tenantId, data.conversations, pickAndUpload]);
 
   // Send message (DM/group)
   const handleSendConversationMessage = useCallback(async () => {
@@ -1285,6 +1314,17 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           },
         ]}
       >
+        <TouchableOpacity
+          style={{ padding: 8 }}
+          onPress={handleAttachFile}
+          disabled={uploadingFile}
+        >
+          {uploadingFile ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
+          )}
+        </TouchableOpacity>
         <TextInput
           style={[
             styles.textInput,
@@ -1325,7 +1365,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         </TouchableOpacity>
       </View>
     ),
-    [inputText, isSending, primaryColor, isDarkMode, colors, insets.bottom],
+    [inputText, isSending, primaryColor, isDarkMode, colors, insets.bottom, handleAttachFile, uploadingFile],
   );
 
   // ---------------------------------------------------------------------------

@@ -23,7 +23,11 @@ import { useAuth } from '../context/AuthContext';
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { getInitials } from '../utils/helpers';
-import { buildBaseUrl, getTenantHeaders } from '../config/api';
+import { ActivityIndicator } from 'react-native';
+import { useMutation } from 'convex/react';
+import { api } from '../../convex/_generated/api';
+import { useTenant } from '../hooks/useTenant';
+import { useConvexUpload } from '../hooks/useConvexUpload';
 
 type BoardDetailRouteProp = RouteProp<RootStackParamList, 'BoardDetail'>;
 type BoardDetailNavProp = NativeStackNavigationProp<RootStackParamList, 'BoardDetail'>;
@@ -35,6 +39,9 @@ export const BoardDetailScreen: React.FC = () => {
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { data, isSyncing, refresh } = useData();
   const { token, subdomain } = useAuth();
+  const { tenantId } = useTenant();
+  const createBoardMessage = useMutation(api.boards.createMessage);
+  const { pickAndUpload, uploading: uploadingAttachment } = useConvexUpload();
 
   const { boardId } = route.params;
 
@@ -91,38 +98,52 @@ export const BoardDetailScreen: React.FC = () => {
   };
 
   const handleSendMessage = useCallback(async () => {
-    if (!messageInput.trim() || isSending) return;
+    if (!messageInput.trim() || isSending || !tenantId) return;
 
     setIsSending(true);
     try {
-      const baseUrl = buildBaseUrl(subdomain ?? undefined);
-      const response = await fetch(`${baseUrl}/board-messages`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-          ...getTenantHeaders(subdomain ?? undefined),
-        },
-        body: JSON.stringify({
-          board_id: boardId,
-          content: messageInput.trim(),
-        }),
+      // Find the Convex _id for this board
+      const board = data.boards.find(b => b.id === boardId);
+      const convexBoardId = (board as any)?._id;
+      if (!convexBoardId) throw new Error('Board not found');
+
+      await createBoardMessage({
+        tenantId,
+        boardId: convexBoardId as any,
+        content: messageInput.trim(),
       });
-
-      if (!response.ok) {
-        const errData = await response.json().catch(() => null);
-        throw new Error(errData?.message || `Failed to send message (${response.status})`);
-      }
-
       setMessageInput('');
-      // Refresh to get the new message from the sync
-      await refresh();
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to send message');
     } finally {
       setIsSending(false);
     }
-  }, [messageInput, isSending, boardId, token, subdomain, refresh]);
+  }, [messageInput, isSending, boardId, tenantId, data.boards, createBoardMessage]);
+
+  const handleAttachFile = useCallback(async () => {
+    if (!tenantId) return;
+    const attachments = await pickAndUpload();
+    if (attachments.length === 0) return;
+
+    const board = data.boards.find(b => b.id === boardId);
+    const convexBoardId = (board as any)?._id;
+    if (!convexBoardId) return;
+
+    for (const a of attachments) {
+      const content = a.fileType.startsWith('image/')
+        ? `![${a.fileName}]({{convex-file:${a.storageId}}})`
+        : `[${a.fileName}]({{convex-file:${a.storageId}}})`;
+      try {
+        await createBoardMessage({
+          tenantId,
+          boardId: convexBoardId as any,
+          content,
+        });
+      } catch {
+        Alert.alert('Error', `Failed to send ${a.fileName}`);
+      }
+    }
+  }, [tenantId, boardId, data.boards, createBoardMessage, pickAndUpload]);
 
   const onRefresh = useCallback(async () => {
     await refresh();
@@ -278,6 +299,17 @@ export const BoardDetailScreen: React.FC = () => {
             },
           ]}
         >
+          <TouchableOpacity
+            style={{ padding: 8 }}
+            onPress={handleAttachFile}
+            disabled={uploadingAttachment}
+          >
+            {uploadingAttachment ? (
+              <ActivityIndicator size="small" color={primaryColor} />
+            ) : (
+              <MaterialIcons name="attach-file" size={22} color={primaryColor} />
+            )}
+          </TouchableOpacity>
           <TextInput
             style={[
               styles.composerInput,

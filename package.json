@@ -33,6 +33,7 @@
     "convex": "^1.33.1",
     "expo": "~54.0.33",
     "expo-camera": "~17.0.10",
+    "expo-document-picker": "~14.0.8",
     "expo-font": "~14.0.11",
     "expo-image": "~3.0.11",
     "expo-image-picker": "~17.0.10",

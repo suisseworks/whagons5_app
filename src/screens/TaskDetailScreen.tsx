@@ -10,12 +10,15 @@ import {
   Alert,
   Modal,
   ActivityIndicator,
+  PanResponder,
+  GestureResponderEvent,
+  PanResponderGestureState,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
@@ -28,6 +31,7 @@ import { CustomChip } from '../components/CustomChip';
 import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
 import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
+import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 interface TaskNoteResponse {
@@ -76,7 +80,7 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { addWorkingTask, removeWorkingTask, isTaskWorking, getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
+  const { getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
   const { subdomain, token, user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
@@ -106,7 +110,6 @@ export const TaskDetailScreen: React.FC = () => {
     [task, currentStatus, currentStatusColor, currentStatusId],
   );
   const [commentText, setCommentText] = useState('');
-  const [attachedImages, setAttachedImages] = useState<string[]>([]);
 
   const [formValues, setFormValues] = useState<Record<string, unknown>>(
     existingSubmission?.data ?? {},
@@ -138,43 +141,8 @@ export const TaskDetailScreen: React.FC = () => {
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
 
-  const isWorking = task.id ? isTaskWorking(task.id) : false;
-
-  const handleStartWorking = async () => {
-    const taskId = task.id;
-    if (!taskId) return;
-
-    const allowed = getAllowedStatuses(currentTask);
-    const inProgressStatus =
-      allowed.find((s) => /in\s*progress/i.test(s.name)) ??
-      allowed.find((s) => !s.initial && !s.final);
-
-    if (inProgressStatus && currentStatusId !== inProgressStatus.id) {
-      changeTaskStatus(taskId, inProgressStatus);
-      setCurrentStatus(inProgressStatus.name);
-      setCurrentStatusColor(inProgressStatus.color);
-      setCurrentStatusId(inProgressStatus.id);
-    }
-
-    if (authUser?.id != null) {
-      const existingUserIds = data.taskUsers
-        .filter((tu) => tu.task_id === Number(taskId))
-        .map((tu) => tu.user_id);
-
-      if (!existingUserIds.includes(authUser.id)) {
-        console.log('[TaskDetail] User assignment via Convex not yet implemented');
-      }
-    }
-
-    addWorkingTask(task);
-    navigation.goBack();
-  };
-
-  const handleStopWorking = () => {
-    if (task.id) {
-      removeWorkingTask(task.id);
-    }
-  };
+  const { pickAndUpload, uploading: uploadingAttachment } = useConvexUpload();
+  const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
 
   const handleStatusChange = (status: StatusOption) => {
     changeTaskStatus(task.id || '', status);
@@ -186,7 +154,7 @@ export const TaskDetailScreen: React.FC = () => {
 
   const handleAddComment = async () => {
     const text = commentText.trim();
-    if (!text) return;
+    if (!text && pendingAttachments.length === 0) return;
     if (!task.id || !tenantId) {
       Alert.alert('Error', 'Cannot add comment: task ID or tenant is missing.');
       return;
@@ -199,8 +167,17 @@ export const TaskDetailScreen: React.FC = () => {
       await createNoteMutation({
         tenantId,
         taskId: convexTaskId as any,
-        note: text,
+        note: text || undefined,
+        attachments: pendingAttachments.length > 0
+          ? pendingAttachments.map(a => ({
+              storageId: a.storageId as any,
+              fileName: a.fileName,
+              fileSize: a.fileSize,
+              fileType: a.fileType,
+            }))
+          : undefined,
       });
+      setPendingAttachments([]);
       setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (err: any) {
       Alert.alert('Error', err?.message || 'Failed to post comment');
@@ -209,40 +186,32 @@ export const TaskDetailScreen: React.FC = () => {
     }
   };
 
-  const pickImage = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.85,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAttachedImages(prev => [...prev, result.assets[0].uri]);
+  const handleAttach = async () => {
+    const attachments = await pickAndUpload();
+    if (attachments.length > 0) {
+      setPendingAttachments(prev => [...prev, ...attachments]);
     }
   };
 
-  const takePhoto = async () => {
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (permission.status !== 'granted') {
-      Alert.alert('Permission required', 'Camera permission is required to take photos');
-      return;
-    }
-
-    const result = await ImagePicker.launchCameraAsync({
-      quality: 0.85,
-    });
-
-    if (!result.canceled && result.assets[0]) {
-      setAttachedImages(prev => [...prev, result.assets[0].uri]);
-    }
-  };
-
-  const showImageOptions = () => {
-    Alert.alert('Add Photo', 'Choose an option', [
-      { text: 'Take Photo', onPress: takePhoto },
-      { text: 'Choose from Gallery', onPress: pickImage },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
-  };
+  // Tab swipe
+  const tabs: TabKey[] = hasForm ? ['details', 'form', 'comments'] : ['details', 'comments'];
+  const tabPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
+          Math.abs(gs.dx) > 30 && Math.abs(gs.dy) < 20,
+        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const THRESHOLD = Dimensions.get('window').width * 0.2;
+          const idx = tabs.indexOf(activeTab);
+          if (gs.dx < -THRESHOLD && idx < tabs.length - 1) {
+            setActiveTab(tabs[idx + 1]);
+          } else if (gs.dx > THRESHOLD && idx > 0) {
+            setActiveTab(tabs[idx - 1]);
+          }
+        },
+      }),
+    [activeTab, tabs],
+  );
 
   const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
   const updateTaskFormMutation = useMutation(api.forms.updateTaskForm);
@@ -508,12 +477,42 @@ export const TaskDetailScreen: React.FC = () => {
         </ScrollView>
       )}
 
+      {pendingAttachments.length > 0 && (
+        <View style={[styles.attachmentPreview, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}>
+          {pendingAttachments.map((a, i) => (
+            <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4' }]}>
+              <MaterialIcons
+                name={a.fileType.startsWith('image/') ? 'image' : 'attach-file'}
+                size={14}
+                color={colors.textSecondary}
+              />
+              <Text style={[styles.attachmentChipText, { color: colors.text }]} numberOfLines={1}>
+                {a.fileName}
+              </Text>
+              <TouchableOpacity onPress={() => setPendingAttachments(prev => prev.filter((_, j) => j !== i))}>
+                <MaterialIcons name="close" size={14} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
       <View
         style={[
           styles.commentInputContainer,
           { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
         ]}
       >
+        <TouchableOpacity
+          style={styles.attachButton}
+          onPress={handleAttach}
+          disabled={uploadingAttachment}
+        >
+          {uploadingAttachment ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
+          )}
+        </TouchableOpacity>
         <TextInput
           style={[
             styles.commentInput,
@@ -532,7 +531,7 @@ export const TaskDetailScreen: React.FC = () => {
         <TouchableOpacity
           style={[styles.sendButton, { backgroundColor: primaryColor, opacity: sendingComment ? 0.6 : 1 }]}
           onPress={handleAddComment}
-          disabled={sendingComment || !commentText.trim()}
+          disabled={sendingComment || (!commentText.trim() && pendingAttachments.length === 0)}
         >
           {sendingComment ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
@@ -582,46 +581,26 @@ export const TaskDetailScreen: React.FC = () => {
         ))}
       </View>
 
-      {activeTab === 'details' && renderDetailsTab()}
-      {activeTab === 'form' && hasForm && renderFormTab()}
-      {activeTab === 'comments' && renderCommentsTab()}
+      <View style={styles.flex} {...tabPanResponder.panHandlers}>
+        {activeTab === 'details' && renderDetailsTab()}
+        {activeTab === 'form' && hasForm && renderFormTab()}
+        {activeTab === 'comments' && renderCommentsTab()}
+      </View>
 
-      {activeTab === 'details' && (
+      {activeTab === 'details' && getAllowedStatuses(currentTask).length > 0 && (
         <View
           style={[
             styles.actionButtonsContainer,
             { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
           ]}
         >
-          {isWorking ? (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.startButton, styles.stopButton, { borderColor: primaryColor }]}
-              onPress={handleStopWorking}
-            >
-              <MaterialIcons name="stop-circle" size={20} color={primaryColor} />
-              <Text style={[styles.actionButtonText, { color: primaryColor }]}>Stop Working</Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
-              onPress={handleStartWorking}
-            >
-              <MaterialIcons name="play-circle-outline" size={20} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>Start Working</Text>
-            </TouchableOpacity>
-          )}
-
-          {getAllowedStatuses(currentTask).length > 0 && (
-            <TouchableOpacity
-              style={[styles.actionButton, styles.doneButton, { borderColor: statusColor(currentStatus, currentStatusColor) }]}
-              onPress={() => setStatusPickerVisible(true)}
-            >
-              <MaterialIcons name="swap-horiz" size={20} color={statusColor(currentStatus, currentStatusColor)} />
-              <Text style={[styles.actionButtonText, { color: statusColor(currentStatus, currentStatusColor) }]}>
-                Status
-              </Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
+            onPress={() => setStatusPickerVisible(true)}
+          >
+            <MaterialIcons name="swap-horiz" size={20} color="#FFFFFF" />
+            <Text style={styles.actionButtonText}>Change Status</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -1027,6 +1006,31 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
     color: '#1E2321',
+  },
+  attachButton: {
+    marginRight: 4,
+    padding: 8,
+  },
+  attachmentPreview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    gap: 6,
+  },
+  attachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 4,
+    maxWidth: 160,
+  },
+  attachmentChipText: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    flex: 1,
   },
   sendButton: {
     marginLeft: 8,
