@@ -17,13 +17,30 @@ export const InitialSyncScreen: React.FC = () => {
   const percent = syncProgress?.percent ?? 0;
   const processed = syncProgress?.processed ?? 0;
   const total = syncProgress?.total ?? 0;
+  const step = syncProgress?.step ?? '';
+
+  // Pre-record steps take ~5% of the bar (they're fast, <1s usually).
+  // The remaining 95% is driven by actual record count.
+  const STEP_PERCENT: Record<string, number> = {
+    'Initializing': 1,
+    'Connecting to server': 2,
+    'Checking local data': 3,
+    'Downloading data': 4,
+    'Preparing sync': 5,
+    'Syncing records': 5,
+    'Finalizing': 99,
+  };
+
+  // Once records start flowing, map 0-100% from server into 5-100% on the bar.
+  const effectivePercent = total > 0
+    ? 5 + Math.round((percent / 100) * 95)
+    : STEP_PERCENT[step] ?? 1;
 
   // Animated values
   const logoFade = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0.85)).current;
   const contentFade = useRef(new Animated.Value(0)).current;
   const barWidth = useRef(new Animated.Value(0)).current;
-  const pulseAnim = useRef(new Animated.Value(0.4)).current;
 
   // Entrance animation
   useEffect(() => {
@@ -49,59 +66,27 @@ export const InitialSyncScreen: React.FC = () => {
     ]).start();
   }, []);
 
-  // Pulse animation for indeterminate state
+  // Animate progress bar — always determinate now
   useEffect(() => {
-    if (percent < 0 || total === 0) {
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 0.7,
-            duration: 800,
-            useNativeDriver: false,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 0.4,
-            duration: 800,
-            useNativeDriver: false,
-          }),
-        ]),
-      );
-      pulse.start();
-      return () => pulse.stop();
-    }
-  }, [percent, total]);
+    Animated.timing(barWidth, {
+      toValue: effectivePercent,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  }, [effectivePercent]);
 
-  // Animate progress bar width
-  useEffect(() => {
-    if (percent >= 0 && total > 0) {
-      Animated.timing(barWidth, {
-        toValue: percent,
-        duration: 200,
-        useNativeDriver: false,
-      }).start();
-    }
-  }, [percent, total]);
+  const progressBarWidthInterp = barWidth.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+    extrapolate: 'clamp',
+  });
 
-  const progressBarWidthInterp = total > 0
-    ? barWidth.interpolate({
-        inputRange: [0, 100],
-        outputRange: ['0%', '100%'],
-        extrapolate: 'clamp',
-      })
-    : pulseAnim.interpolate({
-        inputRange: [0, 1],
-        outputRange: ['0%', '100%'],
-      });
-
-  const statusText =
-    total > 0
-      ? `${percent}%`
-      : 'Connecting...';
+  const statusText = `${effectivePercent}%`;
 
   const detailText =
     total > 0
       ? `${processed.toLocaleString()} of ${total.toLocaleString()} records`
-      : 'Preparing your workspace';
+      : step || 'Preparing your workspace';
 
   return (
     <LinearGradient

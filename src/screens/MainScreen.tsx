@@ -18,7 +18,8 @@ import {
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
+import { FaIcon } from '../components/FaIcon';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -284,7 +285,7 @@ export const MainScreen: React.FC = () => {
         t.title.toLowerCase().includes(q) ||
         t.spot.toLowerCase().includes(q) ||
         t.status.toLowerCase().includes(q) ||
-        t.assignees.some((a) => a.toLowerCase().includes(q)) ||
+        t.assignees.some((a) => a.name.toLowerCase().includes(q)) ||
         t.tags.some((tag) => tag.toLowerCase().includes(q)),
     );
   }, [tasks, searchQuery]);
@@ -366,7 +367,7 @@ export const MainScreen: React.FC = () => {
   const handleAssigneeSelect = useCallback(
     (user: { id: number; name: string }) => {
       if (assigneePickerTask?.id) {
-        if (assigneePickerTask.assignees.includes(user.name)) {
+        if (assigneePickerTask.assignees.some((a) => a.name === user.name)) {
           Alert.alert('Already Assigned', `${user.name} is already assigned to this task`);
         } else {
           assignTaskToUser(assigneePickerTask.id, user.id, user.name);
@@ -414,7 +415,7 @@ export const MainScreen: React.FC = () => {
   );
 
   const renderListHeader = () => {
-    const showKpi = hasKpiCards && showKpiPref;
+    const showKpi = hasKpiCards && showKpiPref && displayedTasks.length > 0;
     if (!showSyncPill && !showKpi) return null;
 
     const syncLabel = syncError ? 'Offline' : isSyncing ? 'Syncing' : 'Updated';
@@ -692,14 +693,14 @@ export const MainScreen: React.FC = () => {
           {(() => {
             const selWs = workspaceLookup.get(selectedWorkspace);
             const selColor = selWs?.color || DEFAULT_WORKSPACE_COLOR;
-            const { name: selIconName, solid: selSolid } = parseWorkspaceIcon(selWs?.icon);
+            const { name: selIconName, solid: selSolid, brand: selBrand } = parseWorkspaceIcon(selWs?.icon);
             const isEverything = selectedWorkspace === 'Everything';
             return (
               <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : selColor, marginRight: 6 }]}>
                 {isEverything ? (
                   <MaterialIcons name="layers" size={12} color="#FFFFFF" />
                 ) : (
-                  <FontAwesome5 name={selIconName} size={11} color="#FFFFFF" solid={selSolid} />
+                  <FaIcon name={selIconName} size={11} color="#FFFFFF" solid={selSolid} brand={selBrand} />
                 )}
               </View>
             );
@@ -822,7 +823,7 @@ export const MainScreen: React.FC = () => {
             {
               backgroundColor: colors.surface,
               borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
-              marginBottom: insets.bottom > 0 ? insets.bottom : 12,
+              marginBottom: Math.max(insets.bottom, 12),
             },
           ]}
         >
@@ -874,6 +875,20 @@ export const MainScreen: React.FC = () => {
           >
             <MaterialIcons name="add" size={28} color="#FFFFFF" />
           </TouchableOpacity>
+
+          {/* Sync status dot below FAB */}
+          <View
+            style={[
+              styles.syncDotIndicator,
+              {
+                backgroundColor: syncError
+                  ? '#ef4444'
+                  : isSyncing
+                    ? '#f59e0b'
+                    : '#22c55e',
+              },
+            ]}
+          />
         </View>
       )}
 
@@ -903,7 +918,7 @@ export const MainScreen: React.FC = () => {
             {workspaces.map((workspace, index) => {
               const wsData = workspaceLookup.get(workspace);
               const wsColor = wsData?.color || DEFAULT_WORKSPACE_COLOR;
-              const { name: iconName, solid } = parseWorkspaceIcon(wsData?.icon);
+              const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(wsData?.icon);
               const isEverything = workspace === 'Everything';
               const isSelected = workspace === selectedWorkspace;
 
@@ -921,7 +936,7 @@ export const MainScreen: React.FC = () => {
                       {isEverything ? (
                         <MaterialIcons name="layers" size={12} color="#FFFFFF" />
                       ) : (
-                        <FontAwesome5 name={iconName} size={11} color="#FFFFFF" solid={solid} />
+                        <FaIcon name={iconName} size={11} color="#FFFFFF" solid={solid} brand={wsBrand} />
                       )}
                     </View>
                     <Text
@@ -1100,7 +1115,7 @@ export const MainScreen: React.FC = () => {
             <ScrollView style={styles.assigneeScrollList} bounces={false} keyboardShouldPersistTaps="handled">
               <View style={styles.statusPickerList}>
                 {sortedUsers.map((u) => {
-                  const isAssigned = assigneePickerTask?.assignees.includes(u.name) ?? false;
+                  const isAssigned = assigneePickerTask?.assignees.some((a) => a.name === u.name) ?? false;
                   const isCurrentUser = u.id === (authUser?.id ?? 0);
                   return (
                     <TouchableOpacity
@@ -1429,6 +1444,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     ...shadows.lifted,
+  },
+  syncDotIndicator: {
+    position: 'absolute',
+    right: 39,
+    bottom: 40,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: '#FFFFFF',
   },
 
   menuModalOverlay: {

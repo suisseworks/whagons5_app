@@ -46,7 +46,7 @@ export const CreateTaskScreen: React.FC = () => {
       priority: selectedPriority,
       status: initialStatus?.name ?? '',
       statusColor: initialStatus?.color ?? null,
-      assignees: assignees.length > 0 ? assignees : ['Unassigned'],
+      assignees: assignees.length > 0 ? assignees.map((a) => ({ name: a, picture: null })) : [{ name: 'Unassigned', picture: null }],
       createdAt: 'Just now',
       tags,
       approval: null,

@@ -42,11 +42,11 @@ help:
 android-run:
 	npx expo run:android
 
-android-apk-debug:
-	cd android && ./gradlew clean assembleDebug
+android-apk-debug: android-clean
+	cd android && ./gradlew assembleDebug
 
-android-apk-release:
-	cd android && ./gradlew clean assembleRelease
+android-apk-release: android-clean
+	cd android && ./gradlew assembleRelease
 
 android-clean:
 	rm -rf android/app/.cxx android/app/build android/build android/.gradle

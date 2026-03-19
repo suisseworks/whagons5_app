@@ -10,7 +10,7 @@
 import React, { createContext, useContext, useState, useMemo, useCallback, useRef, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-import { TaskItem, CardDensity } from '../models/types';
+import { TaskItem, Assignee, CardDensity } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
 import { useAuth } from './AuthContext';
 import { useMutation } from 'convex/react';
@@ -74,8 +74,8 @@ function mapTaskToItem(
   spotMap: Map<AnyId, string>,
   priorityMap: Map<AnyId, { name: string; color?: string | null }>,
   statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
-  assigneeMap: Map<AnyId, string[]>,
-  tagMap: Map<AnyId, string[]>,
+  assigneeMap: Map<AnyId, Assignee[]>, // taskId → list of assignees
+  tagMap: Map<AnyId, string[]>,      // taskId → list of tag names
   initialStatus: { name: string; color: string | null } | null,
   templateFormMap: Map<AnyId, { formId: AnyId; formName: string }>,
   userFlagMap: Map<AnyId, string>,
@@ -90,6 +90,7 @@ function mapTaskToItem(
   return {
     id: String(task.id),
     title: task.name || 'Untitled',
+    description: (task as any).description || null,
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
     priority: mapPriority(task.priority_id, priorityMap),
     status: status.name,
@@ -291,16 +292,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.tags]);
 
+  const userPictureMap = useMemo(() => {
+    const m = new Map<number, string | null>();
+    for (const u of data.users) m.set(u.id, u.url_picture ?? null);
+    return m;
+  }, [data.users]);
+
   const assigneeMap = useMemo(() => {
-    const m = new Map<AnyId, string[]>();
+    const m = new Map<AnyId, Assignee[]>();
     for (const tu of data.taskUsers) {
       const list = m.get(tu.task_id) ?? [];
       const name = userMap.get(tu.user_id);
-      if (name) list.push(name);
+      if (name) {
+        list.push({ name, picture: userPictureMap.get(tu.user_id) ?? null });
+      }
       m.set(tu.task_id, list);
     }
     return m;
-  }, [data.taskUsers, userMap]);
+  }, [data.taskUsers, userMap, userPictureMap]);
 
   const userFlagMap = useMemo(() => {
     const currentUserId = authUser?.id;
@@ -486,7 +495,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       result = result.filter((t) => {
         if (statusSet && !statusSet.has(t.status)) return false;
         if (prioritySet && !prioritySet.has(t.priority)) return false;
-        if (assigneeSet && !t.assignees.some((a) => assigneeSet.has(a))) return false;
+        if (assigneeSet && !t.assignees.some((a) => assigneeSet.has(a.name))) return false;
         if (flagColorSet && (!t.flagColor || !flagColorSet.has(t.flagColor))) return false;
         if (tagSet && !t.tags.some((tag) => tagSet.has(tag))) return false;
         return true;
@@ -524,7 +533,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     const names = new Set<string>();
     for (const t of wsFiltered) {
-      for (const a of t.assignees) names.add(a);
+      for (const a of t.assignees) names.add(a.name);
     }
     return Array.from(names).sort();
   }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
@@ -798,10 +807,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const assignTaskToUser = useCallback((taskId: string, userId: number, userName: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
-    if (task && !task.assignees.includes(userName)) {
+    if (task && !task.assignees.some((a) => a.name === userName)) {
       setLocalOverrides((prev) => {
         const next = new Map(prev);
-        next.set(taskId, { assignees: [...task.assignees, userName] });
+        next.set(taskId, { assignees: [...task.assignees, { name: userName, picture: null }] });
         return next;
       });
       // TODO: persist via Convex mutation when assignee mutation is available
