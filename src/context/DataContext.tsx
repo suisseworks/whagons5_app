@@ -514,13 +514,13 @@ function mapStatusTransitionGroup(doc: any): SyncedStatusTransitionGroup {
   };
 }
 
-function mapStatusTransition(doc: any): SyncedStatusTransition {
+function mapStatusTransition(doc: any, fk: FkLookups): SyncedStatusTransition {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    status_transition_group_id: doc.statusTransitionGroupId,
-    from_status: doc.fromStatus,
-    to_status: doc.toStatus,
+    status_transition_group_id: resolveFk(fk.statusTransitionGroups, doc.statusTransitionGroupId),
+    from_status: resolveFk(fk.statuses, doc.fromStatus),
+    to_status: resolveFk(fk.statuses, doc.toStatus),
     initial: doc.initial ?? false,
   };
 }
@@ -795,7 +795,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         ? refData.statusTransitionGroups.map(mapStatusTransitionGroup)
         : EMPTY,
       statusTransitions: refData
-        ? refData.statusTransitions.map(mapStatusTransition)
+        ? refData.statusTransitions.map((d: any) => mapStatusTransition(d, fk))
         : EMPTY,
       spots: refData ? mapIds(refData.spots) : EMPTY,
       spotTypes: EMPTY,
