@@ -197,10 +197,11 @@ export function computeKpiCards(params: KpiComputeParams): KpiComputedCard[] {
 
   if (scopedCards.length === 0) return [];
 
-  // Pre-filter tasks by workspace once
+  // Exclude soft-deleted tasks, then filter by workspace
+  const activeTasks = tasks.filter(t => !t.deleted_at);
   const workspaceTasks = workspaceId != null
-    ? tasks.filter(t => Number(t.workspace_id) === workspaceId)
-    : tasks;
+    ? activeTasks.filter(t => Number(t.workspace_id) === workspaceId)
+    : activeTasks;
 
   const results: KpiComputedCard[] = [];
 

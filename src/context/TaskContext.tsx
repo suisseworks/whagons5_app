@@ -89,6 +89,7 @@ function mapTaskToItem(
 
   return {
     id: String(task.id),
+    convexId: (task as any)._id ?? undefined,
     title: task.name || 'Untitled',
     description: (task as any).description || null,
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',

@@ -13,6 +13,8 @@ export interface Assignee {
 
 export interface TaskItem {
   id?: string;
+  /** Convex document _id (needed for Convex queries like notes, logs, etc.) */
+  convexId?: string;
   title: string;
   description?: string | null;
   spot: string;

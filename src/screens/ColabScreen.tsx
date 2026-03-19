@@ -43,6 +43,9 @@ import {
 } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTasks } from '../context/TaskContext';
+import { useMutation } from 'convex/react';
+import { api } from '../../convex/_generated/api';
+import { useTenant } from '../hooks/useTenant';
 import { apiClient } from '../services/apiClient';
 import * as DB from '../store/database';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -327,7 +330,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { data, isSyncing, refresh } = useData();
   const { user: authUser } = useAuth();
+  const { tenantId } = useTenant();
   const { selectedWorkspace, workspaceObjects } = useTasks();
+  const markAsReadMutation = useMutation(api.chat.markAsRead);
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
@@ -634,15 +639,24 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const openConversation = useCallback((convId: number) => {
     setChatView({ type: 'conversation', conversationId: convId });
     setInputText('');
-    apiClient.markConversationRead(convId).catch(() => {});
-  }, []);
+    // Find the Convex _id for this conversation to call markAsRead
+    const conv = data.conversations.find((c) => Number(c.id) === Number(convId));
+    const convexId = (conv as any)?._id;
+    if (tenantId && convexId) {
+      markAsReadMutation({ tenantId, conversationId: convexId }).catch(() => {});
+    }
+  }, [data.conversations, tenantId, markAsReadMutation]);
 
   // Mark as read when messages change while conversation is open
   useEffect(() => {
     if (activeConversationId && conversationMessages.length > 0) {
-      apiClient.markConversationRead(activeConversationId).catch(() => {});
+      const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
+      const convexId = (conv as any)?._id;
+      if (tenantId && convexId) {
+        markAsReadMutation({ tenantId, conversationId: convexId }).catch(() => {});
+      }
     }
-  }, [activeConversationId, conversationMessages.length]);
+  }, [activeConversationId, conversationMessages.length, data.conversations, tenantId, markAsReadMutation]);
 
   // Send message (DM/group)
   const handleSendConversationMessage = useCallback(async () => {

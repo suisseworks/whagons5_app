@@ -608,11 +608,11 @@ function mapBoardMessage(doc: any): SyncedBoardMessage {
   };
 }
 
-function mapConversation(doc: any): SyncedConversation {
+function mapConversation(doc: any, fk: FkLookups): SyncedConversation {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    created_by: doc.createdBy,
+    created_by: resolveFk(fk.users, doc.createdBy),
     avatar_url: doc.avatarUrl ?? null,
     last_message_at: doc.lastMessageAt ? new Date(doc.lastMessageAt).toISOString() : null,
     created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
@@ -620,36 +620,36 @@ function mapConversation(doc: any): SyncedConversation {
   };
 }
 
-function mapConversationParticipant(doc: any): SyncedConversationParticipant {
+function mapConversationParticipant(doc: any, fk: FkLookups & { conversations: Map<string, any> }): SyncedConversationParticipant {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    conversation_id: doc.conversationId,
-    user_id: doc.userId,
+    conversation_id: resolveFk(fk.conversations, doc.conversationId),
+    user_id: resolveFk(fk.users, doc.userId),
     last_read_at: doc.lastReadAt ? new Date(doc.lastReadAt).toISOString() : null,
     is_muted: doc.isMuted ?? false,
     updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
   };
 }
 
-function mapDirectMessage(doc: any): SyncedDirectMessage {
+function mapDirectMessage(doc: any, fk: FkLookups & { conversations: Map<string, any> }): SyncedDirectMessage {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    conversation_id: doc.conversationId,
-    user_id: doc.userId,
+    conversation_id: resolveFk(fk.conversations, doc.conversationId),
+    user_id: resolveFk(fk.users, doc.userId),
     status: doc.status ?? 'sent',
     created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
     updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
   };
 }
 
-function mapMessageReaction(doc: any): SyncedMessageReaction {
+function mapMessageReaction(doc: any, fk: FkLookups): SyncedMessageReaction {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
     message_id: doc.messageId,
-    user_id: doc.userId,
+    user_id: resolveFk(fk.users, doc.userId),
     created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
     updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
   };
@@ -676,6 +676,19 @@ function mapWorkspaceChat(doc: any): SyncedWorkspaceChat {
     user_id: doc.userId,
     created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
     updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
+  };
+}
+
+function mapKpiCard(doc: any): SyncedKpiCard {
+  return {
+    ...doc,
+    id: doc.pgId ?? doc._id,
+    query_config: doc.queryConfig ?? doc.query_config ?? {},
+    display_config: doc.displayConfig ?? doc.display_config ?? {},
+    workspace_id: doc.workspaceId ?? doc.workspace_id ?? null,
+    user_id: doc.userId ?? doc.user_id ?? null,
+    is_enabled: doc.isEnabled ?? doc.is_enabled ?? true,
+    position: doc.position ?? 0,
   };
 }
 
@@ -713,9 +726,41 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     skipArgs ?? { tenantId: tenantId! },
   );
 
+  // Chat sub-data
+  const rawParticipants = useQuery(
+    api.chat.listAllParticipants,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+  const rawDirectMessages = useQuery(
+    api.chat.listAllMessages,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+  const rawReactions = useQuery(
+    api.chat.listAllReactions,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+  const rawLinkPreviews = useQuery(
+    api.chat.listAllLinkPreviews,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+
   // Boards
   const rawBoards = useQuery(
     api.boards.list,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+  const rawBoardMembers = useQuery(
+    api.boards.listAllMembers,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+  const rawBoardMessages = useQuery(
+    api.boards.listAllMessages,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+
+  // KPI Cards
+  const rawKpiCards = useQuery(
+    api.analytics.listKpiCards,
     skipArgs ?? { tenantId: tenantId! },
   );
 
@@ -767,20 +812,40 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       taskFlags: EMPTY,
 
       boards: rawBoards ? rawBoards.map(mapBoard) : EMPTY,
-      boardMembers: EMPTY,
-      boardMessages: EMPTY,
+      boardMembers: rawBoardMembers ? (() => {
+        const boardLookup = buildPgLookup(rawBoards);
+        return rawBoardMembers.map((d: any) => ({
+          ...mapBoardMember(d),
+          board_id: resolveFk(boardLookup, d.boardId),
+          member_id: d.memberType === 'user'
+            ? resolveFk(fk.users, d.memberId) ?? d.memberId
+            : d.memberId,
+        }));
+      })() : EMPTY,
+      boardMessages: rawBoardMessages ? (() => {
+        const boardLookup = buildPgLookup(rawBoards);
+        return rawBoardMessages.map((d: any) => ({
+          ...mapBoardMessage(d),
+          board_id: resolveFk(boardLookup, d.boardId),
+          created_by: resolveFk(fk.users, d.createdBy),
+        }));
+      })() : EMPTY,
 
-      conversations: rawConversations ? rawConversations.map(mapConversation) : EMPTY,
-      conversationParticipants: EMPTY,
-      directMessages: EMPTY,
-      messageReactions: EMPTY,
-      linkPreviews: EMPTY,
+      conversations: rawConversations ? rawConversations.map((d: any) => mapConversation(d, fk)) : EMPTY,
+      conversationParticipants: rawParticipants
+        ? rawParticipants.map((d: any) => mapConversationParticipant(d, { ...fk, conversations: buildPgLookup(rawConversations) }))
+        : EMPTY,
+      directMessages: rawDirectMessages
+        ? rawDirectMessages.map((d: any) => mapDirectMessage(d, { ...fk, conversations: buildPgLookup(rawConversations) }))
+        : EMPTY,
+      messageReactions: rawReactions ? rawReactions.map((d: any) => mapMessageReaction(d, fk)) : EMPTY,
+      linkPreviews: rawLinkPreviews ? rawLinkPreviews.map(mapLinkPreview) : EMPTY,
       workspaceChat: EMPTY,
 
-      kpiCards: EMPTY,
+      kpiCards: rawKpiCards ? rawKpiCards.map(mapKpiCard) : EMPTY,
       plugins: EMPTY,
     };
-  }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawConversations]);
+  }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards]);
 
   const isLoading = !!tenantId && (refData === undefined || rawTasks === undefined);
   const hasEverSynced = !!tenantId && refData !== undefined && rawTasks !== undefined;

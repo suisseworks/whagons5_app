@@ -114,9 +114,10 @@ export const TaskDetailScreen: React.FC = () => {
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formShowValidation, setFormShowValidation] = useState(false);
 
+  const convexTaskId = task.convexId ?? null;
   const rawNotes = useQuery(
     api.taskResources.listTaskNotes,
-    tenantId && task.id ? { tenantId, taskId: task.id as any } : 'skip',
+    tenantId && convexTaskId ? { tenantId, taskId: convexTaskId as any } : 'skip',
   );
   const createNoteMutation = useMutation(api.taskResources.createNote);
 
@@ -132,7 +133,7 @@ export const TaskDetailScreen: React.FC = () => {
     }));
   }, [rawNotes]);
 
-  const notesLoading = tenantId && task.id ? rawNotes === undefined : false;
+  const notesLoading = tenantId && convexTaskId ? rawNotes === undefined : false;
   const notesError: string | null = null;
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
@@ -197,7 +198,7 @@ export const TaskDetailScreen: React.FC = () => {
     try {
       await createNoteMutation({
         tenantId,
-        taskId: task.id as any,
+        taskId: convexTaskId as any,
         note: text,
       });
       setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
@@ -270,7 +271,7 @@ export const TaskDetailScreen: React.FC = () => {
       } else {
         await createTaskFormMutation({
           tenantId,
-          taskId: task.id as any,
+          taskId: convexTaskId as any,
           formVersionId: formVersionId as any,
           data: formValues,
         });

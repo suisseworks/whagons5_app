@@ -95,13 +95,13 @@ version:
 #
 #  Steps (in order, each must succeed or we abort):
 #    1. Derive next version from git tags (auto patch bump)
-#    2. Sync versionName across files (NO versionCode bump yet)
-#    3. Stamp git hash into version.ts
-#    4. Build release AAB with current versionCode
-#    5. Build Go uploader CLI (if needed)
-#    6. Upload AAB to Google Play Console
-#    7. --- only if upload succeeded ---
-#    8. Bump versionCode, commit, tag, push
+#    2. Build Go uploader CLI (if needed)
+#    3. Query Play Store for latest versionCode, increment, update build.gradle
+#    4. Sync versionName across files
+#    5. Stamp git hash into version.ts
+#    6. Build release AAB with the new versionCode
+#    7. Upload AAB to Google Play Console
+#    8. Commit, tag, push
 # ===========================================================================
 release:
 	@set -e && \
@@ -120,38 +120,38 @@ release:
 		version=$$(python3 -c "v='$$last_version'.split('.'); v[2]=str(int(v[2])+1); print('.'.join(v))") ; \
 		echo "  auto-bumping: $$last_version -> $$version"; \
 	fi && \
-	current_code=$$(grep 'versionCode' android/app/build.gradle | head -1 | grep -o '[0-9]*') && \
-	echo "  versionCode: $$current_code" && \
 	\
-	echo "=== Step 2: Sync version name across files ===" && \
-	$(SED_INPLACE) "s/versionName \".*\"/versionName \"$$version\"/" android/app/build.gradle && \
-	python3 -c "import json; f='app.json'; d=json.load(open(f)); d['expo']['version']='$$version'; json.dump(d, open(f,'w'), indent=2)" && \
-	python3 -c "import json; f='package.json'; d=json.load(open(f)); d['version']='$$version'; json.dump(d, open(f,'w'), indent=2)" && \
-	$(SED_INPLACE) "s/export const APP_VERSION = '.*';/export const APP_VERSION = '$$version';/" src/config/version.ts && \
-	$(SED_INPLACE) "s/export const BUILD_NUMBER = [0-9]*;/export const BUILD_NUMBER = $$current_code;/" src/config/version.ts && \
-	\
-	echo "=== Step 3: Stamp git hash ===" && \
-	git_hash=$$(git rev-parse --short HEAD) && \
-	$(SED_INPLACE) "s/export const GIT_HASH = '.*';/export const GIT_HASH = '$$git_hash';/" src/config/version.ts && \
-	echo "  hash: $$git_hash" && \
-	\
-	echo "=== Step 4: Build AAB ===" && \
-	cd android && ./gradlew bundleRelease && cd .. && \
-	\
-	echo "=== Step 5: Build uploader CLI ===" && \
+	echo "=== Step 2: Build uploader CLI ===" && \
 	if [ ! -f scripts/whagons-uploader ]; then \
 		cd scripts && go build -o whagons-uploader main.go && cd ..; \
 	fi && \
 	\
-	echo "=== Step 6: Upload to Google Play Console ===" && \
-	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
+	echo "=== Step 3: Query Play Store for latest versionCode ===" && \
+	play_code=$$(cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json latest-code && cd ..) && \
+	next_code=$$((play_code + 1)) && \
+	echo "  Play Store latest: $$play_code -> using: $$next_code" && \
+	$(SED_INPLACE) "s/versionCode [0-9]*/versionCode $$next_code/" android/app/build.gradle && \
 	\
-	echo "=== Step 7: Upload succeeded — bumping versionCode and creating git release ===" && \
-	new_code=$$((current_code + 1)) && \
-	$(SED_INPLACE) "s/versionCode [0-9]*/versionCode $$new_code/" android/app/build.gradle && \
-	$(SED_INPLACE) "s/export const BUILD_NUMBER = [0-9]*;/export const BUILD_NUMBER = $$new_code;/" src/config/version.ts && \
+	echo "=== Step 4: Sync version name across files ===" && \
+	$(SED_INPLACE) "s/versionName \".*\"/versionName \"$$version\"/" android/app/build.gradle && \
+	python3 -c "import json; f='app.json'; d=json.load(open(f)); d['expo']['version']='$$version'; json.dump(d, open(f,'w'), indent=2)" && \
+	python3 -c "import json; f='package.json'; d=json.load(open(f)); d['version']='$$version'; json.dump(d, open(f,'w'), indent=2)" && \
+	$(SED_INPLACE) "s/export const APP_VERSION = '.*';/export const APP_VERSION = '$$version';/" src/config/version.ts && \
+	$(SED_INPLACE) "s/export const BUILD_NUMBER = [0-9]*;/export const BUILD_NUMBER = $$next_code;/" src/config/version.ts && \
 	\
-	release_name="$$version (Build $$current_code) #$$git_hash" && \
+	echo "=== Step 5: Stamp git hash ===" && \
+	git_hash=$$(git rev-parse --short HEAD) && \
+	$(SED_INPLACE) "s/export const GIT_HASH = '.*';/export const GIT_HASH = '$$git_hash';/" src/config/version.ts && \
+	echo "  hash: $$git_hash" && \
+	\
+	echo "=== Step 6: Build AAB ===" && \
+	cd android && ./gradlew bundleRelease && cd .. && \
+	\
+	echo "=== Step 7: Upload to Google Play Console ===" && \
+	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
+	\
+	echo "=== Step 8: Commit, tag, push ===" && \
+	release_name="$$version (Build $$next_code) #$$git_hash" && \
 	tag_name="v$$version" && \
 	git add . && \
 	git commit -m "Release $$release_name" && \
