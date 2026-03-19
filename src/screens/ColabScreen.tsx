@@ -1314,17 +1314,6 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           },
         ]}
       >
-        <TouchableOpacity
-          style={{ padding: 8 }}
-          onPress={handleAttachFile}
-          disabled={uploadingFile}
-        >
-          {uploadingFile ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
-          )}
-        </TouchableOpacity>
         <TextInput
           style={[
             styles.textInput,
@@ -1343,6 +1332,17 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           multiline
           blurOnSubmit={false}
         />
+        <TouchableOpacity
+          style={{ padding: 8 }}
+          onPress={handleAttachFile}
+          disabled={uploadingFile}
+        >
+          {uploadingFile ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
+          )}
+        </TouchableOpacity>
         <TouchableOpacity
           style={[
             styles.sendButton,

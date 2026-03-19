@@ -141,7 +141,7 @@ export const TaskDetailScreen: React.FC = () => {
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
 
-  const { pickAndUpload, uploading: uploadingAttachment } = useConvexUpload();
+  const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
 
   const handleStatusChange = (status: StatusOption) => {
@@ -502,17 +502,6 @@ export const TaskDetailScreen: React.FC = () => {
           { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
         ]}
       >
-        <TouchableOpacity
-          style={styles.attachButton}
-          onPress={handleAttach}
-          disabled={uploadingAttachment}
-        >
-          {uploadingAttachment ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
-          )}
-        </TouchableOpacity>
         <TextInput
           style={[
             styles.commentInput,
@@ -528,6 +517,17 @@ export const TaskDetailScreen: React.FC = () => {
           onSubmitEditing={handleAddComment}
           editable={!sendingComment}
         />
+        <TouchableOpacity
+          style={styles.attachButton}
+          onPress={handleAttach}
+          disabled={uploadingAttachment}
+        >
+          {uploadingAttachment ? (
+            <ActivityIndicator size="small" color={primaryColor} />
+          ) : (
+            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
+          )}
+        </TouchableOpacity>
         <TouchableOpacity
           style={[styles.sendButton, { backgroundColor: primaryColor, opacity: sendingComment ? 0.6 : 1 }]}
           onPress={handleAddComment}

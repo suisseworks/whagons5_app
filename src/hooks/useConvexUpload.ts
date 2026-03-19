@@ -40,8 +40,15 @@ export function useConvexUpload() {
 
     const uploadUrl = await generateUploadUrl({ tenantId });
 
-    const response = await fetch(file.uri);
-    const blob = await response.blob();
+    // React Native: use XMLHttpRequest to read local file URI as blob
+    const blob: Blob = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.onload = () => resolve(xhr.response as Blob);
+      xhr.onerror = () => reject(new Error('Failed to read file'));
+      xhr.responseType = 'blob';
+      xhr.open('GET', file.uri, true);
+      xhr.send(null);
+    });
 
     const uploadResp = await fetch(uploadUrl, {
       method: 'POST',
@@ -49,7 +56,10 @@ export function useConvexUpload() {
       body: blob,
     });
 
-    if (!uploadResp.ok) throw new Error('Upload failed');
+    if (!uploadResp.ok) {
+      const errText = await uploadResp.text().catch(() => '');
+      throw new Error(`Upload failed (${uploadResp.status}): ${errText}`);
+    }
     const { storageId } = await uploadResp.json();
 
     return {
@@ -191,6 +201,23 @@ export function useConvexUpload() {
     });
   }, [takePhoto, pickImages, pickDocuments, uploadFile, uploadFiles]);
 
+  /**
+   * Take a photo and upload it immediately. Returns a single ConvexAttachment or null.
+   */
+  const takePhotoAndUpload = useCallback(async (): Promise<ConvexAttachment | null> => {
+    const photo = await takePhoto();
+    if (!photo) return null;
+    setUploading(true);
+    try {
+      return await uploadFile(photo);
+    } catch (err: any) {
+      Alert.alert('Upload failed', err?.message || 'Could not upload photo');
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  }, [takePhoto, uploadFile]);
+
   return {
     uploading,
     uploadFile,
@@ -199,5 +226,6 @@ export function useConvexUpload() {
     takePhoto,
     pickDocuments,
     pickAndUpload,
+    takePhotoAndUpload,
   };
 }
