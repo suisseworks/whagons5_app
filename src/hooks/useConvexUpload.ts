@@ -38,7 +38,21 @@ export function useConvexUpload() {
   const uploadFile = useCallback(async (file: PendingFile): Promise<ConvexAttachment> => {
     if (!tenantId) throw new Error('Not authenticated');
 
-    const uploadUrl = await generateUploadUrl({ tenantId });
+    let uploadUrl = await generateUploadUrl({ tenantId });
+    // Self-hosted Convex may return upload URL with wrong subdomain
+    // (e.g., convex-dashboard.whagons.com instead of convex.whagons.com)
+    const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
+    if (convexUrl && typeof uploadUrl === 'string') {
+      try {
+        const expected = new URL(convexUrl);
+        const actual = new URL(uploadUrl);
+        if (actual.hostname !== expected.hostname) {
+          actual.hostname = expected.hostname;
+          uploadUrl = actual.toString();
+        }
+      } catch {}
+    }
+    console.log('[Upload] URL:', uploadUrl);
 
     // React Native: use XMLHttpRequest to read local file URI as blob
     const blob: Blob = await new Promise((resolve, reject) => {
