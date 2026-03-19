@@ -116,17 +116,29 @@ function extractUrls(text: string): string[] {
 }
 
 /** Markdown link pattern: [label](url) */
-const MD_LINK_REGEX = /\[([^\]]*)\]\((https?:\/\/[^)]+)\)/g;
+const MD_LINK_REGEX = /!?\[([^\]]*)\]\(([^)]+)\)/g;
 
 const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 const VIDEO_EXTS = /\.(mp4|mov|webm|avi|mkv)$/i;
 
 type MessagePart =
   | { type: 'text'; text: string }
-  | { type: 'image'; url: string; label: string }
-  | { type: 'video'; url: string; label: string };
+  | { type: 'image'; url: string; label: string; storageId?: string }
+  | { type: 'video'; url: string; label: string }
+  | { type: 'file'; url: string; label: string; storageId?: string };
 
-/** Parse a message string into parts: plain text, images, videos */
+/** Extract convex-file: storageId or {{convex-file:storageId}} from a URL */
+function parseConvexFileUrl(url: string): string | null {
+  // convex-file:kg2caqet26wp4qtfgv4z9sn70n837kma
+  const m1 = url.match(/^convex-file:(.+)$/);
+  if (m1) return m1[1];
+  // {{convex-file:kg2caqet26wp4qtfgv4z9sn70n837kma}}
+  const m2 = url.match(/^\{\{convex-file:(.+)\}\}$/);
+  if (m2) return m2[1];
+  return null;
+}
+
+/** Parse a message string into parts: plain text, images, videos, files */
 function parseMessageContent(text: string): MessagePart[] {
   const parts: MessagePart[] = [];
   let lastIndex = 0;
@@ -139,14 +151,18 @@ function parseMessageContent(text: string): MessagePart[] {
       const preceding = text.slice(lastIndex, match.index).trim();
       if (preceding) parts.push({ type: 'text', text: preceding });
     }
+    const isImageMd = match[0].startsWith('!');
     const label = match[1];
     const url = match[2];
-    if (IMAGE_EXTS.test(url) || IMAGE_EXTS.test(label)) {
-      parts.push({ type: 'image', url, label });
+    const storageId = parseConvexFileUrl(url) ?? undefined;
+
+    if (isImageMd || IMAGE_EXTS.test(url) || IMAGE_EXTS.test(label)) {
+      parts.push({ type: 'image', url, label, storageId });
     } else if (VIDEO_EXTS.test(url) || VIDEO_EXTS.test(label)) {
       parts.push({ type: 'video', url, label });
+    } else if (storageId) {
+      parts.push({ type: 'file', url, label, storageId });
     } else {
-      // Generic file link -- render as text link
       parts.push({ type: 'text', text: `${label}: ${url}` });
     }
     lastIndex = match.index + match[0].length;
@@ -319,6 +335,46 @@ const QuickReactionBar: React.FC<{
 });
 
 // ---------------------------------------------------------------------------
+// Fix Convex storage URLs for self-hosted (dashboard domain → backend domain)
+// ---------------------------------------------------------------------------
+function fixConvexStorageUrl(url: string): string {
+  const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
+  if (!convexUrl) return url;
+  try {
+    const expected = new URL(convexUrl);
+    const actual = new URL(url);
+    if (actual.hostname !== expected.hostname) {
+      actual.hostname = expected.hostname;
+      return actual.toString();
+    }
+  } catch {}
+  return url;
+}
+
+// ---------------------------------------------------------------------------
+// ConvexFileImage – resolves a Convex storageId to a URL and renders it
+// ---------------------------------------------------------------------------
+
+const ConvexFileImage = memo(({
+  storageId,
+  style,
+  onPress,
+}: {
+  storageId: string;
+  style?: any;
+  onPress?: (url: string) => void;
+}) => {
+  const rawUrl = useQuery(api.taskResources.getFileUrl, { storageId: storageId as any });
+  const url = rawUrl ? fixConvexStorageUrl(rawUrl) : null;
+  if (!url) return <View style={[style, { backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator size="small" /></View>;
+  return (
+    <TouchableOpacity activeOpacity={0.9} onPress={() => onPress?.(url)}>
+      <ExpoImage source={{ uri: url }} style={style} contentFit="cover" cachePolicy="disk" transition={200} />
+    </TouchableOpacity>
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 
@@ -336,6 +392,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const markAsReadMutation = useMutation(api.chat.markAsRead);
   const cvxSendMessage = useMutation(api.chat.sendMessage);
   const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
+  const [viewerImage, setViewerImage] = useState<string | null>(null);
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
@@ -671,10 +728,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       const uuid = generateUUID();
       const now = new Date().toISOString();
       // Get the Convex serving URL
-      const convexUrl = `{{convex-file:${a.storageId}}}`;
       const text = a.fileType.startsWith('image/')
-        ? `![${a.fileName}](${convexUrl})`
-        : `[${a.fileName}](${convexUrl})`;
+        ? `![${a.fileName}](convex-file:${a.storageId})`
+        : `[${a.fileName}](convex-file:${a.storageId})`;
       try {
         const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
         const convexConvId = (conv as any)?._id;
@@ -1161,11 +1217,21 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                     }
                     return parts.map((part, idx) => {
                       if (part.type === 'image') {
+                        if (part.storageId) {
+                          return (
+                            <ConvexFileImage
+                              key={idx}
+                              storageId={part.storageId}
+                              style={styles.messageImage}
+                              onPress={(url) => setViewerImage(url)}
+                            />
+                          );
+                        }
                         return (
                           <TouchableOpacity
                             key={idx}
                             activeOpacity={0.9}
-                            onPress={() => Linking.openURL(part.url).catch(() => {})}
+                            onPress={() => setViewerImage(part.url)}
                           >
                             <ExpoImage
                               source={{ uri: part.url }}
@@ -1668,7 +1734,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           Number(lastMsg.user_id) === Number(currentUserId)
             ? 'You'
             : sender?.name.split(' ')[0] || 'Someone';
-        preview = isGroup ? `${senderName}: ${lastMsg.message}` : lastMsg.message;
+        // Strip markdown file links for preview
+        let msgText = lastMsg.message
+          .replace(/!\[([^\]]*)\]\([^)]+\)/g, '📷 $1')
+          .replace(/\[([^\]]*)\]\([^)]+\)/g, '📎 $1');
+        preview = isGroup ? `${senderName}: ${msgText}` : msgText;
       }
 
       return (
