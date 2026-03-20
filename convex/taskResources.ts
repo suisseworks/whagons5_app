@@ -9,7 +9,7 @@ import { withTenant } from "./_helpers/tenancy";
 export const listTaskUsers = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskUsers")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -20,7 +20,7 @@ export const listTaskUsers = query({
 export const listByUser = query({
   args: { tenantId: v.string(), userId: v.id("users") },
   handler: async (ctx, { tenantId, userId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskUsers")
       .withIndex("by_userId", (q) => q.eq("tenantId", tenantId).eq("userId", userId))
@@ -60,7 +60,7 @@ export const unassignUser = mutation({
 export const listTaskTags = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskTags")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -92,6 +92,65 @@ export const removeTag = mutation({
   },
 });
 
+/**
+ * Add a tag to a task using pgId numbers (for grid compatibility).
+ * Resolves pgIds → Convex IDs server-side.
+ */
+export const addTagByPgId = mutation({
+  args: { tenantId: v.string(), taskPgId: v.number(), tagPgId: v.number() },
+  handler: async (ctx, { tenantId, taskPgId, tagPgId }) => {
+    const { user } = await withTenant(ctx, tenantId);
+    const task = await ctx.db
+      .query("tasks")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", tenantId))
+      .filter((q) => q.eq(q.field("pgId"), taskPgId))
+      .first();
+    if (!task) throw new Error(`Task with pgId ${taskPgId} not found`);
+    const tag = await ctx.db
+      .query("tags")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", tenantId))
+      .filter((q) => q.eq(q.field("pgId"), tagPgId))
+      .first();
+    if (!tag) throw new Error(`Tag with pgId ${tagPgId} not found`);
+    const existing = await ctx.db
+      .query("taskTags")
+      .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", task._id))
+      .filter((q) => q.eq(q.field("tagId"), tag._id))
+      .first();
+    if (existing) return existing._id;
+    return ctx.db.insert("taskTags", { tenantId, taskId: task._id, tagId: tag._id, userId: user._id });
+  },
+});
+
+/**
+ * Remove a tag from a task using pgId numbers (for grid compatibility).
+ */
+export const removeTagByPgId = mutation({
+  args: { tenantId: v.string(), taskPgId: v.number(), tagPgId: v.number() },
+  handler: async (ctx, { tenantId, taskPgId, tagPgId }) => {
+    await withTenant(ctx, tenantId);
+    const task = await ctx.db
+      .query("tasks")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", tenantId))
+      .filter((q) => q.eq(q.field("pgId"), taskPgId))
+      .first();
+    if (!task) throw new Error(`Task with pgId ${taskPgId} not found`);
+    const tag = await ctx.db
+      .query("tags")
+      .withIndex("by_tenantId", (q) => q.eq("tenantId", tenantId))
+      .filter((q) => q.eq(q.field("pgId"), tagPgId))
+      .first();
+    if (!tag) throw new Error(`Tag with pgId ${tagPgId} not found`);
+    const tt = await ctx.db
+      .query("taskTags")
+      .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", task._id))
+      .filter((q) => q.eq(q.field("tagId"), tag._id))
+      .first();
+    if (!tt) throw new Error("Task tag not found");
+    await ctx.db.delete(tt._id);
+  },
+});
+
 // =============================================================================
 // TASK SHARES
 // =============================================================================
@@ -99,7 +158,7 @@ export const removeTag = mutation({
 export const listTaskShares = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskShares")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -110,7 +169,7 @@ export const listTaskShares = query({
 export const listSharedToUser = query({
   args: { tenantId: v.string(), userId: v.id("users") },
   handler: async (ctx, { tenantId, userId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskShares")
       .withIndex("by_sharedToUserId", (q) => q.eq("tenantId", tenantId).eq("sharedToUserId", userId))
@@ -157,7 +216,7 @@ export const revokeShare = mutation({
 export const listTaskRelations = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskRelations")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -201,7 +260,7 @@ export const removeRelation = mutation({
 export const listTaskLogs = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskLogs")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -239,7 +298,7 @@ export const createTaskLog = mutation({
 export const listTaskNotes = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskNotes")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -318,7 +377,7 @@ export const getFileUrl = query({
 export const listTaskAttachments = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskAttachments")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -361,7 +420,7 @@ export const removeAttachment = mutation({
 export const listTaskSignatures = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskSignatures")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))
@@ -398,7 +457,7 @@ export const createSignature = mutation({
 export const listRecurrences = query({
   args: { tenantId: v.string() },
   handler: async (ctx, { tenantId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("taskRecurrences")
       .withIndex("by_tenantId", (q) => q.eq("tenantId", tenantId))
@@ -409,7 +468,7 @@ export const listRecurrences = query({
 export const getRecurrence = query({
   args: { tenantId: v.string(), id: v.id("taskRecurrences") },
   handler: async (ctx, { tenantId, id }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return null;
     const doc = await ctx.db.get(id);
     if (!doc || doc.tenantId !== tenantId) return null;
     return doc;
@@ -495,7 +554,7 @@ export const removeRecurrence = mutation({
 export const listTransitionLogs = query({
   args: { tenantId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, { tenantId, taskId }) => {
-    await withTenant(ctx, tenantId);
+    if (!(await withTenantIfAuth(ctx, tenantId))) return [];
     return ctx.db
       .query("statusTransitionLogs")
       .withIndex("by_taskId", (q) => q.eq("tenantId", tenantId).eq("taskId", taskId))

@@ -10,19 +10,17 @@ import { Doc, Id } from "../_generated/dataModel";
 export type AuthenticatedUser = Doc<"users"> & { identity: { subject: string; email?: string } };
 
 /**
- * Get the current authenticated user from the Convex auth context.
- * Throws if not authenticated or user not found in the given tenant.
+ * Try to get the current authenticated user. Returns null if not
+ * authenticated or user not found — safe for reactive queries that
+ * will re-run once auth is established.
  */
-export async function getAuthUser(
+export async function getAuthUserOrNull(
   ctx: QueryCtx | MutationCtx,
   tenantId: string,
-): Promise<Doc<"users">> {
+): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
-  if (!identity) {
-    throw new Error("Not authenticated");
-  }
+  if (!identity) return null;
 
-  // Firebase JWT `sub` claim = Firebase UID
   const firebaseUid = identity.subject;
 
   const user = await ctx.db
@@ -32,14 +30,22 @@ export async function getAuthUser(
     )
     .first();
 
-  if (!user) {
-    throw new Error("User not found in this tenant");
-  }
+  if (!user || user.deletedAt) return null;
 
-  if (user.deletedAt) {
-    throw new Error("User account has been deactivated");
-  }
+  return user;
+}
 
+/**
+ * Get the current authenticated user from the Convex auth context.
+ * Throws if not authenticated or user not found in the given tenant.
+ * Use for mutations; for queries prefer getAuthUserOrNull.
+ */
+export async function getAuthUser(
+  ctx: QueryCtx | MutationCtx,
+  tenantId: string,
+): Promise<Doc<"users">> {
+  const user = await getAuthUserOrNull(ctx, tenantId);
+  if (!user) throw new Error("Not authenticated");
   return user;
 }
 
