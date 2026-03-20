@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
-import { apiClient } from '../services/apiClient';
 import type {
   LeaderboardEntry,
   PointsSummary,
@@ -49,82 +48,15 @@ export const GamificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchLeaderboard = useCallback(async (period: 'all_time' | 'weekly' | 'monthly' = 'all_time', limit = 20) => {
-    try {
-      const data = await apiClient.getLeaderboard(period, limit);
-      setLeaderboard(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchPointsSummary = useCallback(async () => {
-    try {
-      const data = await apiClient.getMyPointsSummary();
-      setPointsSummary(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchPointHistory = useCallback(async (page = 1) => {
-    try {
-      const res = await apiClient.getPointHistory(page);
-      const items = res?.data ?? res;
-      if (page === 1) {
-        setPointHistory(Array.isArray(items) ? items : []);
-      } else {
-        setPointHistory(prev => [...prev, ...(Array.isArray(items) ? items : [])]);
-      }
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchRecentActivity = useCallback(async () => {
-    try {
-      const data = await apiClient.getRecentActivity();
-      setRecentActivity(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchBadges = useCallback(async () => {
-    try {
-      const data = await apiClient.getBadges();
-      setBadges(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchLevels = useCallback(async () => {
-    try {
-      const data = await apiClient.getLevels();
-      setLevels(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchLevelProgress = useCallback(async () => {
-    try {
-      const data = await apiClient.getMyLevelProgress();
-      setLevelProgress(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
-
-  const fetchLevelDistribution = useCallback(async () => {
-    try {
-      const data = await apiClient.getTeamLevelDistribution();
-      setLevelDistribution(data);
-    } catch (e: any) {
-      setError(e.message);
-    }
-  }, []);
+  // Gamification not yet available in Convex — all fetches are no-ops
+  const fetchLeaderboard = useCallback(async (_period?: string, _limit?: number) => {}, []);
+  const fetchPointsSummary = useCallback(async () => {}, []);
+  const fetchPointHistory = useCallback(async (_page?: number) => {}, []);
+  const fetchRecentActivity = useCallback(async () => {}, []);
+  const fetchBadges = useCallback(async () => {}, []);
+  const fetchLevels = useCallback(async () => {}, []);
+  const fetchLevelProgress = useCallback(async () => {}, []);
+  const fetchLevelDistribution = useCallback(async () => {}, []);
 
   const refreshAll = useCallback(async () => {
     setLoading(true);

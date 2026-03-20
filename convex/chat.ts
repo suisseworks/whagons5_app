@@ -16,6 +16,48 @@ export const createConversation = mutation({
   },
 });
 
+/** Bulk: all participants for the tenant. */
+export const listAllParticipants = query({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => { await withTenant(ctx, tenantId); return queryByTenant(ctx, "conversationParticipants", tenantId); },
+});
+
+/** Bulk: all direct messages for the tenant. */
+export const listAllMessages = query({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => { await withTenant(ctx, tenantId); return queryByTenant(ctx, "directMessages", tenantId); },
+});
+
+/** Bulk: all reactions for the tenant. */
+export const listAllReactions = query({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => { await withTenant(ctx, tenantId); return queryByTenant(ctx, "messageReactions", tenantId); },
+});
+
+/** Bulk: all link previews for the tenant. */
+export const listAllLinkPreviews = query({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => { await withTenant(ctx, tenantId); return queryByTenant(ctx, "linkPreviews", tenantId); },
+});
+
+// --- Mark as read ---
+export const markAsRead = mutation({
+  args: { tenantId: v.string(), conversationId: v.id("conversations") },
+  handler: async (ctx, { tenantId, conversationId }) => {
+    const { user } = await withTenant(ctx, tenantId);
+    const participants = await ctx.db
+      .query("conversationParticipants")
+      .withIndex("by_conversationId", (q) =>
+        q.eq("tenantId", tenantId).eq("conversationId", conversationId)
+      )
+      .collect();
+    const mine = participants.find((p) => p.userId === user._id);
+    if (mine) {
+      await ctx.db.patch(mine._id, { lastReadAt: Date.now() });
+    }
+  },
+});
+
 // --- Conversation Participants ---
 export const listParticipants = query({
   args: { tenantId: v.string(), conversationId: v.id("conversations") },
@@ -66,6 +108,47 @@ export const sendWorkspaceChat = mutation({
   },
 });
 
+// --- Update / Delete Messages ---
+export const updateMessage = mutation({
+  args: { tenantId: v.string(), id: v.id("directMessages"), message: v.string() },
+  handler: async (ctx, { tenantId, id, message }) => {
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
+    await ctx.db.patch(id, { message });
+  },
+});
+
+export const deleteMessage = mutation({
+  args: { tenantId: v.string(), id: v.id("directMessages") },
+  handler: async (ctx, { tenantId, id }) => {
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
+    await ctx.db.delete(id);
+  },
+});
+
+export const updateWorkspaceChatMessage = mutation({
+  args: { tenantId: v.string(), id: v.id("workspaceChat"), message: v.string() },
+  handler: async (ctx, { tenantId, id, message }) => {
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
+    await ctx.db.patch(id, { message });
+  },
+});
+
+export const deleteWorkspaceChatMessage = mutation({
+  args: { tenantId: v.string(), id: v.id("workspaceChat") },
+  handler: async (ctx, { tenantId, id }) => {
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
+    await ctx.db.delete(id);
+  },
+});
+
 // --- Message Reactions ---
 export const addReaction = mutation({
   args: { tenantId: v.string(), messageId: v.string(), emoji: v.string() },
@@ -78,8 +161,46 @@ export const addReaction = mutation({
 export const removeReaction = mutation({
   args: { tenantId: v.string(), id: v.id("messageReactions") },
   handler: async (ctx, { tenantId, id }) => {
-    await withTenant(ctx, tenantId); const doc = await ctx.db.get(id);
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
     if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
     await ctx.db.delete(id);
+  },
+});
+
+// --- Conversation management ---
+export const updateConversation = mutation({
+  args: { tenantId: v.string(), id: v.id("conversations"), name: v.optional(v.string()) },
+  handler: async (ctx, { tenantId, id, ...updates }) => {
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
+    await ctx.db.patch(id, updates);
+  },
+});
+
+export const removeParticipant = mutation({
+  args: { tenantId: v.string(), id: v.id("conversationParticipants") },
+  handler: async (ctx, { tenantId, id }) => {
+    await withTenant(ctx, tenantId);
+    const doc = await ctx.db.get(id);
+    if (!doc || doc.tenantId !== tenantId) throw new Error("Not found");
+    await ctx.db.delete(id);
+  },
+});
+
+// --- File upload helpers ---
+export const generateUploadUrl = mutation({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => {
+    await withTenant(ctx, tenantId);
+    return ctx.storage.generateUploadUrl();
+  },
+});
+
+export const getFileUrl = query({
+  args: { storageId: v.id("_storage") },
+  handler: async (ctx, { storageId }) => {
+    return ctx.storage.getUrl(storageId);
   },
 });

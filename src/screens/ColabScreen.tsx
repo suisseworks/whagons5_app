@@ -421,6 +421,12 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const cvxSendWorkspaceChat = useMutation(api.chat.sendWorkspaceChat);
   const cvxCreateConversation = useMutation(api.chat.createConversation);
   const cvxAddParticipant = useMutation(api.chat.addParticipant);
+  const cvxUpdateMessage = useMutation(api.chat.updateMessage);
+  const cvxDeleteMessage = useMutation(api.chat.deleteMessage);
+  const cvxUpdateWsMessage = useMutation(api.chat.updateWorkspaceChatMessage);
+  const cvxDeleteWsMessage = useMutation(api.chat.deleteWorkspaceChatMessage);
+  const cvxAddReaction = useMutation(api.chat.addReaction);
+  const cvxRemoveReaction = useMutation(api.chat.removeReaction);
   const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
   const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
 
@@ -837,20 +843,24 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   }, []);
 
   const handleSaveEdit = useCallback(async (msgType: 'dm' | 'space') => {
-    if (!editingMessageId || !editText.trim()) return;
+    if (!editingMessageId || !editText.trim() || !tenantId) return;
     try {
+      // Find Convex _id from the message
       if (msgType === 'dm') {
-        await apiClient.updateDirectMessage(editingMessageId, { message: editText.trim() });
+        const msg = data.directMessages.find((m) => m.id === editingMessageId);
+        const convexId = (msg as any)?._id;
+        if (convexId) await cvxUpdateMessage({ tenantId, id: convexId as any, message: editText.trim() });
       } else {
-        await apiClient.updateWorkspaceChatMessage(editingMessageId, { message: editText.trim() });
+        const msg = data.workspaceChat.find((m) => m.id === editingMessageId);
+        const convexId = (msg as any)?._id;
+        if (convexId) await cvxUpdateWsMessage({ tenantId, id: convexId as any, message: editText.trim() });
       }
-      await refresh();
     } catch {
       Alert.alert('Error', 'Failed to edit message');
     }
     setEditingMessageId(null);
     setEditText('');
-  }, [editingMessageId, editText, refresh]);
+  }, [editingMessageId, editText, tenantId, data.directMessages, data.workspaceChat, cvxUpdateMessage, cvxUpdateWsMessage]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
@@ -866,13 +876,17 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           text: 'Delete',
           style: 'destructive',
           onPress: async () => {
+            if (!tenantId) return;
             try {
               if (msgType === 'dm') {
-                await apiClient.deleteDirectMessage(msgId);
+                const msg = data.directMessages.find((m) => m.id === msgId);
+                const convexId = (msg as any)?._id;
+                if (convexId) await cvxDeleteMessage({ tenantId, id: convexId as any });
               } else {
-                await apiClient.deleteWorkspaceChatMessage(msgId);
+                const msg = data.workspaceChat.find((m) => m.id === msgId);
+                const convexId = (msg as any)?._id;
+                if (convexId) await cvxDeleteWsMessage({ tenantId, id: convexId as any });
               }
-              await refresh();
             } catch {
               Alert.alert('Error', 'Failed to delete message');
             }
@@ -880,21 +894,30 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         },
       ]);
     },
-    [refresh],
+    [tenantId, data.directMessages, data.workspaceChat, cvxDeleteMessage, cvxDeleteWsMessage],
   );
 
   // Toggle reaction
   const handleToggleReaction = useCallback(
     async (messageId: number, emoji: string) => {
+      if (!tenantId) return;
       setReactionMessageId(null);
       try {
-        await apiClient.toggleMessageReaction({ message_id: messageId, emoji });
-        await refresh();
+        // Check if user already reacted with this emoji
+        const existing = data.messageReactions.find(
+          (r) => r.message_id === String(messageId) && r.emoji === emoji && Number(r.user_id) === Number(currentUserId),
+        );
+        if (existing) {
+          const convexId = (existing as any)?._id;
+          if (convexId) await cvxRemoveReaction({ tenantId, id: convexId as any });
+        } else {
+          await cvxAddReaction({ tenantId, messageId: String(messageId), emoji });
+        }
       } catch {
         // Silently fail
       }
     },
-    [refresh],
+    [tenantId, currentUserId, data.messageReactions, cvxAddReaction, cvxRemoveReaction],
   );
 
   const onRefresh = useCallback(async () => {

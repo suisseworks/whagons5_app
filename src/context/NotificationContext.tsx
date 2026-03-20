@@ -24,7 +24,6 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
-import { buildBaseUrl, getTenantHeaders } from '../config/api';
 import { APP_VERSION } from '../config/version';
 import {
   requestNotificationPermission,
@@ -169,39 +168,12 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   // -----------------------------------------------------------------------
   // Register FCM token with the backend
   // -----------------------------------------------------------------------
+  // FCM token registration — not yet available in Convex
   const registerTokenWithBackend = useCallback(
-    async (deviceToken: string) => {
-      if (!authToken) return;
-
-      try {
-        // FCM token routes are landlord-level (no tenant prefix needed)
-        // but we still build via subdomain in case the API host uses it
-        const baseUrl = buildBaseUrl(subdomain ?? undefined);
-        const resp = await fetch(`${baseUrl}/fcm-tokens`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            Authorization: `Bearer ${authToken}`,
-            ...getTenantHeaders(subdomain ?? undefined),
-          },
-          body: JSON.stringify({
-            fcm_token: deviceToken,
-            platform: Platform.OS === 'ios' ? 'ios' : 'android',
-            app_version: APP_VERSION,
-          }),
-        });
-
-        if (resp.ok) {
-          console.log('[Notifications] Token registered with backend');
-        } else {
-          console.warn('[Notifications] Token registration failed:', resp.status);
-        }
-      } catch (err) {
-        console.warn('[Notifications] Token registration error:', err);
-      }
+    async (_deviceToken: string) => {
+      console.log('[Notifications] FCM token registration skipped (no Convex endpoint)');
     },
-    [authToken, subdomain],
+    [],
   );
 
   // -----------------------------------------------------------------------
