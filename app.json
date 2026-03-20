@@ -48,7 +48,8 @@
           "locationAlwaysAndWhenInUsePermission": "Allow Whagons to use your location to map spots and rooms.",
           "locationWhenInUsePermission": "Allow Whagons to use your location to map spots and rooms."
         }
-      ]
+      ],
+      "expo-video"
     ]
   }
 }

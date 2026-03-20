@@ -29,6 +29,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import { useTheme } from '../context/ThemeContext';
 import {
   useData,
@@ -43,7 +44,7 @@ import {
 } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTasks } from '../context/TaskContext';
-import { useMutation } from 'convex/react';
+import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
@@ -351,6 +352,9 @@ function fixConvexStorageUrl(url: string): string {
   return url;
 }
 
+// In-memory cache: storageId → resolved serving URL
+const storageUrlCache = new Map<string, string>();
+
 // ---------------------------------------------------------------------------
 // ConvexFileImage – resolves a Convex storageId to a URL and renders it
 // ---------------------------------------------------------------------------
@@ -364,15 +368,38 @@ const ConvexFileImage = memo(({
   style?: any;
   onPress?: (url: string) => void;
 }) => {
-  const rawUrl = useQuery(api.taskResources.getFileUrl, { storageId: storageId as any });
-  const url = rawUrl ? fixConvexStorageUrl(rawUrl) : null;
+  const cached = storageUrlCache.get(storageId);
+  // Only query Convex if not cached
+  const rawUrl = useQuery(
+    api.taskResources.getFileUrl,
+    cached ? 'skip' : { storageId: storageId as any },
+  );
+  const url = cached ?? (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
+
+  // Cache the resolved URL
+  if (url && !cached) storageUrlCache.set(storageId, url);
+
   if (!url) return <View style={[style, { backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator size="small" /></View>;
   return (
-    <TouchableOpacity activeOpacity={0.9} onPress={() => onPress?.(url)}>
+    <TouchableOpacity activeOpacity={0.8} onPress={() => { onPress?.(url); }}>
       <ExpoImage source={{ uri: url }} style={style} contentFit="cover" cachePolicy="disk" transition={200} />
     </TouchableOpacity>
   );
 });
+
+// ---------------------------------------------------------------------------
+// InlineVideoPlayer – wraps useVideoPlayer hook
+// ---------------------------------------------------------------------------
+const InlineVideoPlayer = ({ url }: { url: string }) => {
+  const player = useVideoPlayer(url, (p) => { p.play(); });
+  return (
+    <VideoView
+      player={player}
+      style={{ width: '100%', height: '80%' }}
+      allowsPictureInPicture
+    />
+  );
+};
 
 // ---------------------------------------------------------------------------
 // Main Component
@@ -392,7 +419,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const markAsReadMutation = useMutation(api.chat.markAsRead);
   const cvxSendMessage = useMutation(api.chat.sendMessage);
   const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
-  const [viewerImage, setViewerImage] = useState<string | null>(null);
+  const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
@@ -1170,94 +1197,86 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                 </View>
               </View>
             ) : (
-              <Pressable
-                onLongPress={() => {
-                  if (msgType === 'dm') {
-                    setReactionMessageId(msgId);
-                  } else if (isMe) {
-                    // For workspace chat, show edit/delete options
-                    Alert.alert('Message', undefined, [
-                      { text: 'Edit', onPress: () => handleStartEdit(msgId, message) },
-                      { text: 'Delete', style: 'destructive', onPress: () => handleDeleteMessage(msgId, msgType) },
-                      { text: 'Cancel', style: 'cancel' },
-                    ]);
-                  }
-                }}
-              >
-                <View
-                  style={[
-                    styles.messageBubble,
-                    isMe
-                      ? {
-                          backgroundColor: primaryColor,
-                          borderBottomRightRadius: 4,
-                        }
-                      : {
-                          backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF',
-                          borderBottomLeftRadius: 4,
-                          borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
-                          borderWidth: 1,
-                        },
-                  ]}
-                >
-                  {(() => {
-                    const parts = parseMessageContent(message);
-                    const hasMedia = parts.some((p) => p.type === 'image' || p.type === 'video');
-                    if (!hasMedia) {
-                      return (
-                        <Text
-                          style={[
-                            styles.messageText,
-                            { color: isMe ? '#FFFFFF' : colors.text },
-                          ]}
-                        >
-                          {message}
-                        </Text>
-                      );
-                    }
-                    return parts.map((part, idx) => {
-                      if (part.type === 'image') {
-                        if (part.storageId) {
+              <View>
+                {/* Media content rendered outside Pressable so taps work */}
+                {(() => {
+                  const parts = parseMessageContent(message);
+                  const mediaParts = parts.filter((p) => p.type === 'image' || p.type === 'video');
+                  if (mediaParts.length === 0) return null;
+                  return (
+                    <View style={[
+                      styles.messageBubble,
+                      { padding: 0, overflow: 'hidden', backgroundColor: 'transparent', borderWidth: 0 },
+                    ]}>
+                      {mediaParts.map((part, idx) => {
+                        if (part.type === 'image' && part.storageId) {
                           return (
                             <ConvexFileImage
                               key={idx}
                               storageId={part.storageId}
                               style={styles.messageImage}
-                              onPress={(url) => setViewerImage(url)}
+                              onPress={(url) => setViewerMedia({ url, type: 'image' })}
                             />
                           );
                         }
-                        return (
-                          <TouchableOpacity
-                            key={idx}
-                            activeOpacity={0.9}
-                            onPress={() => setViewerImage(part.url)}
-                          >
-                            <ExpoImage
-                              source={{ uri: part.url }}
-                              style={styles.messageImage}
-                              contentFit="cover"
-                              cachePolicy="disk"
-                              transition={200}
-                            />
-                          </TouchableOpacity>
-                        );
-                      }
-                      if (part.type === 'video') {
-                        return (
-                          <TouchableOpacity
-                            key={idx}
-                            style={styles.messageVideoThumb}
-                            activeOpacity={0.8}
-                            onPress={() => Linking.openURL(part.url).catch(() => {})}
-                          >
-                            <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
-                            <Text style={styles.messageVideoLabel} numberOfLines={1}>
-                              {part.label || 'Video'}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      }
+                        if (part.type === 'image') {
+                          return (
+                            <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'image' })}>
+                              <ExpoImage source={{ uri: part.url }} style={styles.messageImage} contentFit="cover" cachePolicy="disk" transition={200} />
+                            </Pressable>
+                          );
+                        }
+                        if (part.type === 'video') {
+                          return (
+                            <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'video' })}>
+                              <View style={styles.messageVideoThumb}>
+                                <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
+                                <Text style={styles.messageVideoLabel} numberOfLines={1}>{part.label || 'Video'}</Text>
+                              </View>
+                            </Pressable>
+                          );
+                        }
+                        return null;
+                      })}
+                    </View>
+                  );
+                })()}
+                {/* Text content wrapped in Pressable for long-press actions */}
+                {(() => {
+                  const parts = parseMessageContent(message);
+                  const textParts = parts.filter((p) => p.type === 'text' || p.type === 'file');
+                  if (textParts.length === 0) return null;
+                  return (
+                    <Pressable
+                      onLongPress={() => {
+                        if (msgType === 'dm') {
+                          setReactionMessageId(msgId);
+                        } else if (isMe) {
+                          Alert.alert('Message', undefined, [
+                            { text: 'Edit', onPress: () => handleStartEdit(msgId, message) },
+                            { text: 'Delete', style: 'destructive', onPress: () => handleDeleteMessage(msgId, msgType) },
+                            { text: 'Cancel', style: 'cancel' },
+                          ]);
+                        }
+                      }}
+                    >
+                    <View
+                      style={[
+                        styles.messageBubble,
+                        isMe
+                          ? {
+                              backgroundColor: primaryColor,
+                              borderBottomRightRadius: 4,
+                            }
+                          : {
+                              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF',
+                              borderBottomLeftRadius: 4,
+                              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+                              borderWidth: 1,
+                            },
+                      ]}
+                    >
+                      {textParts.map((part, idx) => {
                       return (
                         <Text
                           key={idx}
@@ -1269,10 +1288,12 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                           {part.text}
                         </Text>
                       );
-                    });
-                  })()}
-                </View>
-              </Pressable>
+                    })}
+                    </View>
+                  </Pressable>
+                  );
+                })()}
+              </View>
             )}
 
             {/* Link previews */}
@@ -1736,8 +1757,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
             : sender?.name.split(' ')[0] || 'Someone';
         // Strip markdown file links for preview
         let msgText = lastMsg.message
-          .replace(/!\[([^\]]*)\]\([^)]+\)/g, '📷 $1')
-          .replace(/\[([^\]]*)\]\([^)]+\)/g, '📎 $1');
+          .replace(/!\[([^\]]*)\]\([^)]+\)/g, '📷 Photo')
+          .replace(/\[([^\]]*)\]\([^)]+\)/g, '📎 File');
         preview = isGroup ? `${senderName}: ${msgText}` : msgText;
       }
 
@@ -2241,11 +2262,41 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   // ---------------------------------------------------------------------------
 
   // Determine what to render based on chatView
+  const imageViewerModal = (
+    <Modal
+      visible={!!viewerMedia}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setViewerMedia(null)}
+    >
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+        <TouchableOpacity
+          style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 }}
+          onPress={() => setViewerMedia(null)}
+        >
+          <MaterialIcons name="close" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
+        {viewerMedia?.type === 'image' && (
+          <ExpoImage
+            source={{ uri: viewerMedia.url }}
+            style={{ width: '100%', height: '80%' }}
+            contentFit="contain"
+            cachePolicy="disk"
+          />
+        )}
+        {viewerMedia?.type === 'video' && (
+          <InlineVideoPlayer url={viewerMedia.url} />
+        )}
+      </View>
+    </Modal>
+  );
+
   if (chatView.type === 'conversation') {
     return (
       <View style={{ flex: 1 }}>
         {renderConversationChatView()}
         {renderNewChatModal()}
+        {imageViewerModal}
       </View>
     );
   }
@@ -2254,6 +2305,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     return (
       <View style={{ flex: 1 }}>
         {renderSpaceChatView()}
+        {imageViewerModal}
       </View>
     );
   }
@@ -2274,6 +2326,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         </View>
       </Animated.View>
       {renderNewChatModal()}
+      {imageViewerModal}
     </View>
   );
 };
