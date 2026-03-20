@@ -118,9 +118,11 @@ export const TaskDetailScreen: React.FC = () => {
   const [formShowValidation, setFormShowValidation] = useState(false);
 
   const convexTaskId = task.convexId ?? null;
+  // Only query if convexTaskId looks like a valid Convex ID (not a number)
+  const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
   const rawNotes = useQuery(
     api.taskResources.listTaskNotes,
-    tenantId && convexTaskId ? { tenantId, taskId: convexTaskId as any } : 'skip',
+    tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
   );
   const createNoteMutation = useMutation(api.taskResources.createNote);
 
@@ -136,7 +138,7 @@ export const TaskDetailScreen: React.FC = () => {
     }));
   }, [rawNotes]);
 
-  const notesLoading = tenantId && convexTaskId ? rawNotes === undefined : false;
+  const notesLoading = tenantId && hasValidConvexId ? rawNotes === undefined : false;
   const notesError: string | null = null;
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
