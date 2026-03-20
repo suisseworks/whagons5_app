@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { StatusBar } from 'expo-status-bar';
+
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
@@ -41,7 +41,6 @@ export default function App() {
                   <ThemeProvider>
                     <TaskProvider>
                       <GamificationProvider>
-                        <StatusBar style="auto" />
                         <AppNavigator />
                       </GamificationProvider>
                     </TaskProvider>

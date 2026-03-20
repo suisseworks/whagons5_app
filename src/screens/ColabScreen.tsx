@@ -418,6 +418,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const { selectedWorkspace, workspaceObjects } = useTasks();
   const markAsReadMutation = useMutation(api.chat.markAsRead);
   const cvxSendMessage = useMutation(api.chat.sendMessage);
+  const cvxSendWorkspaceChat = useMutation(api.chat.sendWorkspaceChat);
+  const cvxCreateConversation = useMutation(api.chat.createConversation);
+  const cvxAddParticipant = useMutation(api.chat.addParticipant);
   const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
   const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
 
@@ -775,76 +778,28 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     const text = inputText.trim();
     if (!text || !activeConversationId || !currentUserId) return;
 
-    const uuid = generateUUID();
-    const now = new Date().toISOString();
-
-    // Optimistic: inject message locally immediately
-    const optimisticMsg: SyncedDirectMessage = {
-      id: -(Date.now()), // negative temp ID
-      uuid,
-      conversation_id: activeConversationId,
-      user_id: currentUserId,
-      message: text,
-      status: 'sending',
-      created_at: now,
-      updated_at: now,
-    };
-    setPendingDmMessages((prev) => [...prev, optimisticMsg]);
-
     setInputText('');
     setIsSending(true);
 
-    // Scroll to bottom (index 0 in inverted list)
-    setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 50);
-
     try {
-      await apiClient.sendDirectMessage({
-        uuid,
-        conversation_id: activeConversationId,
-        user_id: currentUserId,
+      const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
+      const convexConvId = (conv as any)?._id;
+      if (!tenantId || !convexConvId) throw new Error('Conversation not found');
+
+      await cvxSendMessage({
+        tenantId,
+        conversationId: convexConvId as any,
         message: text,
-        status: 'sent',
       });
-
-      // Push notifications
-      const otherParticipants = activeParticipants.filter(
-        (p) => Number(p.user_id) !== Number(currentUserId),
-      );
-      if (otherParticipants.length > 0) {
-        const chatType = activeConversation?.type === 'group' ? 'group' : 'dm';
-        if (chatType === 'dm') {
-          apiClient
-            .sendMessageNotification({
-              recipient_user_id: otherParticipants[0].user_id,
-              message: text,
-              chat_type: 'dm',
-              chat_id: String(activeConversationId),
-            })
-            .catch(() => {});
-        } else {
-          apiClient
-            .sendMessageNotification({
-              recipient_user_ids: otherParticipants.map((p) => p.user_id),
-              message: text,
-              chat_type: 'group',
-              chat_id: String(activeConversationId),
-            })
-            .catch(() => {});
-        }
-      }
-
-      // Sync in background to confirm the message
-      refresh().catch(() => {});
+      // Convex reactive query will show the message automatically
+      setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 200);
     } catch (err: any) {
-      console.warn('[Chat] Failed to send message:', err?.message || err);
-      // Remove optimistic message on failure
-      setPendingDmMessages((prev) => prev.filter((m) => m.uuid !== uuid));
       Alert.alert('Error', err?.message || 'Failed to send message');
       setInputText(text);
     } finally {
       setIsSending(false);
     }
-  }, [inputText, activeConversationId, currentUserId, activeParticipants, activeConversation, refresh]);
+  }, [inputText, activeConversationId, currentUserId, tenantId, data.conversations, cvxSendMessage]);
 
   // Send workspace chat message
   const handleSendSpaceMessage = useCallback(async () => {
@@ -852,46 +807,27 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     const spaceWsId = chatView.type === 'spaceChat' ? chatView.workspaceId : currentWorkspace?.id;
     if (!text || !spaceWsId || !currentUserId) return;
 
-    const uuid = generateUUID();
-    const now = new Date().toISOString();
-
-    // Optimistic: inject message locally immediately
-    const optimisticMsg: SyncedWorkspaceChat = {
-      id: -(Date.now()),
-      uuid,
-      workspace_id: spaceWsId,
-      message: text,
-      user_id: currentUserId,
-      created_at: now,
-      updated_at: now,
-    };
-    setPendingSpaceMessages((prev) => [...prev, optimisticMsg]);
-
     setInputText('');
     setIsSending(true);
 
-    // Scroll to bottom (index 0 in inverted list)
-    setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 50);
-
     try {
-      await apiClient.sendWorkspaceChatMessage({
-        uuid,
-        workspace_id: spaceWsId,
-        message: text,
-        user_id: currentUserId,
-      });
+      const ws = data.workspaces.find((w) => Number(w.id) === Number(spaceWsId));
+      const convexWsId = (ws as any)?._id;
+      if (!tenantId || !convexWsId) throw new Error('Workspace not found');
 
-      // Sync in background to confirm the message
-      refresh().catch(() => {});
+      await cvxSendWorkspaceChat({
+        tenantId,
+        workspaceId: convexWsId as any,
+        message: text,
+      });
+      setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 200);
     } catch (err: any) {
-      console.warn('[SpaceChat] Failed to send message:', err?.message || err);
-      setPendingSpaceMessages((prev) => prev.filter((m) => m.uuid !== uuid));
       Alert.alert('Error', err?.message || 'Failed to send message');
       setInputText(text);
     } finally {
       setIsSending(false);
     }
-  }, [inputText, chatView, currentWorkspace, currentUserId, refresh]);
+  }, [inputText, chatView, currentWorkspace, currentUserId, tenantId, data.workspaces, cvxSendWorkspaceChat]);
 
   // Edit message
   const handleStartEdit = useCallback((msgId: number, currentText: string) => {
@@ -974,40 +910,26 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       if (!currentUserId) return;
       setIsCreating(true);
       try {
-        const result = await apiClient.createConversation({
-          uuid: generateUUID(),
-          type: 'dm',
-          created_by: currentUserId,
-          participant_user_ids: [targetUserId],
-        });
-        if (result?.id) {
-          const conv = result as SyncedConversation;
-          // Persist to SQLite so DataContext picks it up on next hydrate
-          const now = new Date().toISOString();
-          const participantIds = [currentUserId, targetUserId];
-          await DB.upsertRow('wh_conversations', result.id, conv);
-          for (let i = 0; i < participantIds.length; i++) {
-            const pid = `${result.id}_${participantIds[i]}`;
-            await DB.upsertRow('wh_conversation_participants', pid, {
-              id: pid, conversation_id: result.id, user_id: participantIds[i],
-              last_read_at: now, is_muted: false, updated_at: now,
-            });
-          }
-          // Also keep in local state for immediate use
-          setLocalConversations((prev) => [...prev.filter((c) => c.id !== result.id), conv]);
-          setLocalParticipants((prev) => [
-            ...prev.filter((p) => Number(p.conversation_id) !== result.id),
-            ...participantIds.map((uid, i) => ({
-              id: -(result.id * 100 + i),
-              conversation_id: result.id,
-              user_id: uid,
-              last_read_at: now,
-              is_muted: false,
-              updated_at: now,
-            } as SyncedConversationParticipant)),
-          ]);
-          openConversation(result.id);
+        if (!tenantId) throw new Error('Not authenticated');
+        // Find Convex _id for target user
+        const targetUser = data.users.find((u) => Number(u.id) === Number(targetUserId));
+        const targetConvexUserId = (targetUser as any)?._id;
+        if (!targetConvexUserId) throw new Error('User not found');
+
+        const convId = await cvxCreateConversation({ tenantId, type: 'dm' });
+        // Add both participants
+        const myConvexUser = data.users.find((u) => Number(u.id) === Number(currentUserId));
+        if (myConvexUser && (myConvexUser as any)._id) {
+          await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: (myConvexUser as any)._id as any });
         }
+        await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: targetConvexUserId as any });
+
+        // Convex queries will reactively update — just open the conversation
+        // Use a short delay to let the reactive query pick up the new data
+        setTimeout(() => {
+          const newConv = data.conversations.find((c) => (c as any)._id === convId);
+          if (newConv) openConversation(newConv.id);
+        }, 500);
         setShowNewChatModal(false);
         setNewChatSearch('');
       } catch {
@@ -1031,39 +953,21 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       .join(', ');
 
     try {
-      const result = await apiClient.createConversation({
-        uuid: generateUUID(),
-        type: 'group',
-        name: groupName.trim() || defaultName,
-        created_by: currentUserId,
-        participant_user_ids: selectedGroupUsers,
-      });
-      if (result?.id) {
-        const conv = result as SyncedConversation;
-        const now = new Date().toISOString();
-        const participantIds = [currentUserId, ...selectedGroupUsers];
-        await DB.upsertRow('wh_conversations', result.id, conv);
-        for (let i = 0; i < participantIds.length; i++) {
-          const pid = `${result.id}_${participantIds[i]}`;
-          await DB.upsertRow('wh_conversation_participants', pid, {
-            id: pid, conversation_id: result.id, user_id: participantIds[i],
-            last_read_at: now, is_muted: false, updated_at: now,
-          });
+      if (!tenantId) throw new Error('Not authenticated');
+      const convId = await cvxCreateConversation({ tenantId, type: 'group', name: groupName.trim() || defaultName });
+      // Add all participants (including self)
+      const allUserIds = [currentUserId, ...selectedGroupUsers];
+      for (const uid of allUserIds) {
+        const u = data.users.find((usr) => Number(usr.id) === Number(uid));
+        const convexUid = (u as any)?._id;
+        if (convexUid) {
+          await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: convexUid as any });
         }
-        setLocalConversations((prev) => [...prev.filter((c) => c.id !== result.id), conv]);
-        setLocalParticipants((prev) => [
-          ...prev.filter((p) => Number(p.conversation_id) !== result.id),
-          ...participantIds.map((uid, i) => ({
-            id: -(result.id * 100 + i),
-            conversation_id: result.id,
-            user_id: uid,
-            last_read_at: now,
-            is_muted: false,
-            updated_at: now,
-          } as SyncedConversationParticipant)),
-        ]);
-        openConversation(result.id);
       }
+      setTimeout(() => {
+        const newConv = data.conversations.find((c) => (c as any)._id === convId);
+        if (newConv) openConversation(newConv.id);
+      }, 500);
       setShowNewChatModal(false);
       setGroupName('');
       setSelectedGroupUsers([]);

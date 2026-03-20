@@ -3,6 +3,7 @@ import { StatusBar } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
+import { useTheme } from '../context/ThemeContext';
 
 // Screens
 import { SplashScreen } from '../screens/SplashScreen';
@@ -21,10 +22,15 @@ import { PointHistoryScreen } from '../screens/PointHistoryScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
+const AppStatusBar = () => {
+  const { isDarkMode, colors } = useTheme();
+  return <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={colors.background} translucent={false} />;
+};
+
 export const AppNavigator: React.FC = () => {
   return (
     <NavigationContainer>
-      <StatusBar barStyle="dark-content" backgroundColor="#F4F1EA" translucent={false} />
+      <AppStatusBar />
       <Stack.Navigator
         initialRouteName="Splash"
         screenOptions={{
