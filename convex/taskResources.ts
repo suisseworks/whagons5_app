@@ -1,6 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
-import { withTenant } from "./_helpers/tenancy";
+import { withTenant, withTenantIfAuth } from "./_helpers/tenancy";
 
 // =============================================================================
 // TASK USERS (assignments)
