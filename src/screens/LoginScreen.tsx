@@ -47,7 +47,7 @@ const GoogleLogo = () => (
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const { width, height } = useWindowDimensions();
-  const { signInWithGoogle, signInWithEmail } = useAuth();
+  const { signInWithGoogle, signInWithEmail, token, pendingTenants } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -92,25 +92,32 @@ export const LoginScreen: React.FC = () => {
   const isLargeScreen = width > 800;
   const anyLoading = isLoading || isGoogleLoading;
 
-  const navigateToMain = () => {
-    navigation.dispatch(
-      CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }),
-    );
-  };
+  // Watch for auth state changes and navigate accordingly
+  const hasNavigated = useRef(false);
+  useEffect(() => {
+    if (hasNavigated.current) return;
+    if (token) {
+      hasNavigated.current = true;
+      navigation.dispatch(
+        CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }),
+      );
+    } else if (pendingTenants && pendingTenants.length > 1) {
+      hasNavigated.current = true;
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{ name: 'TenantSelect', params: { tenants: pendingTenants, firebaseIdToken: '' } }],
+        }),
+      );
+    }
+  }, [token, pendingTenants]);
 
   const handleGoogleSignIn = async () => {
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
-      navigateToMain();
+      // Navigation handled by effect above when auth resolves
     } catch (err: any) {
-      if (err instanceof TenantChoiceRequired) {
-        navigation.navigate('TenantSelect', {
-          tenants: err.tenants,
-          firebaseIdToken: err.firebaseIdToken,
-        });
-        return;
-      }
       const msg = err?.message || 'Google sign-in failed. Please try again.';
       if (msg.includes('CANCELED') || msg.includes('cancelled')) {
         // User cancelled
@@ -135,15 +142,8 @@ export const LoginScreen: React.FC = () => {
     setIsLoading(true);
     try {
       await signInWithEmail({ email: email.trim(), password });
-      navigateToMain();
+      // Navigation handled by effect above when auth resolves
     } catch (err: any) {
-      if (err instanceof TenantChoiceRequired) {
-        navigation.navigate('TenantSelect', {
-          tenants: err.tenants,
-          firebaseIdToken: err.firebaseIdToken,
-        });
-        return;
-      }
       let msg = err?.message || 'Unable to log in. Please try again.';
       if (msg.includes('wrong-password') || msg.includes('invalid-credential')) {
         msg = 'Incorrect email or password.';

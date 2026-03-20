@@ -119,6 +119,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Auto-select tenant when myTenants loads (if no tenant selected)
   // ------------------------------------------------------------------
   useEffect(() => {
+    console.log('[AUTH] State:', { isAuthenticated, myTenants, tenantId, tenantResolved, isRestoringTenant, convexAuthLoading });
     if (tenantResolved) return;
     if (!isAuthenticated || !myTenants) return;
 
@@ -128,16 +129,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    if (myTenants.length === 1) {
+    if (myTenants.length === 0) {
+      // No tenants — user not associated with any company
+      console.log('[AUTH] No tenants found for user');
+      setTenantResolved(true);
+    } else if (myTenants.length === 1) {
       // Single tenant — auto-select
       const t = myTenants[0];
       setTenantId(t);
       AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
       setTenantResolved(true);
-    } else if (myTenants.length > 1 && !tenantId) {
-      // Multiple tenants, none selected — leave tenantId null
-      // SplashScreen/LoginScreen will see token=null and show login,
-      // which then navigates to TenantSelectScreen
+    } else {
+      // Multiple tenants, none selected
       setPendingTenants(myTenants);
       setTenantResolved(true);
     }

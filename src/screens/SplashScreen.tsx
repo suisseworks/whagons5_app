@@ -21,6 +21,8 @@ export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<SplashScreenNavigationProp>();
   const { isLoading: authLoading, token, pendingTenants } = useAuth();
   const navigatedRef = useRef(false);
+  const latestAuth = useRef({ token, pendingTenants });
+  latestAuth.current = { token, pendingTenants };
 
   const logoScale = useRef(new Animated.Value(0.8)).current;
   const logoFade = useRef(new Animated.Value(0)).current;
@@ -30,11 +32,12 @@ export const SplashScreen: React.FC = () => {
   const goNext = () => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    let destination: string = token ? 'Main' : 'Login';
+    const { token: t, pendingTenants: pt } = latestAuth.current;
+    let destination: string = t ? 'Main' : 'Login';
     let params: any = undefined;
-    if (pendingTenants && pendingTenants.length > 1) {
+    if (pt && pt.length > 1) {
       destination = 'TenantSelect';
-      params = { tenants: pendingTenants, firebaseIdToken: '' };
+      params = { tenants: pt, firebaseIdToken: '' };
     }
     navigation.dispatch(
       CommonActions.reset({
