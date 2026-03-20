@@ -80,8 +80,8 @@ export const SettingsScreen: React.FC = () => {
 
   const handleSwitchTenant = () => {
     Alert.alert(
-      'Switch Workspace',
-      'This will clear your current data and let you pick a different workspace.',
+      'Switch Tenant',
+      'This will clear your current data and let you pick a different tenant.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -97,7 +97,7 @@ export const SettingsScreen: React.FC = () => {
                 }),
               );
             } catch (err: any) {
-              Alert.alert('Error', err?.message || 'Failed to switch workspace');
+              Alert.alert('Error', err?.message || 'Failed to switch tenant');
             } finally {
               setIsSwitching(false);
             }
@@ -110,7 +110,7 @@ export const SettingsScreen: React.FC = () => {
   const showLogoutDialog = () => {
     Alert.alert(
       'Logout',
-      'Are you sure you want to logout? You can pick a different workspace when you sign back in.',
+      'Are you sure you want to logout? You can pick a different tenant when you sign back in.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -259,31 +259,31 @@ export const SettingsScreen: React.FC = () => {
           <ListTile
             icon="phone"
             title="Phone"
-            subtitle="+1 (555) 123-4567"
+            subtitle="Not set"
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Phone settings')}
           />
         </View>
 
-        {/* Workspace Section */}
-        <SectionHeader title="Workspace" />
+        {/* Tenant Section */}
+        <SectionHeader title="Tenant" />
         <View style={cardStyle}>
           <View style={styles.listTile}>
             <MaterialIcons name="business" size={24} color={primaryColor} />
             <View style={styles.listTileContent}>
               <Text style={[styles.listTileTitle, { color: colors.text }]}>
-                {subdomain ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1) : 'No workspace'}
+                {subdomain ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1) : 'No tenant'}
               </Text>
               <Text style={[styles.listTileSubtitle, { color: colors.textSecondary }]}>
-                Current workspace
+                Current tenant
               </Text>
             </View>
           </View>
           <View style={styles.divider} />
           <ListTile
             icon="swap-horiz"
-            title="Switch Workspace"
-            subtitle="Sign into a different workspace"
+            title="Switch Tenant"
+            subtitle="Sign into a different tenant"
             trailing={
               isSwitching ? (
                 <ActivityIndicator size="small" color={primaryColor} />

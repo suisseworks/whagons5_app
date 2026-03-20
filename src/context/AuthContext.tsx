@@ -1,15 +1,12 @@
 /**
  * AuthContext – Manages authentication state for the mobile app.
  *
- * Mirrors the web client's auth flow:
- *   1. Firebase sign-in (Google native or email/password) → Firebase idToken
- *   2. POST /login { token: idToken } to the LANDLORD (no subdomain)
- *      - If 225 → tenant found → extract subdomain → retry /login WITH subdomain
- *      - If 200 → user has no tenant → show "no company found" message
- *   3. Bearer token + subdomain persisted in AsyncStorage
- *   4. GET /users/me → user data + tenant_domain_prefix confirmation
- *
- * The user never has to type a subdomain — it's auto-detected.
+ * Pure Convex + Firebase auth flow:
+ *   1. Firebase sign-in (Google native or email/password)
+ *   2. Convex auto-authenticates via ConvexProviderWithAuth (Firebase JWT)
+ *   3. Query users.myTenants to discover available tenants
+ *   4. Query users.me(tenantId) for current user data
+ *   5. tenantId persisted in AsyncStorage
  */
 
 import React, {
@@ -18,16 +15,15 @@ import React, {
   useState,
   useEffect,
   useCallback,
-  useRef,
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_CONFIG, buildBaseUrl, buildLandlordUrl, getTenantHeaders } from '../config/api';
+import { useConvexAuth, useQuery, useMutation } from 'convex/react';
+import { api } from '../../convex/_generated/api';
 import {
   signInWithGoogle as fbSignInWithGoogle,
   signInWithEmail as fbSignInWithEmail,
   firebaseSignOut,
-  onAuthStateChanged,
   getCurrentUser,
 } from '../firebase/authService';
 
@@ -36,7 +32,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface UserInfo {
-  id: number;
+  id: string | number;
   name: string;
   email: string;
   photo_url?: string | null;
@@ -47,9 +43,9 @@ interface UserInfo {
 interface AuthState {
   /** Whether we've finished loading persisted credentials */
   isLoading: boolean;
-  /** The Sanctum bearer token (null = logged out) */
+  /** Auth token — set to a truthy placeholder when authenticated via Convex */
   token: string | null;
-  /** Tenant subdomain (auto-detected, not user-entered) */
+  /** Tenant ID (e.g. "calaluna", "whagons-qeriwt5ju8") */
   subdomain: string | null;
   /** Current user info */
   user: UserInfo | null;
@@ -68,35 +64,20 @@ export class TenantChoiceRequired extends Error {
 }
 
 interface AuthContextType extends AuthState {
-  /** Sign in with Google (native). Subdomain is auto-detected. */
   signInWithGoogle: () => Promise<void>;
-
-  /** Sign in with email + password via Firebase. Subdomain is auto-detected. */
-  signInWithEmail: (params: {
-    email: string;
-    password: string;
-  }) => Promise<void>;
-
-  /** Complete login for a specific tenant (after user picks from list). */
+  signInWithEmail: (params: { email: string; password: string }) => Promise<void>;
   selectTenant: (tenant: string, firebaseIdToken: string) => Promise<void>;
-
-  /**
-   * Switch to a different tenant. Clears current data and returns the
-   * tenant list + firebase token for navigation to TenantSelectScreen.
-   */
   switchTenant: () => Promise<{ tenants: string[]; firebaseIdToken: string }>;
-
-  /** Clear all auth state, Firebase sign-out, and local data. */
   logout: () => Promise<void>;
+  /** Non-null when user has multiple tenants and needs to pick one */
+  pendingTenants: string[] | null;
 }
 
 // ---------------------------------------------------------------------------
 // Storage keys
 // ---------------------------------------------------------------------------
 
-const STORAGE_KEY_TOKEN = 'wh_auth_token';
 const STORAGE_KEY_SUBDOMAIN = 'wh_auth_subdomain';
-const STORAGE_KEY_USER = 'wh_auth_user';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -105,292 +86,112 @@ const STORAGE_KEY_USER = 'wh_auth_user';
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<AuthState>({
-    isLoading: true,
-    token: null,
-    subdomain: null,
-    user: null,
-  });
+  const { isAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  const [isRestoringTenant, setIsRestoringTenant] = useState(true);
+  const [pendingTenants, setPendingTenants] = useState<string[] | null>(null);
+  const [tenantResolved, setTenantResolved] = useState(false);
 
-  // Prevent double-login race
-  const loginInProgress = useRef(false);
+  // Query tenants for the authenticated user
+  const myTenants = useQuery(
+    api.users.myTenants,
+    isAuthenticated ? {} : 'skip',
+  );
+
+  // Query current user for the selected tenant
+  const convexUser = useQuery(
+    api.users.me,
+    isAuthenticated && tenantId ? { tenantId } : 'skip',
+  );
 
   // ------------------------------------------------------------------
-  // Restore persisted session on mount, then verify via Firebase.
-  // We stay isLoading=true until we have a confirmed valid session
-  // so that DataContext does NOT sync prematurely.
+  // Restore persisted tenant on mount
   // ------------------------------------------------------------------
   useEffect(() => {
-    let cancelled = false;
-
     (async () => {
-      // 1. Check if we have stored credentials
-      const [storedToken, storedSubdomain, userJson] = await Promise.all([
-        AsyncStorage.getItem(STORAGE_KEY_TOKEN),
-        AsyncStorage.getItem(STORAGE_KEY_SUBDOMAIN),
-        AsyncStorage.getItem(STORAGE_KEY_USER),
-      ]);
-
-      // 2. Check if Firebase has a current user
-      const fbUser = getCurrentUser();
-
-      if (storedToken && storedSubdomain && fbUser) {
-        // We have stored credentials AND an active Firebase session → restore
-        const user = userJson ? JSON.parse(userJson) : null;
-        if (!cancelled) setState({ isLoading: false, token: storedToken, subdomain: storedSubdomain, user });
-      } else if (fbUser) {
-        // Firebase user exists but no stored credentials → re-login
-        try {
-          const idToken = await fbUser.getIdToken();
-          await backendLogin(idToken);
-        } catch {
-          if (!cancelled) setState({ isLoading: false, token: null, subdomain: null, user: null });
-        }
-      } else {
-        // No Firebase user → show login screen
-        if (!cancelled) setState({ isLoading: false, token: null, subdomain: null, user: null });
-      }
+      const stored = await AsyncStorage.getItem(STORAGE_KEY_SUBDOMAIN);
+      if (stored) setTenantId(stored);
+      setIsRestoringTenant(false);
     })();
-
-    return () => { cancelled = true; };
   }, []);
 
   // ------------------------------------------------------------------
-  // Listen for Firebase auth state changes AFTER initial load.
-  // Only triggers re-login if we lose the token (e.g. logout+re-sign-in).
+  // Auto-select tenant when myTenants loads (if no tenant selected)
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (state.isLoading) return; // Don't listen during initial restore
+    if (tenantResolved) return;
+    if (!isAuthenticated || !myTenants) return;
 
-    const unsubscribe = onAuthStateChanged(async (firebaseUser) => {
-      if (!firebaseUser) return;
-      if (state.token) return; // Already have a valid session
+    if (tenantId && myTenants.includes(tenantId)) {
+      // Already have a valid tenant
+      setTenantResolved(true);
+      return;
+    }
 
-      try {
-        const idToken = await firebaseUser.getIdToken();
-        await backendLogin(idToken);
-      } catch {
-        // Silent – user will see the login screen
+    if (myTenants.length === 1) {
+      // Single tenant — auto-select
+      const t = myTenants[0];
+      setTenantId(t);
+      AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
+      setTenantResolved(true);
+    } else if (myTenants.length > 1 && !tenantId) {
+      // Multiple tenants, none selected — leave tenantId null
+      // SplashScreen/LoginScreen will see token=null and show login,
+      // which then navigates to TenantSelectScreen
+      setPendingTenants(myTenants);
+      setTenantResolved(true);
+    }
+  }, [isAuthenticated, myTenants, tenantId, tenantResolved]);
+
+  // ------------------------------------------------------------------
+  // Map Convex user → UserInfo
+  // ------------------------------------------------------------------
+  const user: UserInfo | null = convexUser
+    ? {
+        id: (convexUser as any).pgId ?? (convexUser as any)._id ?? 0,
+        name: (convexUser as any).name ?? '',
+        email: (convexUser as any).email ?? '',
+        photo_url: (convexUser as any).urlPicture ?? getCurrentUser()?.photoURL ?? null,
+        tenant_domain_prefix: tenantId,
       }
-    });
-    return unsubscribe;
-  }, [state.token, state.isLoading]);
+    : null;
 
   // ------------------------------------------------------------------
-  // Complete login for a specific tenant subdomain.
-  // Shared by backendLogin (single-tenant auto) and selectTenant (user pick).
+  // Derived auth state
   // ------------------------------------------------------------------
-  const completeTenantLogin = async (tenant: string, firebaseIdToken: string) => {
-    // Extract subdomain prefix (everything before the first dot for domain-style tenants)
-    const domainPrefix = tenant.includes('.') ? tenant.split('.')[0] : tenant;
-    console.log('[AUTH] Tenant domain:', tenant, '-> prefix:', domainPrefix);
+  // Stay loading until:
+  // 1. Convex auth is resolved
+  // 2. AsyncStorage tenant is restored
+  // 3. Tenant list is fetched (if authenticated)
+  // 4. Tenant is auto-selected or pendingTenants is set
+  const isLoading =
+    convexAuthLoading ||
+    isRestoringTenant ||
+    (isAuthenticated && !myTenants) ||
+    (isAuthenticated && myTenants && !tenantResolved);
 
-    // Login on the tenant subdomain
-    const tenantUrl = buildBaseUrl(domainPrefix);
-    const tenantLoginUrl = `${tenantUrl}/login`;
-    console.log('[AUTH] Tenant login URL:', tenantLoginUrl);
-
-    let tenantResp: Response;
-    try {
-      tenantResp = await fetch(tenantLoginUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          ...getTenantHeaders(domainPrefix),
-        },
-        body: JSON.stringify({ token: firebaseIdToken }),
-      });
-      console.log('[AUTH] Tenant response status:', tenantResp.status);
-    } catch (fetchError: any) {
-      console.error('[AUTH] Tenant fetch FAILED:', fetchError?.message);
-      throw new Error(`Network request failed on tenant login. Could not reach ${tenantLoginUrl}. (${fetchError?.message})`);
-    }
-
-    if (!tenantResp.ok) {
-      const body = await tenantResp.text();
-      console.error('[AUTH] Tenant login error body:', body);
-      throw new Error(`Tenant login failed (${tenantResp.status}): ${body}`);
-    }
-
-    const tenantData = await tenantResp.json();
-    console.log('[AUTH] Tenant login success, keys:', Object.keys(tenantData));
-    const token: string =
-      tenantData.token ?? tenantData.access_token ?? tenantData.data?.token;
-    if (!token) throw new Error('No token in tenant login response');
-
-    // Fetch user info
-    console.log('[AUTH] Fetching user info for subdomain:', domainPrefix);
-    const user = await fetchUserInfo(domainPrefix, token);
-    console.log('[AUTH] User info received:', user?.email);
-
-    // Persist
-    await Promise.all([
-      AsyncStorage.setItem(STORAGE_KEY_TOKEN, token),
-      AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, domainPrefix),
-      AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user)),
-    ]);
-
-    console.log('[AUTH] ====== Login Complete (tenant) ======');
-    setState({ isLoading: false, token, subdomain: domainPrefix, user });
+  const state: AuthState = {
+    isLoading,
+    token: isAuthenticated && tenantId ? 'convex-authenticated' : null,
+    subdomain: tenantId,
+    user,
   };
 
   // ------------------------------------------------------------------
-  // Backend login – mirrors web client's flow:
-  //   1. POST /login to landlord (no subdomain)
-  //   2. If 225 → extract tenant subdomain → retry with subdomain
-  //   3. If 200 on landlord → user exists but has no tenant
-  // ------------------------------------------------------------------
-  const backendLogin = async (firebaseIdToken: string) => {
-    if (loginInProgress.current) return;
-    loginInProgress.current = true;
-
-    try {
-      // Step 1: POST to landlord
-      const landlordUrl = buildLandlordUrl();
-      const loginUrl = `${landlordUrl}/login`;
-      console.log('[AUTH] ====== Backend Login Start ======');
-      console.log('[AUTH] API_CONFIG:', JSON.stringify(API_CONFIG));
-      console.log('[AUTH] Landlord login URL:', loginUrl);
-      console.log('[AUTH] Firebase token (first 20 chars):', firebaseIdToken.substring(0, 20) + '...');
-
-      let resp: Response;
-      try {
-        resp = await fetch(loginUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({ token: firebaseIdToken }),
-        });
-        console.log('[AUTH] Landlord response status:', resp.status);
-        console.log('[AUTH] Landlord response headers:', JSON.stringify(Object.fromEntries(resp.headers.entries())));
-      } catch (fetchError: any) {
-        console.error('[AUTH] Landlord fetch FAILED:', fetchError?.message);
-        console.error('[AUTH] Fetch error type:', fetchError?.constructor?.name);
-        console.error('[AUTH] Fetch error details:', JSON.stringify(fetchError, Object.getOwnPropertyNames(fetchError)));
-        throw new Error(`Network request failed. Could not reach ${loginUrl}. Check that the backend is running and accessible. (${fetchError?.message})`);
-      }
-
-      // Step 2: Handle 225 – tenant redirect
-      if (resp.status === 225) {
-        const data = await resp.json();
-        console.log('[AUTH] 225 response data:', JSON.stringify(data));
-
-        // Backend may return a single tenant string or an array of tenants
-        let tenant: string | undefined = data.tenant;
-        const tenantList: string[] = Array.isArray(data.tenants) ? data.tenants : [];
-
-        if (!tenant && tenantList.length > 0) {
-          if (tenantList.length === 1) {
-            tenant = tenantList[0];
-          } else {
-            // Multi-tenant: throw so the caller (LoginScreen) can navigate to TenantSelectScreen
-            throw new TenantChoiceRequired(tenantList, firebaseIdToken);
-          }
-        }
-        if (!tenant) throw new Error('No tenant in 225 response');
-
-        // Complete login for this single tenant
-        await completeTenantLogin(tenant, firebaseIdToken);
-        return;
-      }
-
-      // Step 3: Handle 200 on landlord – user exists but may not have a tenant
-      if (resp.ok) {
-        console.log('[AUTH] Landlord returned 200 (no tenant redirect)');
-        const data = await resp.json();
-        const token: string =
-          data.token ?? data.access_token ?? data.data?.token;
-
-        if (!token) {
-          throw new Error(
-            'Your account is not associated with any company. Please contact your administrator.',
-          );
-        }
-
-        // We got a landlord token, but the user doesn't have a tenant.
-        // This means they're a new user without a company.
-        throw new Error(
-          'Your account is not associated with any company. Please contact your administrator.',
-        );
-      }
-
-      // Any other error
-      const body = await resp.text();
-      console.error('[AUTH] Unexpected response:', resp.status, body);
-      throw new Error(`Login failed (${resp.status}): ${body}`);
-    } finally {
-      loginInProgress.current = false;
-      console.log('[AUTH] ====== Backend Login End ======');
-    }
-  };
-
-  // ------------------------------------------------------------------
-  // Fetch /users/me to get full user info + tenant confirmation
-  // ------------------------------------------------------------------
-  const fetchUserInfo = async (
-    subdomain: string,
-    token: string,
-  ): Promise<UserInfo> => {
-    const baseUrl = buildBaseUrl(subdomain);
-    const resp = await fetch(`${baseUrl}/users/me`, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...getTenantHeaders(subdomain),
-      },
-    });
-
-    if (!resp.ok) {
-      // Non-critical: return minimal user info
-      return { id: 0, name: '', email: '' };
-    }
-
-    const json = await resp.json();
-    // The response may be wrapped in { data: { ... } }
-    const user: UserInfo = json.data ?? json;
-
-    // If the backend doesn't provide a photo, fall back to Firebase photoURL
-    if (!user.photo_url) {
-      const firebaseUser = getCurrentUser();
-      if (firebaseUser?.photoURL) {
-        user.photo_url = firebaseUser.photoURL;
-      }
-    }
-
-    return user;
-  };
-
-  // ------------------------------------------------------------------
-  // Google Sign-In — subdomain auto-detected
+  // Google Sign-In
   // ------------------------------------------------------------------
   const signInWithGoogle = useCallback(async () => {
-    // 1. Native Google sign-in → Firebase credential
-    const userCredential = await fbSignInWithGoogle();
-
-    // 2. Get the Firebase idToken
-    const idToken = await userCredential.user.getIdToken();
-
-    // 3. Exchange with backend (landlord first, then tenant redirect)
-    await backendLogin(idToken);
+    await fbSignInWithGoogle();
+    // ConvexProviderWithAuth picks up the Firebase user automatically
   }, []);
 
   // ------------------------------------------------------------------
-  // Email / Password Sign-In — subdomain auto-detected
+  // Email / Password Sign-In
   // ------------------------------------------------------------------
   const signInWithEmail = useCallback(
     async ({ email, password }: { email: string; password: string }) => {
-      // 1. Firebase email/password sign-in
-      const userCredential = await fbSignInWithEmail(email, password);
-
-      // 2. Get the Firebase idToken
-      const idToken = await userCredential.user.getIdToken();
-
-      // 3. Exchange with backend (landlord first, then tenant redirect)
-      await backendLogin(idToken);
+      await fbSignInWithEmail(email, password);
+      // ConvexProviderWithAuth picks up the Firebase user automatically
     },
     [],
   );
@@ -403,72 +204,45 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await firebaseSignOut();
     } catch {}
 
-    await Promise.all([
-      AsyncStorage.removeItem(STORAGE_KEY_TOKEN),
-      AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN),
-      AsyncStorage.removeItem(STORAGE_KEY_USER),
-    ]);
-
-    setState({ isLoading: false, token: null, subdomain: null, user: null });
+    await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
+    setTenantId(null);
+    setTenantResolved(false);
   }, []);
 
   // ------------------------------------------------------------------
-  // Select a specific tenant (called from TenantSelectScreen)
+  // Select a specific tenant
   // ------------------------------------------------------------------
   const selectTenant = useCallback(
-    async (tenant: string, firebaseIdToken: string) => {
-      await completeTenantLogin(tenant, firebaseIdToken);
+    async (tenant: string) => {
+      setTenantId(tenant);
+      setPendingTenants(null);
+      await AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, tenant);
+      setTenantResolved(true);
     },
     [],
   );
 
   // ------------------------------------------------------------------
-  // Switch tenant: clear current session, re-query landlord for tenant
-  // list, return tenants + token so caller can navigate to TenantSelect.
-  // Firebase user stays signed in.
+  // Switch tenant
   // ------------------------------------------------------------------
   const switchTenant = useCallback(async (): Promise<{
     tenants: string[];
     firebaseIdToken: string;
   }> => {
-    // Clear current session data (but keep Firebase signed in)
-    await Promise.all([
-      AsyncStorage.removeItem(STORAGE_KEY_TOKEN),
-      AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN),
-      AsyncStorage.removeItem(STORAGE_KEY_USER),
-    ]);
-    setState({ isLoading: false, token: null, subdomain: null, user: null });
+    await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
+    setTenantId(null);
+    setTenantResolved(false);
 
-    // Get fresh Firebase token
     const fbUser = getCurrentUser();
     if (!fbUser) throw new Error('Not signed in');
     const firebaseIdToken = await fbUser.getIdToken(true);
 
-    // Hit landlord to get tenant list
-    const landlordUrl = buildLandlordUrl();
-    const loginUrl = `${landlordUrl}/login`;
-    const resp = await fetch(loginUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ token: firebaseIdToken }),
-    });
-
-    if (resp.status === 225) {
-      const data = await resp.json();
-      const tenantList: string[] = Array.isArray(data.tenants)
-        ? data.tenants
-        : data.tenant
-          ? [data.tenant]
-          : [];
-      if (tenantList.length === 0) throw new Error('No workspaces found for your account');
-      return { tenants: tenantList, firebaseIdToken };
+    if (!myTenants || myTenants.length === 0) {
+      throw new Error('No workspaces found for your account');
     }
 
-    throw new Error('No workspaces found for your account');
-  }, []);
+    return { tenants: myTenants, firebaseIdToken };
+  }, [myTenants]);
 
   return (
     <AuthContext.Provider
@@ -479,6 +253,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         selectTenant,
         switchTenant,
         logout,
+        pendingTenants,
       }}
     >
       {children}

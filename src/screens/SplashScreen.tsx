@@ -19,7 +19,7 @@ type SplashScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 
 
 export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<SplashScreenNavigationProp>();
-  const { isLoading: authLoading, token } = useAuth();
+  const { isLoading: authLoading, token, pendingTenants } = useAuth();
   const navigatedRef = useRef(false);
 
   const logoScale = useRef(new Animated.Value(0.8)).current;
@@ -30,11 +30,16 @@ export const SplashScreen: React.FC = () => {
   const goNext = () => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    const destination = token ? 'Main' : 'Login';
+    let destination: string = token ? 'Main' : 'Login';
+    let params: any = undefined;
+    if (pendingTenants && pendingTenants.length > 1) {
+      destination = 'TenantSelect';
+      params = { tenants: pendingTenants, firebaseIdToken: '' };
+    }
     navigation.dispatch(
       CommonActions.reset({
         index: 0,
-        routes: [{ name: destination }],
+        routes: [{ name: destination, params }],
       })
     );
   };
