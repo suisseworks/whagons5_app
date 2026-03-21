@@ -741,7 +741,19 @@ export const MainScreen: React.FC = () => {
             style={styles.iconButton}
             onPress={() => navigation.navigate('Settings')}
           >
-            <MaterialIcons name="account-circle" size={24} color={colors.textSecondary} />
+            <View style={{ width: 24, height: 24 }}>
+              <MaterialIcons name="account-circle" size={24} color={colors.textSecondary} />
+              <View style={{
+                position: 'absolute',
+                top: 0.5,
+                left: 0.5,
+                width: 23,
+                height: 23,
+                borderRadius: 11.5,
+                borderWidth: 1.5,
+                borderColor: syncError ? '#9ca3af' : isSyncing ? '#f59e0b' : '#22c55e',
+              }} />
+            </View>
             {notificationCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -876,19 +888,6 @@ export const MainScreen: React.FC = () => {
             <MaterialIcons name="add" size={28} color="#FFFFFF" />
           </TouchableOpacity>
 
-          {/* Sync status dot below FAB */}
-          <View
-            style={[
-              styles.syncDotIndicator,
-              {
-                backgroundColor: syncError
-                  ? '#ef4444'
-                  : isSyncing
-                    ? '#f59e0b'
-                    : '#22c55e',
-              },
-            ]}
-          />
         </View>
       )}
 
@@ -1444,16 +1443,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     ...shadows.lifted,
-  },
-  syncDotIndicator: {
-    position: 'absolute',
-    right: 39,
-    bottom: 40,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
   },
 
   menuModalOverlay: {

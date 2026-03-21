@@ -69,7 +69,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           styles.card,
           {
             backgroundColor: colors.surface,
-            borderLeftColor: statusColor(task.status, task.statusColor),
+            borderLeftColor: priorityColor(task.priority),
             borderColor,
             transform: [{ scale: scaleAnim }],
           },
@@ -100,7 +100,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
 
       {/* Line 2: Priority + location + form icon + assignee avatars */}
       <View style={styles.infoRow}>
-        <CustomChip label={task.priority} color={priorityColor(task.priority)} compact />
+        <CustomChip label={task.status} color={statusColor(task.status, task.statusColor)} compact />
         {task.spot !== '' && (
           <View style={[styles.spotChip, { backgroundColor: spotBg }]}>
             <Text style={[styles.spotText, { color: spotTextColor }]} numberOfLines={1}>
