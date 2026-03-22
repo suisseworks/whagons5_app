@@ -486,6 +486,23 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     );
   }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap]);
 
+  // Helper: set a local override that auto-clears after a short delay
+  const setTimedOverride = useCallback((taskId: string, override: Partial<TaskItem>) => {
+    setLocalOverrides((prev) => {
+      const next = new Map(prev);
+      next.set(taskId, override);
+      return next;
+    });
+    setTimeout(() => {
+      setLocalOverrides((prev) => {
+        if (!prev.has(taskId)) return prev;
+        const next = new Map(prev);
+        next.delete(taskId);
+        return next;
+      });
+    }, 3000);
+  }, []);
+
   // workspace_id is now embedded directly on each TaskItem (workspaceId field)
   // so we no longer need a separate parallel array for index-based filtering.
 
@@ -705,24 +722,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
 
-    setLocalOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
-      return next;
-    });
+    setTimedOverride(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
 
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 
     if (finalStatusId && tenantId) {
-      patchTaskMutation({
-        tenantId,
-        id: taskId as any,
-        statusId: finalStatusId as any,
-      }).catch((err: any) => {
-        console.warn('[TaskContext] Failed to complete working task:', err);
-      });
+      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
+      const statusConvexId = statusConvexIdMap.get(finalStatusId);
+      if (taskConvexId && statusConvexId) {
+        patchTaskMutation({
+          tenantId,
+          id: taskConvexId as any,
+          statusId: statusConvexId as any,
+        }).catch((err: any) => {
+          console.warn('[TaskContext] Failed to complete working task:', err);
+        });
+      }
     }
-  }, [finalStatus, data.statuses, tenantId, patchTaskMutation]);
+  }, [finalStatus, data.statuses, tenantId, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap]);
 
   const isTaskWorking = useCallback((taskId: string) => {
     return workingTaskIds.includes(taskId);
@@ -771,20 +788,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updateTask = (index: number, task: TaskItem) => {
     if (task.id) {
-      setLocalOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(task.id!, task);
-        return next;
-      });
+      setTimedOverride(task.id, task);
     }
   };
 
   const changeTaskStatus = useCallback((taskId: string, status: StatusOption) => {
-    setLocalOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(taskId, { status: status.name, statusColor: status.color, statusId: status.id });
-      return next;
-    });
+    setTimedOverride(taskId, { status: status.name, statusColor: status.color, statusId: status.id });
 
     const fullStatus = data.statuses.find((s) => s.id === status.id);
     const isFinal = status.final ?? fullStatus?.final ?? false;
@@ -811,11 +820,6 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           statusId: statusConvexId as any,
         }).catch((err: any) => {
           console.warn('[TaskContext] Failed to change status:', err);
-          setLocalOverrides((prev) => {
-            const next = new Map(prev);
-            next.delete(taskId);
-            return next;
-          });
         });
       } else {
         console.warn('[TaskContext] Could not resolve Convex IDs for status change', { taskId, taskConvexId, statusId: status.id, statusConvexId });
@@ -828,11 +832,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
 
-    setLocalOverrides((prev) => {
-      const next = new Map(prev);
-      next.set(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
-      return next;
-    });
+    setTimedOverride(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
 
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 
@@ -854,25 +854,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const assignTaskToYou = (taskId: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
     if (task && !task.assignees.includes('You')) {
-      setLocalOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(taskId, { assignees: [...task.assignees, 'You'] });
-        return next;
-      });
+      setTimedOverride(taskId, { assignees: [...task.assignees, 'You'] });
     }
   };
 
   const assignTaskToUser = useCallback((taskId: string, userId: number, userName: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
     if (task && !task.assignees.some((a) => a.name === userName)) {
-      setLocalOverrides((prev) => {
-        const next = new Map(prev);
-        next.set(taskId, { assignees: [...task.assignees, { name: userName, picture: null }] });
-        return next;
-      });
+      setTimedOverride(taskId, { assignees: [...task.assignees, { name: userName, picture: null }] });
       // TODO: persist via Convex mutation when assignee mutation is available
     }
-  }, [filteredTasks]);
+  }, [filteredTasks, setTimedOverride]);
 
   // Form version map
   const formVersionMap = useMemo(() => {
