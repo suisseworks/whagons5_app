@@ -23,6 +23,8 @@ export interface TaskItem {
   statusColor?: string | null;
   statusId?: string | number | null;
   categoryId?: string | number | null;
+  /** Resolved workspace pgId (used for workspace filtering) */
+  workspaceId?: string | number | null;
   assignees: Assignee[];
   createdAt: string;
   tags: string[];

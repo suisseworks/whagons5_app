@@ -98,6 +98,7 @@ function mapTaskToItem(
     statusColor: status.color,
     statusId: task.status_id ?? null,
     categoryId: task.category_id ?? null,
+    workspaceId: task.workspace_id ?? null,
     assignees: assigneeMap.get(task.id) ?? [],
     createdAt: formatDate(task.created_at),
     tags: tagMap.get(task.id) ?? [],
@@ -289,6 +290,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.statuses]);
 
+  // Reverse lookup: resolved pgId → Convex _id for statuses
+  const statusConvexIdMap = useMemo(() => {
+    const m = new Map<AnyId, string>();
+    for (const s of data.statuses) m.set(s.id, (s as any)._id);
+    return m;
+  }, [data.statuses]);
+
   const userMap = useMemo(() => {
     const m = new Map<AnyId, string>();
     for (const u of data.users) m.set(u.id, u.name);
@@ -466,6 +474,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
   // Map tasks
   // ---------------------------------------------------------------------------
+
   const activeTasks = useMemo(() => {
     return data.tasks.filter((t) => !t.deleted_at);
   }, [data.tasks]);
@@ -477,9 +486,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     );
   }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap]);
 
-  const taskWorkspaceIds = useMemo(() => {
-    return activeTasks.map((t) => t.workspace_id);
-  }, [activeTasks]);
+  // workspace_id is now embedded directly on each TaskItem (workspaceId field)
+  // so we no longer need a separate parallel array for index-based filtering.
 
   // ---------------------------------------------------------------------------
   // Filter + paginate
@@ -496,7 +504,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsId = ws.id;
-        result = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+        result = allMappedTasks.filter((t) => t.workspaceId === wsId);
       } else {
         result = allMappedTasks;
       }
@@ -533,7 +541,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return result;
-  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters]);
 
   const availableAssignees = useMemo(() => {
     let wsFiltered: TaskItem[];
@@ -543,7 +551,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsId = ws.id;
-        wsFiltered = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+        wsFiltered = allMappedTasks.filter((t) => t.workspaceId === wsId);
       } else {
         wsFiltered = allMappedTasks;
       }
@@ -553,7 +561,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       for (const a of t.assignees) names.add(a.name);
     }
     return Array.from(names).sort();
-  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace]);
 
   const availableTags = useMemo(() => {
     let wsFiltered: TaskItem[];
@@ -563,7 +571,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsId = ws.id;
-        wsFiltered = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+        wsFiltered = allMappedTasks.filter((t) => t.workspaceId === wsId);
       } else {
         wsFiltered = allMappedTasks;
       }
@@ -573,7 +581,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       for (const tag of t.tags) tagNames.add(tag);
     }
     return Array.from(tagNames).sort();
-  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace]);
 
   const availableStatuses: StatusOption[] = useMemo(() => {
     let wsFiltered: TaskItem[];
@@ -583,7 +591,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsId = ws.id;
-        wsFiltered = allMappedTasks.filter((_, i) => taskWorkspaceIds[i] === wsId);
+        wsFiltered = allMappedTasks.filter((t) => t.workspaceId === wsId);
       } else {
         wsFiltered = allMappedTasks;
       }
@@ -607,7 +615,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (statusIds.size === 0) return statuses;
 
     return statuses.filter((s) => statusIds.has(s.id));
-  }, [allMappedTasks, taskWorkspaceIds, data.workspaces, selectedWorkspace, statuses, categoryStatusIdsMap]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, statuses, categoryStatusIdsMap]);
 
   // Pagination
   const PAGE_SIZE = 30;
@@ -793,20 +801,27 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     if (tenantId) {
-      patchTaskMutation({
-        tenantId,
-        id: taskId as any,
-        statusId: status.id as any,
-      }).catch((err: any) => {
-        console.warn('[TaskContext] Failed to change status:', err);
-        setLocalOverrides((prev) => {
-          const next = new Map(prev);
-          next.delete(taskId);
-          return next;
+      // Resolve pgIds → Convex _ids for the mutation
+      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
+      const statusConvexId = statusConvexIdMap.get(status.id);
+      if (taskConvexId && statusConvexId) {
+        patchTaskMutation({
+          tenantId,
+          id: taskConvexId as any,
+          statusId: statusConvexId as any,
+        }).catch((err: any) => {
+          console.warn('[TaskContext] Failed to change status:', err);
+          setLocalOverrides((prev) => {
+            const next = new Map(prev);
+            next.delete(taskId);
+            return next;
+          });
         });
-      });
+      } else {
+        console.warn('[TaskContext] Could not resolve Convex IDs for status change', { taskId, taskConvexId, statusId: status.id, statusConvexId });
+      }
     }
-  }, [data.statuses, tenantId, patchTaskMutation]);
+  }, [data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
 
   const markTaskDone = useCallback((taskId: string) => {
     if (!finalStatus) return;
@@ -822,15 +837,19 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 
     if (finalStatusId && tenantId) {
-      patchTaskMutation({
-        tenantId,
-        id: taskId as any,
-        statusId: finalStatusId as any,
-      }).catch((err: any) => {
-        console.warn('[TaskContext] Failed to mark task done:', err);
-      });
+      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
+      const statusConvexId = statusConvexIdMap.get(finalStatusId);
+      if (taskConvexId && statusConvexId) {
+        patchTaskMutation({
+          tenantId,
+          id: taskConvexId as any,
+          statusId: statusConvexId as any,
+        }).catch((err: any) => {
+          console.warn('[TaskContext] Failed to mark task done:', err);
+        });
+      }
     }
-  }, [finalStatus, data.statuses, tenantId, patchTaskMutation]);
+  }, [finalStatus, data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
 
   const assignTaskToYou = (taskId: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);

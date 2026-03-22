@@ -340,7 +340,10 @@ export const CreateTaskScreen: React.FC = () => {
         name: finalName,
         description: description.trim() || undefined,
         workspaceConvexId,
-        categoryConvexId: selectedCategory?._id,
+        categoryConvexId: selectedCategory?._id
+          ?? (workspaceCategories.length === 1 ? (workspaceCategories[0] as any)._id : undefined)
+          ?? currentWorkspace?.categoryId
+          ?? undefined,
         templateConvexId: selectedTemplate?._id,
         spotConvexId: selectedSpot?._id,
         statusConvexId: initialStatusConvexId ?? undefined,
@@ -360,6 +363,7 @@ export const CreateTaskScreen: React.FC = () => {
     taskName, description, selectedCategory, selectedTemplate,
     selectedSpot, selectedPriority, selectedAssignees,
     initialStatusConvexId, workspaceConvexId, createTask, navigation, isFreeform,
+    workspaceCategories, currentWorkspace,
   ]);
 
   // ---------------------------------------------------------------------------
