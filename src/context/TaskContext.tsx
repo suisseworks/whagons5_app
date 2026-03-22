@@ -173,6 +173,20 @@ export interface FormSchemaField {
   };
 }
 
+export interface CreateTaskArgs {
+  name: string;
+  description?: string;
+  workspaceConvexId: string;
+  categoryConvexId?: string;
+  templateConvexId?: string;
+  spotConvexId?: string;
+  statusConvexId?: string;
+  priorityConvexId?: string;
+  userConvexIds?: string[];
+  dueDate?: number;
+  startDate?: number;
+}
+
 interface TaskContextType {
   tasks: TaskItem[];
   totalTaskCount: number;
@@ -189,6 +203,7 @@ interface TaskContextType {
   initialStatus: { name: string; color: string | null } | null;
   finalStatus: { name: string; color: string | null } | null;
   getAllowedStatuses: (task: TaskItem) => StatusOption[];
+  createTask: (args: CreateTaskArgs) => Promise<string>;
   addTask: (task: TaskItem) => void;
   updateTask: (index: number, task: TaskItem) => void;
   setActiveTask: (task: TaskItem | null, markDone?: boolean) => void;
@@ -224,6 +239,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { tenantId } = useTenant();
 
   // Convex mutations
+  const createTaskMutation = useMutation(api.tasks.create);
   const patchTaskMutation = useMutation(api.tasks.update);
 
   // Multi-task working state (persisted to AsyncStorage)
@@ -720,8 +736,29 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Mutations (Convex)
   // ---------------------------------------------------------------------------
 
+  const createTask = useCallback(async (args: CreateTaskArgs): Promise<string> => {
+    if (!tenantId) throw new Error('No tenant selected');
+
+    const mutationArgs: Record<string, any> = {
+      tenantId,
+      name: args.name,
+      workspaceId: args.workspaceConvexId,
+    };
+    if (args.description) mutationArgs.description = args.description;
+    if (args.categoryConvexId) mutationArgs.categoryId = args.categoryConvexId;
+    if (args.templateConvexId) mutationArgs.templateId = args.templateConvexId;
+    if (args.spotConvexId) mutationArgs.spotId = args.spotConvexId;
+    if (args.statusConvexId) mutationArgs.statusId = args.statusConvexId;
+    if (args.priorityConvexId) mutationArgs.priorityId = args.priorityConvexId;
+    if (args.dueDate) mutationArgs.dueDate = args.dueDate;
+    if (args.startDate) mutationArgs.startDate = args.startDate;
+
+    const taskId = await createTaskMutation(mutationArgs as any);
+    return String(taskId);
+  }, [tenantId, createTaskMutation]);
+
   const addTask = (_task: TaskItem) => {
-    // TODO: implement via Convex mutation
+    // Legacy stub - use createTask instead
   };
 
   const updateTask = (index: number, task: TaskItem) => {
@@ -904,6 +941,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       initialStatus,
       finalStatus,
       getAllowedStatuses,
+      createTask,
       addTask,
       updateTask,
       setActiveTask,
@@ -946,6 +984,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       initialStatus,
       finalStatus,
       getAllowedStatuses,
+      createTask,
       setActiveTask,
       addWorkingTask,
       removeWorkingTask,
