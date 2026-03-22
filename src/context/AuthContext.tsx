@@ -210,6 +210,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
     setTenantId(null);
     setTenantResolved(false);
+    setPendingTenants(null);
   }, []);
 
   // ------------------------------------------------------------------

@@ -23,7 +23,7 @@ type RoutePropType = RouteProp<RootStackParamList, 'TenantSelect'>;
 export const TenantSelectScreen: React.FC = () => {
   const navigation = useNavigation<NavProp>();
   const route = useRoute<RoutePropType>();
-  const { selectTenant } = useAuth();
+  const { selectTenant, logout } = useAuth();
 
   const { tenants, firebaseIdToken } = route.params;
   const [selecting, setSelecting] = useState<string | null>(null);
@@ -124,11 +124,12 @@ export const TenantSelectScreen: React.FC = () => {
       <View style={styles.footer}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() =>
+          onPress={async () => {
+            await logout();
             navigation.dispatch(
               CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }),
-            )
-          }
+            );
+          }}
         >
           <MaterialIcons name="arrow-back" size={18} color="#8B8E84" />
           <Text style={styles.backText}>Back to sign in</Text>
