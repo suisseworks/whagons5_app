@@ -66,6 +66,14 @@ export async function signInWithGoogle(): Promise<FirebaseAuthTypes.UserCredenti
 }
 
 // ---------------------------------------------------------------------------
+// Microsoft Sign-In — TODO
+// ---------------------------------------------------------------------------
+// Requires `react-native-app-auth` + a configured Azure AD client ID.
+// Re-enable when ready:
+//   npm install react-native-app-auth
+//   Then restore signInWithMicrosoft() using OAuthProvider + authorize().
+
+// ---------------------------------------------------------------------------
 // Email / Password Sign-In
 // ---------------------------------------------------------------------------
 

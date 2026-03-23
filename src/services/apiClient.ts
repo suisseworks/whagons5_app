@@ -274,6 +274,19 @@ export class ApiClient {
   // Task notes / comments endpoints (tenant-level: /api/task-notes)
   // ---------------------------------------------------------------------------
 
+  /** Mark a task as seen by the authenticated user (fire-and-forget). */
+  async markTaskAsSeen(taskId: number | string): Promise<void> {
+    const url = `${this.baseUrl}/tasks/${taskId}/seen`;
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: this.getHeaders(),
+      });
+    } catch {
+      // Non-fatal: seen tracking should never block the user
+    }
+  }
+
   /** Fetch all notes for a given task. */
   async getTaskNotes(taskId: number | string): Promise<TaskNoteResponse[]> {
     const url = `${this.baseUrl}/task-notes?task_id=${taskId}`;

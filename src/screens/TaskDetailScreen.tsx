@@ -146,6 +146,14 @@ export const TaskDetailScreen: React.FC = () => {
     }, [fetchNotes]),
   );
 
+  // Mark task as seen when screen opens (fire-and-forget)
+  const seenRef = useRef<number | string | null>(null);
+  useEffect(() => {
+    if (!task.id || seenRef.current === task.id) return;
+    seenRef.current = task.id;
+    apiClient.markTaskAsSeen(task.id);
+  }, [task.id]);
+
   const isWorking = task.id ? isTaskWorking(task.id) : false;
 
   const handleStartWorking = async () => {

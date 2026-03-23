@@ -71,6 +71,9 @@ interface AuthContextType extends AuthState {
   /** Sign in with Google (native). Subdomain is auto-detected. */
   signInWithGoogle: () => Promise<void>;
 
+  /** Sign in with Microsoft (Azure AD / Entra ID). Subdomain is auto-detected. */
+  signInWithMicrosoft: (azureTenantId?: string | null) => Promise<void>;
+
   /** Sign in with email + password via Firebase. Subdomain is auto-detected. */
   signInWithEmail: (params: {
     email: string;
@@ -112,8 +115,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     user: null,
   });
 
-  // Prevent double-login race
-  const loginInProgress = useRef(false);
+  // Promise-based lock: if a login is in progress, subsequent callers
+  // await the same promise instead of silently returning.
+  const loginPromiseRef = useRef<Promise<void> | null>(null);
 
   // ------------------------------------------------------------------
   // Restore persisted session on mount, then verify via Firebase.
@@ -166,11 +170,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (!firebaseUser) return;
       if (state.token) return; // Already have a valid session
 
+      console.log('[AUTH] onAuthStateChanged: Firebase user detected, attempting backendLogin...');
       try {
         const idToken = await firebaseUser.getIdToken();
         await backendLogin(idToken);
-      } catch {
-        // Silent – user will see the login screen
+        console.log('[AUTH] onAuthStateChanged: backendLogin succeeded');
+      } catch (err: any) {
+        console.error('[AUTH] onAuthStateChanged: backendLogin failed:', err?.message);
       }
     });
     return unsubscribe;
@@ -241,90 +247,94 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   //   2. If 225 → extract tenant subdomain → retry with subdomain
   //   3. If 200 on landlord → user exists but has no tenant
   // ------------------------------------------------------------------
-  const backendLogin = async (firebaseIdToken: string) => {
-    if (loginInProgress.current) return;
-    loginInProgress.current = true;
+  const backendLogin = (firebaseIdToken: string): Promise<void> => {
+    // If a login is already in progress, piggy-back on that promise
+    // so every caller gets the real result (success or error).
+    if (loginPromiseRef.current) {
+      console.log('[AUTH] backendLogin: already in progress – waiting for existing promise');
+      return loginPromiseRef.current;
+    }
 
-    try {
-      // Step 1: POST to landlord
-      const landlordUrl = buildLandlordUrl();
-      const loginUrl = `${landlordUrl}/login`;
-      console.log('[AUTH] ====== Backend Login Start ======');
-      console.log('[AUTH] API_CONFIG:', JSON.stringify(API_CONFIG));
-      console.log('[AUTH] Landlord login URL:', loginUrl);
-      console.log('[AUTH] Firebase token (first 20 chars):', firebaseIdToken.substring(0, 20) + '...');
-
-      let resp: Response;
+    const doLogin = async () => {
       try {
-        resp = await fetch(loginUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({ token: firebaseIdToken }),
-        });
-        console.log('[AUTH] Landlord response status:', resp.status);
-        console.log('[AUTH] Landlord response headers:', JSON.stringify(Object.fromEntries(resp.headers.entries())));
-      } catch (fetchError: any) {
-        console.error('[AUTH] Landlord fetch FAILED:', fetchError?.message);
-        console.error('[AUTH] Fetch error type:', fetchError?.constructor?.name);
-        console.error('[AUTH] Fetch error details:', JSON.stringify(fetchError, Object.getOwnPropertyNames(fetchError)));
-        throw new Error(`Network request failed. Could not reach ${loginUrl}. Check that the backend is running and accessible. (${fetchError?.message})`);
-      }
+        // Step 1: POST to landlord
+        const landlordUrl = buildLandlordUrl();
+        const loginUrl = `${landlordUrl}/login`;
+        console.log('[AUTH] ====== Backend Login Start ======');
+        console.log('[AUTH] API_CONFIG:', JSON.stringify(API_CONFIG));
+        console.log('[AUTH] Landlord login URL:', loginUrl);
+        console.log('[AUTH] Firebase token (first 20 chars):', firebaseIdToken.substring(0, 20) + '...');
 
-      // Step 2: Handle 225 – tenant redirect
-      if (resp.status === 225) {
-        const data = await resp.json();
-        console.log('[AUTH] 225 response data:', JSON.stringify(data));
-
-        // Backend may return a single tenant string or an array of tenants
-        let tenant: string | undefined = data.tenant;
-        const tenantList: string[] = Array.isArray(data.tenants) ? data.tenants : [];
-
-        if (!tenant && tenantList.length > 0) {
-          if (tenantList.length === 1) {
-            tenant = tenantList[0];
-          } else {
-            // Multi-tenant: throw so the caller (LoginScreen) can navigate to TenantSelectScreen
-            throw new TenantChoiceRequired(tenantList, firebaseIdToken);
-          }
+        let resp: Response;
+        try {
+          resp = await fetch(loginUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({ token: firebaseIdToken }),
+          });
+          console.log('[AUTH] Landlord response status:', resp.status);
+          console.log('[AUTH] Landlord response headers:', JSON.stringify(Object.fromEntries(resp.headers.entries())));
+        } catch (fetchError: any) {
+          console.error('[AUTH] Landlord fetch FAILED:', fetchError?.message);
+          console.error('[AUTH] Fetch error type:', fetchError?.constructor?.name);
+          console.error('[AUTH] Fetch error details:', JSON.stringify(fetchError, Object.getOwnPropertyNames(fetchError)));
+          throw new Error(`Network request failed. Could not reach ${loginUrl}. Check that the backend is running and accessible. (${fetchError?.message})`);
         }
-        if (!tenant) throw new Error('No tenant in 225 response');
 
-        // Complete login for this single tenant
-        await completeTenantLogin(tenant, firebaseIdToken);
-        return;
-      }
+        // Step 2: Handle 225 – tenant redirect
+        if (resp.status === 225) {
+          const data = await resp.json();
+          console.log('[AUTH] 225 response data:', JSON.stringify(data));
 
-      // Step 3: Handle 200 on landlord – user exists but may not have a tenant
-      if (resp.ok) {
-        console.log('[AUTH] Landlord returned 200 (no tenant redirect)');
-        const data = await resp.json();
-        const token: string =
-          data.token ?? data.access_token ?? data.data?.token;
+          let tenant: string | undefined = data.tenant;
+          const tenantList: string[] = Array.isArray(data.tenants) ? data.tenants : [];
 
-        if (!token) {
+          if (!tenant && tenantList.length > 0) {
+            if (tenantList.length === 1) {
+              tenant = tenantList[0];
+            } else {
+              throw new TenantChoiceRequired(tenantList, firebaseIdToken);
+            }
+          }
+          if (!tenant) throw new Error('No tenant in 225 response');
+
+          await completeTenantLogin(tenant, firebaseIdToken);
+          return;
+        }
+
+        // Step 3: Handle 200 on landlord – user exists but may not have a tenant
+        if (resp.ok) {
+          console.log('[AUTH] Landlord returned 200 (no tenant redirect)');
+          const data = await resp.json();
+          const token: string =
+            data.token ?? data.access_token ?? data.data?.token;
+
+          if (!token) {
+            throw new Error(
+              'Your account is not associated with any company. Please contact your administrator.',
+            );
+          }
+
           throw new Error(
             'Your account is not associated with any company. Please contact your administrator.',
           );
         }
 
-        // We got a landlord token, but the user doesn't have a tenant.
-        // This means they're a new user without a company.
-        throw new Error(
-          'Your account is not associated with any company. Please contact your administrator.',
-        );
+        // Any other error
+        const body = await resp.text();
+        console.error('[AUTH] Unexpected response:', resp.status, body);
+        throw new Error(`Login failed (${resp.status}): ${body}`);
+      } finally {
+        loginPromiseRef.current = null;
+        console.log('[AUTH] ====== Backend Login End ======');
       }
+    };
 
-      // Any other error
-      const body = await resp.text();
-      console.error('[AUTH] Unexpected response:', resp.status, body);
-      throw new Error(`Login failed (${resp.status}): ${body}`);
-    } finally {
-      loginInProgress.current = false;
-      console.log('[AUTH] ====== Backend Login End ======');
-    }
+    loginPromiseRef.current = doLogin();
+    return loginPromiseRef.current;
   };
 
   // ------------------------------------------------------------------
@@ -368,14 +378,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Google Sign-In — subdomain auto-detected
   // ------------------------------------------------------------------
   const signInWithGoogle = useCallback(async () => {
-    // 1. Native Google sign-in → Firebase credential
+    console.log('[AUTH] signInWithGoogle: starting Google native flow...');
     const userCredential = await fbSignInWithGoogle();
+    console.log('[AUTH] signInWithGoogle: Firebase credential obtained for', userCredential.user.email);
 
-    // 2. Get the Firebase idToken
     const idToken = await userCredential.user.getIdToken();
+    console.log('[AUTH] signInWithGoogle: got idToken, calling backendLogin...');
 
-    // 3. Exchange with backend (landlord first, then tenant redirect)
     await backendLogin(idToken);
+    console.log('[AUTH] signInWithGoogle: backendLogin complete');
+  }, []);
+
+  // ------------------------------------------------------------------
+  // Microsoft Sign-In — subdomain auto-detected
+  // ------------------------------------------------------------------
+  const signInWithMicrosoft = useCallback(async (_azureTenantId?: string | null) => {
+    throw new Error(
+      'Microsoft Sign-In is not yet configured. Install react-native-app-auth and set up Azure AD credentials first.',
+    );
   }, []);
 
   // ------------------------------------------------------------------
@@ -475,6 +495,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       value={{
         ...state,
         signInWithGoogle,
+        signInWithMicrosoft,
         signInWithEmail,
         selectTenant,
         switchTenant,

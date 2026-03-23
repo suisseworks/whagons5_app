@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useAuth, TenantChoiceRequired } from '../context/AuthContext';
 import Svg, { Path, Rect, G, Defs, ClipPath } from 'react-native-svg';
+import { API_CONFIG, buildLandlordUrl } from '../config/api';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
@@ -44,16 +45,29 @@ const GoogleLogo = () => (
   </Svg>
 );
 
+// Microsoft logo rendered with react-native-svg (4-color window panes)
+const MicrosoftLogo = () => (
+  <Svg width={20} height={20} viewBox="0 0 21 21" fill="none">
+    <Rect x="1" y="1" width="9" height="9" fill="#F25022" />
+    <Rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+    <Rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+    <Rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+  </Svg>
+);
+
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const { width, height } = useWindowDimensions();
-  const { signInWithGoogle, signInWithEmail } = useAuth();
+  const { signInWithGoogle, signInWithMicrosoft, signInWithEmail } = useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isObscured, setIsObscured] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isMicrosoftLoading, setIsMicrosoftLoading] = useState(false);
+  const [microsoftEnabled, setMicrosoftEnabled] = useState(false);
+  const [azureTenantId, setAzureTenantId] = useState<string | null>(null);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   // Animations
@@ -89,8 +103,31 @@ export const LoginScreen: React.FC = () => {
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
+  // Fetch auth providers from the public API to conditionally show Microsoft button
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const landlordUrl = buildLandlordUrl();
+        const resp = await fetch(`${landlordUrl}/public/auth-providers`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          if (!cancelled) {
+            if (json?.data?.microsoft_login_enabled) setMicrosoftEnabled(true);
+            if (json?.data?.microsoft_azure_tenant_id) setAzureTenantId(json.data.microsoft_azure_tenant_id);
+          }
+        }
+      } catch {
+        // Microsoft stays disabled by default
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const isLargeScreen = width > 800;
-  const anyLoading = isLoading || isGoogleLoading;
+  const anyLoading = isLoading || isGoogleLoading || isMicrosoftLoading;
 
   const navigateToMain = () => {
     navigation.dispatch(
@@ -98,12 +135,38 @@ export const LoginScreen: React.FC = () => {
     );
   };
 
+  // ── TEMP: Auto-login for demo ──────────────────────────────────────
+  const autoLoginAttempted = useRef(false);
+  useEffect(() => {
+    if (autoLoginAttempted.current) return;
+    autoLoginAttempted.current = true;
+    (async () => {
+      try {
+        await signInWithEmail({ email: 'demo@whagons.com', password: 'demo' });
+        navigateToMain();
+      } catch (err: any) {
+        if (err instanceof TenantChoiceRequired) {
+          navigation.navigate('TenantSelect', {
+            tenants: err.tenants,
+            firebaseIdToken: err.firebaseIdToken,
+          });
+          return;
+        }
+        console.warn('[LOGIN] Auto-login failed:', err?.message);
+      }
+    })();
+  }, []);
+  // ── END TEMP ───────────────────────────────────────────────────────
+
   const handleGoogleSignIn = async () => {
+    console.log('[LOGIN] handleGoogleSignIn: button pressed');
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
+      console.log('[LOGIN] handleGoogleSignIn: success, navigating to main');
       navigateToMain();
     } catch (err: any) {
+      console.error('[LOGIN] handleGoogleSignIn error:', err?.message, err);
       if (err instanceof TenantChoiceRequired) {
         navigation.navigate('TenantSelect', {
           tenants: err.tenants,
@@ -113,12 +176,36 @@ export const LoginScreen: React.FC = () => {
       }
       const msg = err?.message || 'Google sign-in failed. Please try again.';
       if (msg.includes('CANCELED') || msg.includes('cancelled')) {
-        // User cancelled
+        console.log('[LOGIN] handleGoogleSignIn: user cancelled');
       } else {
         Alert.alert('Sign-In Failed', msg);
       }
     } finally {
       setIsGoogleLoading(false);
+    }
+  };
+
+  const handleMicrosoftSignIn = async () => {
+    setIsMicrosoftLoading(true);
+    try {
+      await signInWithMicrosoft(azureTenantId);
+      navigateToMain();
+    } catch (err: any) {
+      if (err instanceof TenantChoiceRequired) {
+        navigation.navigate('TenantSelect', {
+          tenants: err.tenants,
+          firebaseIdToken: err.firebaseIdToken,
+        });
+        return;
+      }
+      const msg = err?.message || 'Microsoft sign-in failed. Please try again.';
+      if (msg.includes('CANCELED') || msg.includes('cancelled') || msg.includes('user_cancelled')) {
+        // User cancelled
+      } else {
+        Alert.alert('Sign-In Failed', msg);
+      }
+    } finally {
+      setIsMicrosoftLoading(false);
     }
   };
 
@@ -160,7 +247,8 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
-  const LoginForm = () => (
+  // ---- Inline form JSX (not a nested component) ----
+  const formJSX = (
     <Animated.View
       style={[
         styles.formContainer,
@@ -243,6 +331,25 @@ export const LoginScreen: React.FC = () => {
           </View>
         )}
       </TouchableOpacity>
+
+      {/* Microsoft (shown only when tenant owner enables it) */}
+      {microsoftEnabled && (
+        <TouchableOpacity
+          style={[styles.microsoftButton, anyLoading && styles.loginButtonDisabled]}
+          onPress={handleMicrosoftSignIn}
+          disabled={anyLoading}
+          activeOpacity={0.85}
+        >
+          {isMicrosoftLoading ? (
+            <ActivityIndicator color="#212121" />
+          ) : (
+            <View style={styles.microsoftButtonContent}>
+              <MicrosoftLogo />
+              <Text style={styles.microsoftButtonText}>Continue with Microsoft</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      )}
     </Animated.View>
   );
 
@@ -257,7 +364,7 @@ export const LoginScreen: React.FC = () => {
               <Text style={styles.brandName}>Whagons</Text>
               <Text style={styles.tagline}>Operational Intelligence in Action.</Text>
             </View>
-            <LoginForm />
+            {formJSX}
           </View>
         </View>
       </SafeAreaView>
@@ -265,6 +372,8 @@ export const LoginScreen: React.FC = () => {
   }
 
   // ---- Phone layout ----
+  // Always use ScrollView so the tree structure stays stable when the
+  // keyboard opens/closes (no unmount/remount of the form).
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar barStyle="dark-content" backgroundColor="#F4F1EA" translucent={false} />
@@ -272,38 +381,37 @@ export const LoginScreen: React.FC = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
-        {keyboardVisible ? (
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            bounces={false}
-            overScrollMode="never"
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          bounces={false}
+          overScrollMode="never"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Logo: compact when keyboard is up, full otherwise */}
+          {keyboardVisible ? (
             <View style={styles.keyboardHeader}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMarkSmall} />
               <Text style={styles.brandNameSmall}>Whagons</Text>
             </View>
-            <LoginForm />
-          </ScrollView>
-        ) : (
-          <View style={styles.flex}>
-            {/* Top: Logo area */}
+          ) : (
             <Animated.View style={[styles.logoSection, { opacity: logoFade }]}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
               <Text style={styles.brandName}>Whagons</Text>
               <Text style={styles.tagline}>Operational Intelligence in Action.</Text>
             </Animated.View>
+          )}
 
-            {/* Bottom: Form */}
-            <LoginForm />
+          {/* Form - always mounted in the same tree position */}
+          {formJSX}
 
-            {/* Footer */}
+          {/* Footer */}
+          {!keyboardVisible && (
             <View style={styles.footer}>
               <Text style={styles.footerText}>Operational Intelligence in Action.</Text>
             </View>
-          </View>
-        )}
+          )}
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -452,6 +560,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   googleButtonText: {
+    marginLeft: 10,
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodyMedium,
+    color: '#1E2321',
+  },
+  microsoftButton: {
+    height: 52,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: '#E6E1D7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    marginTop: 10,
+  },
+  microsoftButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  microsoftButtonText: {
     marginLeft: 10,
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
