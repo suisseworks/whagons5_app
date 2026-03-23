@@ -32,6 +32,8 @@ import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
 import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
+import { apiClient } from '../services/apiClient';
+import { getCurrentUser } from '../firebase/authService';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
 interface TaskNoteResponse {
@@ -145,6 +147,29 @@ export const TaskDetailScreen: React.FC = () => {
 
   const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
+
+  const restSeenForTaskRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const taskIdStr = task.id;
+    if (!taskIdStr || !subdomain) return;
+    const pgId = Number(taskIdStr);
+    if (!Number.isFinite(pgId) || pgId <= 0) return;
+    if (restSeenForTaskRef.current === taskIdStr) return;
+    restSeenForTaskRef.current = taskIdStr;
+
+    const fbUser = getCurrentUser();
+    if (!fbUser) return;
+
+    void (async () => {
+      try {
+        const idToken = await fbUser.getIdToken();
+        apiClient.configure(subdomain, idToken);
+        await apiClient.markTaskAsSeen(taskIdStr);
+      } catch {
+        // Fire-and-forget; backend may use Sanctum instead of Firebase JWT
+      }
+    })();
+  }, [task.id, subdomain]);
 
   const handleStatusChange = (status: StatusOption) => {
     changeTaskStatus(task.id || '', status);
