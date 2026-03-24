@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { StatusBar } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme, Theme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
@@ -29,14 +29,31 @@ const AppStatusBar = () => {
 };
 
 export const AppNavigator: React.FC = () => {
+  const { isDarkMode, colors } = useTheme();
+
+  const navigationTheme: Theme = useMemo(
+    () => ({
+      ...(isDarkMode ? DarkTheme : DefaultTheme),
+      colors: {
+        ...(isDarkMode ? DarkTheme.colors : DefaultTheme.colors),
+        background: colors.background,
+        card: colors.surface,
+        text: colors.text,
+        primary: colors.primary,
+      },
+    }),
+    [isDarkMode, colors],
+  );
+
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={navigationTheme}>
       <AppStatusBar />
       <Stack.Navigator
         initialRouteName="Splash"
         screenOptions={{
           headerShown: false,
           animation: 'slide_from_right',
+          contentStyle: { backgroundColor: colors.background },
         }}
       >
         <Stack.Screen name="Splash" component={SplashScreen} />
