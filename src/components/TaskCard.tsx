@@ -69,18 +69,24 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           styles.card,
           {
             backgroundColor: colors.surface,
-            borderLeftColor: priorityColor(task.priority),
+            borderLeftColor: statusColor(task.status, task.statusColor),
             borderColor,
             transform: [{ scale: scaleAnim }],
           },
         ]}
       >
-      {/* Line 1: Flag icon + Title */}
+      {/* Line 1: Priority circle + personal flag + Title + ID */}
       <View style={styles.titleRow}>
+        <MaterialCommunityIcons
+          name="circle"
+          size={14}
+          color={priorityColor(task.priority)}
+          style={styles.flagIcon}
+        />
         {flagHex && (
           <MaterialCommunityIcons
-            name="flag"
-            size={16}
+            name="bookmark"
+            size={14}
             color={flagHex}
             style={styles.flagIcon}
           />
@@ -88,7 +94,9 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
           {task.title}
         </Text>
-
+        {task.id && (
+          <Text style={[styles.taskId, { color: mutedText }]}>#{task.id}</Text>
+        )}
       </View>
 
       {/* Description preview (only in detailed mode) */}
@@ -200,6 +208,12 @@ const styles = StyleSheet.create({
     minWidth: 0,
     fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  taskId: {
+    fontSize: 10,
+    fontFamily: fontFamilies.bodyRegular,
+    marginLeft: 6,
+    flexShrink: 0,
   },
   descriptionPreview: {
     fontSize: 12,

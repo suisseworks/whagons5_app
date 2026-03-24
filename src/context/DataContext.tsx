@@ -368,6 +368,8 @@ export interface SyncedData {
 
 interface DataContextType {
   data: SyncedData;
+  sharedTaskIds: Set<number | string>;
+  sharedCount: number;
   isSyncing: boolean;
   hasEverSynced: boolean;
   syncError: string | null;
@@ -764,6 +766,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     skipArgs ?? { tenantId: tenantId! },
   );
 
+  // Shared tasks
+  const rawSharedToMe = useQuery(
+    api.taskResources.listSharedToMe,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+
   // Build the SyncedData object by mapping Convex docs → legacy shape
   const data: SyncedData = useMemo(() => {
     if (!tenantId) return EMPTY_DATA;
@@ -847,6 +855,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards]);
 
+  const sharedTaskIds = useMemo(() => {
+    const ids = new Set<number | string>();
+    if (rawSharedToMe) {
+      for (const share of rawSharedToMe) {
+        if (share.task) {
+          const id = share.task.id ?? share.task.pgId ?? share.task._id;
+          if (id != null) ids.add(id);
+        }
+      }
+    }
+    return ids;
+  }, [rawSharedToMe]);
+
+  const sharedCount = sharedTaskIds.size;
+
   const isLoading = !!tenantId && (refData === undefined || rawTasks === undefined);
   const hasEverSynced = !!tenantId && refData !== undefined && rawTasks !== undefined;
 
@@ -858,6 +881,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     <DataContext.Provider
       value={{
         data,
+        sharedTaskIds,
+        sharedCount,
         isSyncing: isLoading,
         hasEverSynced,
         syncError: null,

@@ -324,10 +324,12 @@ export default defineSchema({
     sharedToTeamId: v.optional(v.id("teams")),
     permission: v.optional(v.string()),
     revokedAt: v.optional(v.number()),
+    status: v.optional(v.string()),
   })
     .index("by_tenantId", ["tenantId"])
     .index("by_taskId", ["tenantId", "taskId"])
-    .index("by_sharedToUserId", ["tenantId", "sharedToUserId"]),
+    .index("by_sharedToUserId", ["tenantId", "sharedToUserId"])
+    .index("by_sharedToTeamId", ["tenantId", "sharedToTeamId"]),
 
   taskRelations: defineTable({
     tenantId: v.string(),

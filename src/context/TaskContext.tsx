@@ -199,6 +199,7 @@ interface TaskContextType {
   selectedWorkspace: string;
   workspaces: string[];
   workspaceObjects: SyncedWorkspace[];
+  sharedCount: number;
   statuses: StatusOption[];
   categories: CategoryOption[];
   initialStatus: { name: string; color: string | null } | null;
@@ -235,13 +236,14 @@ interface TaskContextType {
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { data } = useData();
+  const { data, sharedTaskIds, sharedCount } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
 
   // Convex mutations
   const createTaskMutation = useMutation(api.tasks.create);
   const patchTaskMutation = useMutation(api.tasks.update);
+  const assignUserMutation = useMutation(api.taskResources.assignUser);
 
   // Multi-task working state (persisted to AsyncStorage)
   const [workingTaskIds, setWorkingTaskIds] = useState<string[]>([]);
@@ -270,6 +272,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
   const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
+  const [pendingAssigns, setPendingAssigns] = useState<Map<string, Set<string>>>(new Map());
 
   // Build lookup maps from synced reference data
   const spotMap = useMemo(() => {
@@ -303,6 +306,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.users]);
 
+  const userConvexIdMap = useMemo(() => {
+    const m = new Map<AnyId, string>();
+    for (const u of data.users) m.set(u.id, (u as any)._id);
+    return m;
+  }, [data.users]);
+
   const tagNameMap = useMemo(() => {
     const m = new Map<AnyId, string>();
     for (const t of data.tags) m.set(t.id, t.name);
@@ -333,8 +342,56 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       m.set(tu.task_id, list);
     }
+
+    if (pendingAssigns.size > 0) {
+      for (const [taskId, names] of pendingAssigns) {
+        const existing = m.get(taskId) ?? m.get(Number(taskId)) ?? [];
+        const merged = [...existing];
+        for (const userName of names) {
+          if (!merged.some((a) => a.name === userName)) {
+            merged.push({ name: userName, picture: userPictureMap.get(
+              [...userMap.entries()].find(([, n]) => n === userName)?.[0] as number
+            ) ?? null });
+          }
+        }
+        m.set(taskId, merged);
+        m.set(Number(taskId), merged);
+      }
+    }
+
     return m;
-  }, [data.taskUsers, userMap, userPictureMap]);
+  }, [data.taskUsers, userMap, userPictureMap, pendingAssigns]);
+
+  useEffect(() => {
+    if (pendingAssigns.size === 0) return;
+    const syncedNames = new Map<string, Set<string>>();
+    for (const tu of data.taskUsers) {
+      const name = userMap.get(tu.user_id);
+      if (!name) continue;
+      const taskKey = String(tu.task_id);
+      const set = syncedNames.get(taskKey) ?? new Set();
+      set.add(name);
+      syncedNames.set(taskKey, set);
+    }
+    let changed = false;
+    const next = new Map(pendingAssigns);
+    for (const [taskId, names] of next) {
+      const synced = syncedNames.get(taskId);
+      if (!synced) continue;
+      const remaining = new Set<string>();
+      for (const n of names) {
+        if (!synced.has(n)) remaining.add(n);
+      }
+      if (remaining.size === 0) {
+        next.delete(taskId);
+        changed = true;
+      } else if (remaining.size < names.size) {
+        next.set(taskId, remaining);
+        changed = true;
+      }
+    }
+    if (changed) setPendingAssigns(next);
+  }, [data.taskUsers, userMap, pendingAssigns]);
 
   const userFlagMap = useMemo(() => {
     const currentUserId = authUser?.id;
@@ -375,8 +432,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const workspaces = useMemo(() => {
     const names = data.workspaces.map((w) => w.name);
-    return ['Everything', ...names];
-  }, [data.workspaces]);
+    const list = ['Everything', ...names];
+    if (sharedCount > 0) list.push('Shared');
+    return list;
+  }, [data.workspaces, sharedCount]);
 
   const workspaceObjects = useMemo(() => data.workspaces, [data.workspaces]);
 
@@ -517,6 +576,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     let result: TaskItem[];
     if (selectedWorkspace === 'Everything') {
       result = allMappedTasks;
+    } else if (selectedWorkspace === 'Shared') {
+      result = allMappedTasks.filter((t) => {
+        const numId = Number(t.id);
+        return sharedTaskIds.has(numId) || sharedTaskIds.has(t.id ?? '');
+      });
     } else {
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
@@ -558,61 +622,39 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return result;
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters, sharedTaskIds]);
+
+  const wsFilteredTasks = useMemo(() => {
+    if (selectedWorkspace === 'Everything') return allMappedTasks;
+    if (selectedWorkspace === 'Shared') {
+      return allMappedTasks.filter((t) => {
+        const numId = Number(t.id);
+        return sharedTaskIds.has(numId) || sharedTaskIds.has(t.id ?? '');
+      });
+    }
+    const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+    if (ws) return allMappedTasks.filter((t) => t.workspaceId === ws.id);
+    return allMappedTasks;
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, sharedTaskIds]);
 
   const availableAssignees = useMemo(() => {
-    let wsFiltered: TaskItem[];
-    if (selectedWorkspace === 'Everything') {
-      wsFiltered = allMappedTasks;
-    } else {
-      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
-      if (ws) {
-        const wsId = ws.id;
-        wsFiltered = allMappedTasks.filter((t) => t.workspaceId === wsId);
-      } else {
-        wsFiltered = allMappedTasks;
-      }
-    }
     const names = new Set<string>();
-    for (const t of wsFiltered) {
+    for (const t of wsFilteredTasks) {
       for (const a of t.assignees) names.add(a.name);
     }
     return Array.from(names).sort();
-  }, [allMappedTasks, data.workspaces, selectedWorkspace]);
+  }, [wsFilteredTasks]);
 
   const availableTags = useMemo(() => {
-    let wsFiltered: TaskItem[];
-    if (selectedWorkspace === 'Everything') {
-      wsFiltered = allMappedTasks;
-    } else {
-      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
-      if (ws) {
-        const wsId = ws.id;
-        wsFiltered = allMappedTasks.filter((t) => t.workspaceId === wsId);
-      } else {
-        wsFiltered = allMappedTasks;
-      }
-    }
     const tagNames = new Set<string>();
-    for (const t of wsFiltered) {
+    for (const t of wsFilteredTasks) {
       for (const tag of t.tags) tagNames.add(tag);
     }
     return Array.from(tagNames).sort();
-  }, [allMappedTasks, data.workspaces, selectedWorkspace]);
+  }, [wsFilteredTasks]);
 
   const availableStatuses: StatusOption[] = useMemo(() => {
-    let wsFiltered: TaskItem[];
-    if (selectedWorkspace === 'Everything') {
-      wsFiltered = allMappedTasks;
-    } else {
-      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
-      if (ws) {
-        const wsId = ws.id;
-        wsFiltered = allMappedTasks.filter((t) => t.workspaceId === wsId);
-      } else {
-        wsFiltered = allMappedTasks;
-      }
-    }
+    const wsFiltered = wsFilteredTasks;
 
     const catIds = new Set<AnyId>();
     for (const t of wsFiltered) {
@@ -632,7 +674,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (statusIds.size === 0) return statuses;
 
     return statuses.filter((s) => statusIds.has(s.id));
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, statuses, categoryStatusIdsMap]);
+  }, [wsFilteredTasks, statuses, categoryStatusIdsMap]);
 
   // Pagination
   const PAGE_SIZE = 30;
@@ -851,20 +893,47 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [finalStatus, data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
 
-  const assignTaskToYou = (taskId: string) => {
-    const task = filteredTasks.find((t) => t.id === taskId);
-    if (task && !task.assignees.includes('You')) {
-      setTimedOverride(taskId, { assignees: [...task.assignees, 'You'] });
-    }
-  };
-
   const assignTaskToUser = useCallback((taskId: string, userId: number, userName: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
     if (task && !task.assignees.some((a) => a.name === userName)) {
-      setTimedOverride(taskId, { assignees: [...task.assignees, { name: userName, picture: null }] });
-      // TODO: persist via Convex mutation when assignee mutation is available
+      setPendingAssigns((prev) => {
+        const next = new Map(prev);
+        const set = new Set(next.get(taskId) ?? []);
+        set.add(userName);
+        next.set(taskId, set);
+        return next;
+      });
+
+      if (tenantId) {
+        const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
+        const userConvexId = userConvexIdMap.get(userId);
+        if (taskConvexId && userConvexId) {
+          assignUserMutation({
+            tenantId,
+            taskId: taskConvexId as any,
+            userId: userConvexId as any,
+          }).catch((err: any) => {
+            console.warn('[TaskContext] Failed to assign user:', err);
+            setPendingAssigns((prev) => {
+              const next = new Map(prev);
+              const set = next.get(taskId);
+              if (set) {
+                set.delete(userName);
+                if (set.size === 0) next.delete(taskId);
+              }
+              return next;
+            });
+            Alert.alert('Error', `Failed to assign ${userName}`);
+          });
+        }
+      }
     }
-  }, [filteredTasks, setTimedOverride]);
+  }, [filteredTasks, tenantId, allMappedTaskMap, userConvexIdMap, assignUserMutation]);
+
+  const assignTaskToYou = useCallback((taskId: string) => {
+    if (!authUser) return;
+    assignTaskToUser(taskId, authUser.id, authUser.name);
+  }, [authUser, assignTaskToUser]);
 
   // Form version map
   const formVersionMap = useMemo(() => {
@@ -947,6 +1016,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       selectedWorkspace,
       workspaces,
       workspaceObjects,
+      sharedCount,
       statuses,
       categories,
       initialStatus,
@@ -990,6 +1060,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       selectedWorkspace,
       workspaces,
       workspaceObjects,
+      sharedCount,
       statuses,
       categories,
       initialStatus,

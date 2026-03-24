@@ -176,7 +176,7 @@ export const CreateTaskScreen: React.FC = () => {
     if (chosenWorkspaceId) {
       return data.workspaces.find((w: any) => w._id === chosenWorkspaceId) as any;
     }
-    if (selectedWorkspace === 'Everything') {
+    if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') {
       return null; // Force workspace selection
     }
     return data.workspaces.find((w: any) => w.name === selectedWorkspace) as any;

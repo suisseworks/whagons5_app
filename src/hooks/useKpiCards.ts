@@ -48,13 +48,14 @@ export function useKpiCards({ selectedWorkspace }: UseKpiCardsParams): UseKpiCar
     return kpiPlugin?.is_enabled === true;
   }, [data.plugins, data.kpiCards]);
 
-  // Build taskUser map (taskId -> userIds[])
+  // Build taskUser map (taskId as string key -> userIds[])
   const taskUserMap = useMemo(() => {
-    const m = new Map<number, number[]>();
+    const m = new Map<string, (number | string)[]>();
     for (const tu of data.taskUsers) {
-      const list = m.get(tu.task_id) ?? [];
+      const key = String(tu.task_id);
+      const list = m.get(key) ?? [];
       list.push(tu.user_id);
-      m.set(tu.task_id, list);
+      m.set(key, list);
     }
     return m;
   }, [data.taskUsers]);

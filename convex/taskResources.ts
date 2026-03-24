@@ -210,6 +210,110 @@ export const revokeShare = mutation({
 });
 
 // =============================================================================
+// SHARED WITH ME
+// =============================================================================
+
+/**
+ * Fetch all active shares for the current user — both direct user shares
+ * and shares to any team the user belongs to. Returns share docs enriched
+ * with the full task document.
+ */
+export const listSharedToMe = query({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => {
+    const { user } = await withTenant(ctx, tenantId);
+
+    const userShares = await ctx.db
+      .query("taskShares")
+      .withIndex("by_sharedToUserId", (q) => q.eq("tenantId", tenantId).eq("sharedToUserId", user._id))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .collect();
+
+    const memberships = await ctx.db
+      .query("userTeams")
+      .withIndex("by_userId", (q) => q.eq("tenantId", tenantId).eq("userId", user._id))
+      .collect();
+    const teamIds = new Set(memberships.map((m) => m.teamId));
+
+    const teamShareArrays = await Promise.all(
+      [...teamIds].map((teamId) =>
+        ctx.db
+          .query("taskShares")
+          .withIndex("by_sharedToTeamId", (q) => q.eq("tenantId", tenantId).eq("sharedToTeamId", teamId))
+          .filter((q) => q.eq(q.field("revokedAt"), undefined))
+          .collect(),
+      ),
+    );
+    const teamShares = teamShareArrays.flat();
+
+    const seen = new Set<string>();
+    const allShares = [...userShares, ...teamShares].filter((s) => {
+      if (seen.has(s.taskId)) return false;
+      seen.add(s.taskId);
+      return true;
+    });
+
+    const results = [];
+    for (const share of allShares) {
+      const task = await ctx.db.get(share.taskId);
+      if (task && !task.deletedAt) {
+        results.push({
+          ...share,
+          task: {
+            ...task,
+            id: task.pgId ?? task._id,
+            _id: task._id,
+          },
+        });
+      }
+    }
+
+    return results;
+  },
+});
+
+/** Lightweight count of active shares for the current user (for badge). */
+export const sharedWithMeCount = query({
+  args: { tenantId: v.string() },
+  handler: async (ctx, { tenantId }) => {
+    const { user } = await withTenant(ctx, tenantId);
+
+    const userShares = await ctx.db
+      .query("taskShares")
+      .withIndex("by_sharedToUserId", (q) => q.eq("tenantId", tenantId).eq("sharedToUserId", user._id))
+      .filter((q) => q.eq(q.field("revokedAt"), undefined))
+      .collect();
+
+    const memberships = await ctx.db
+      .query("userTeams")
+      .withIndex("by_userId", (q) => q.eq("tenantId", tenantId).eq("userId", user._id))
+      .collect();
+    const teamIds = new Set(memberships.map((m) => m.teamId));
+    const teamShareArrays = await Promise.all(
+      [...teamIds].map((teamId) =>
+        ctx.db
+          .query("taskShares")
+          .withIndex("by_sharedToTeamId", (q) => q.eq("tenantId", tenantId).eq("sharedToTeamId", teamId))
+          .filter((q) => q.eq(q.field("revokedAt"), undefined))
+          .collect(),
+      ),
+    );
+    const teamShares = teamShareArrays.flat();
+
+    const seen = new Set<string>();
+    let count = 0;
+    for (const s of [...userShares, ...teamShares]) {
+      if (!seen.has(s.taskId)) {
+        seen.add(s.taskId);
+        const task = await ctx.db.get(s.taskId);
+        if (task && !task.deletedAt) count++;
+      }
+    }
+    return count;
+  },
+});
+
+// =============================================================================
 // TASK RELATIONS
 // =============================================================================
 

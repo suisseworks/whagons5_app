@@ -161,6 +161,7 @@ export const MainScreen: React.FC = () => {
     selectedWorkspace,
     workspaces,
     workspaceObjects,
+    sharedCount,
     finalStatus,
     getAllowedStatuses,
     completeWorkingTask,
@@ -695,10 +696,13 @@ export const MainScreen: React.FC = () => {
             const selColor = selWs?.color || DEFAULT_WORKSPACE_COLOR;
             const { name: selIconName, solid: selSolid, brand: selBrand } = parseWorkspaceIcon(selWs?.icon);
             const isEverything = selectedWorkspace === 'Everything';
+            const isShared = selectedWorkspace === 'Shared';
             return (
-              <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : selColor, marginRight: 6 }]}>
+              <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : isShared ? '#8B5CF6' : selColor, marginRight: 6 }]}>
                 {isEverything ? (
                   <MaterialIcons name="layers" size={12} color="#FFFFFF" />
+                ) : isShared ? (
+                  <MaterialIcons name="inbox" size={12} color="#FFFFFF" />
                 ) : (
                   <FaIcon name={selIconName} size={11} color="#FFFFFF" solid={selSolid} brand={selBrand} />
                 )}
@@ -919,6 +923,7 @@ export const MainScreen: React.FC = () => {
               const wsColor = wsData?.color || DEFAULT_WORKSPACE_COLOR;
               const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(wsData?.icon);
               const isEverything = workspace === 'Everything';
+              const isShared = workspace === 'Shared';
               const isSelected = workspace === selectedWorkspace;
 
               return (
@@ -931,9 +936,11 @@ export const MainScreen: React.FC = () => {
                   }}
                 >
                   <View style={styles.workspaceMenuItemRow}>
-                    <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : wsColor }]}>
+                    <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : isShared ? '#8B5CF6' : wsColor }]}>
                       {isEverything ? (
                         <MaterialIcons name="layers" size={12} color="#FFFFFF" />
+                      ) : isShared ? (
+                        <MaterialIcons name="inbox" size={12} color="#FFFFFF" />
                       ) : (
                         <FaIcon name={iconName} size={11} color="#FFFFFF" solid={solid} brand={wsBrand} />
                       )}
@@ -947,6 +954,11 @@ export const MainScreen: React.FC = () => {
                     >
                       {workspace}
                     </Text>
+                    {isShared && sharedCount > 0 && (
+                      <View style={[styles.sharedBadge, { backgroundColor: '#8B5CF6' }]}>
+                        <Text style={styles.sharedBadgeText}>{sharedCount > 99 ? '99+' : sharedCount}</Text>
+                      </View>
+                    )}
                   </View>
                 </TouchableOpacity>
               );
@@ -1480,6 +1492,20 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     color: '#212121',
     fontFamily: fontFamilies.bodyMedium,
+    flex: 1,
+  },
+  sharedBadge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    paddingHorizontal: 5,
+  },
+  sharedBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontFamily: fontFamilies.bodyBold,
   },
   statusPickerOverlay: {
     flex: 1,

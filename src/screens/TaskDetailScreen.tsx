@@ -14,7 +14,12 @@ import {
   GestureResponderEvent,
   PanResponderGestureState,
   Dimensions,
+  useWindowDimensions,
+  KeyboardAvoidingView,
+  Platform,
+  Linking,
 } from 'react-native';
+import RenderHtml from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
@@ -36,19 +41,136 @@ import { apiClient } from '../services/apiClient';
 import { getCurrentUser } from '../firebase/authService';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
+interface NoteAttachmentData {
+  storageId: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+}
+
 interface TaskNoteResponse {
   _id?: string;
   id?: string | number;
   uuid?: string;
   taskId?: string;
   task_id?: number;
-  note: string;
+  note?: string;
   userId?: string;
   user_id?: number;
   _creationTime?: number;
   created_at?: string;
   updated_at?: string;
+  attachments?: NoteAttachmentData[];
 }
+
+function fixConvexStorageUrl(url: string): string {
+  const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
+  if (!convexUrl) return url;
+  try {
+    const expected = new URL(convexUrl);
+    const actual = new URL(url);
+    if (actual.hostname !== expected.hostname) {
+      actual.hostname = expected.hostname;
+      return actual.toString();
+    }
+  } catch {}
+  return url;
+}
+
+const NoteAttachmentView: React.FC<{
+  attachment: NoteAttachmentData;
+  colors: any;
+  isDarkMode: boolean;
+  onImagePress?: (uri: string) => void;
+}> = ({ attachment, colors, isDarkMode, onImagePress }) => {
+  const rawUrl = useQuery(api.taskResources.getFileUrl, {
+    storageId: attachment.storageId as any,
+  });
+  const url = rawUrl ? fixConvexStorageUrl(rawUrl) : null;
+  const isImage = attachment.fileType.startsWith('image/');
+
+  const handleFilePress = useCallback(() => {
+    if (!url) return;
+    if (isImage && onImagePress) {
+      onImagePress(url);
+    } else {
+      Linking.openURL(url).catch(() =>
+        Alert.alert('Error', 'Could not open this file.')
+      );
+    }
+  }, [url, isImage, onImagePress]);
+
+  if (isImage && url) {
+    return (
+      <TouchableOpacity activeOpacity={0.8} onPress={handleFilePress}>
+        <Image
+          source={{ uri: url }}
+          style={noteAttachStyles.image}
+          resizeMode="cover"
+        />
+      </TouchableOpacity>
+    );
+  }
+
+  if (isImage && !url) {
+    return (
+      <View style={[noteAttachStyles.filePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4' }]}>
+        <ActivityIndicator size="small" color={colors.textSecondary} />
+      </View>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={handleFilePress}
+      disabled={!url}
+      style={[noteAttachStyles.fileChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4' }]}
+    >
+      <MaterialIcons name="attach-file" size={14} color={colors.textSecondary} />
+      <Text style={[noteAttachStyles.fileName, { color: colors.text }]} numberOfLines={1}>
+        {attachment.fileName}
+      </Text>
+      <MaterialIcons
+        name="download"
+        size={16}
+        color={colors.textSecondary}
+        style={{ marginLeft: 'auto' }}
+      />
+    </TouchableOpacity>
+  );
+};
+
+const noteAttachStyles = StyleSheet.create({
+  image: {
+    width: '100%',
+    height: 180,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  filePlaceholder: {
+    width: '100%',
+    height: 180,
+    borderRadius: 8,
+    marginTop: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fileChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginTop: 6,
+    gap: 6,
+  },
+  fileName: {
+    fontSize: 12,
+    fontFamily: 'Montserrat_500Medium',
+    flex: 1,
+  },
+});
 
 function generateUUID(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -89,9 +211,10 @@ export const TaskDetailScreen: React.FC = () => {
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
   const userMap = useMemo(() => {
-    const map = new Map<number, string>();
+    const map = new Map<number | string, string>();
     for (const u of data.users) {
       map.set(Number(u.id), u.name);
+      if ((u as any)._id && (u as any)._id !== u.id) map.set((u as any)._id, u.name);
     }
     return map;
   }, [data.users]);
@@ -118,6 +241,7 @@ export const TaskDetailScreen: React.FC = () => {
   );
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formShowValidation, setFormShowValidation] = useState(false);
+  const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
 
   const convexTaskId = task.convexId ?? null;
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
@@ -281,6 +405,9 @@ export const TaskDetailScreen: React.FC = () => {
     }
   }, [formSchema, formValues, task, existingSubmission, tenantId]);
 
+  const { width: windowWidth } = useWindowDimensions();
+  const descriptionContentWidth = windowWidth - spacing.md * 2;
+
   const renderDetailsTab = () => (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
       <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
@@ -288,9 +415,24 @@ export const TaskDetailScreen: React.FC = () => {
         <Text style={[styles.taskId, { color: colors.textSecondary }]}>#{task.id}</Text>
       )}
       {!!task.description && (
-        <Text style={[styles.descriptionText, { color: colors.textSecondary }]}>
-          {task.description}
-        </Text>
+        <View style={styles.descriptionContainer}>
+          <RenderHtml
+            contentWidth={descriptionContentWidth}
+            source={{ html: task.description }}
+            baseStyle={{
+              color: colors.textSecondary,
+              fontSize: fontSizes.sm,
+              fontFamily: fontFamilies.bodyRegular,
+              lineHeight: 20,
+            }}
+            tagsStyles={{
+              h1: { fontSize: fontSizes.md, fontFamily: fontFamilies.bodySemibold, lineHeight: 24, margin: 0 },
+              h2: { fontSize: fontSizes.sm + 1, fontFamily: fontFamilies.bodySemibold, lineHeight: 22, margin: 0 },
+              h3: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodySemibold, lineHeight: 20, margin: 0 },
+              p: { margin: 0 },
+            }}
+          />
+        </View>
       )}
 
       <View style={styles.statusRow}>
@@ -463,10 +605,10 @@ export const TaskDetailScreen: React.FC = () => {
           }
         >
           {notes.map((note) => {
-            const isMe = authUser?.id === note.user_id;
+            const isMe = authUser?.id === note.user_id || (authUser as any)?._id === note.user_id;
             const authorName = isMe
               ? 'You'
-              : userMap.get(Number(note.user_id)) || `User #${note.user_id}`;
+              : userMap.get(note.user_id) || userMap.get(Number(note.user_id)) || `User #${note.user_id}`;
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
                 <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}>
@@ -493,9 +635,24 @@ export const TaskDetailScreen: React.FC = () => {
                       },
                     ]}
                   >
-                    <Text style={[styles.commentText, { color: colors.text }]}>
-                      {note.note}
-                    </Text>
+                    {!!note.note && (
+                      <Text style={[styles.commentText, { color: colors.text }]}>
+                        {note.note}
+                      </Text>
+                    )}
+                    {note.attachments && note.attachments.length > 0 && (
+                      <View>
+                        {note.attachments.map((att, idx) => (
+                          <NoteAttachmentView
+                            key={att.storageId || idx}
+                            attachment={att}
+                            colors={colors}
+                            isDarkMode={isDarkMode}
+                            onImagePress={setImageViewerUri}
+                          />
+                        ))}
+                      </View>
+                    )}
                   </View>
                 </View>
               </View>
@@ -572,64 +729,69 @@ export const TaskDetailScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
-      <View style={[styles.header, { backgroundColor: colors.background }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <MaterialIcons name="arrow-back" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Task Details</Text>
-        <TouchableOpacity>
-          <MaterialIcons name="more-vert" size={24} color={colors.text} />
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.tabBar}>
-        {(hasForm
-          ? (['details', 'form', 'comments'] as TabKey[])
-          : (['details', 'comments'] as TabKey[])
-        ).map(tab => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && { borderBottomColor: primaryColor }]}
-            onPress={() => setActiveTab(tab)}
-          >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === tab && { color: primaryColor },
-              ]}
-            >
-              {tab === 'form'
-                ? 'Form'
-                : tab === 'comments' && notes.length > 0
-                  ? `Comments (${notes.length})`
-                  : tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </Text>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={[styles.header, { backgroundColor: colors.background }]}>
+          <TouchableOpacity onPress={() => navigation.goBack()}>
+            <MaterialIcons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.flex} {...tabPanResponder.panHandlers}>
-        {activeTab === 'details' && renderDetailsTab()}
-        {activeTab === 'form' && hasForm && renderFormTab()}
-        {activeTab === 'comments' && renderCommentsTab()}
-      </View>
-
-      {activeTab === 'details' && getAllowedStatuses(currentTask).length > 0 && (
-        <View
-          style={[
-            styles.actionButtonsContainer,
-            { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
-          ]}
-        >
-          <TouchableOpacity
-            style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
-            onPress={() => setStatusPickerVisible(true)}
-          >
-            <MaterialIcons name="swap-horiz" size={20} color="#FFFFFF" />
-            <Text style={styles.actionButtonText}>Change Status</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>Task Details</Text>
+          <TouchableOpacity>
+            <MaterialIcons name="more-vert" size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
-      )}
+
+        <View style={styles.tabBar}>
+          {(hasForm
+            ? (['details', 'form', 'comments'] as TabKey[])
+            : (['details', 'comments'] as TabKey[])
+          ).map(tab => (
+            <TouchableOpacity
+              key={tab}
+              style={[styles.tab, activeTab === tab && { borderBottomColor: primaryColor }]}
+              onPress={() => setActiveTab(tab)}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  activeTab === tab && { color: primaryColor },
+                ]}
+              >
+                {tab === 'form'
+                  ? 'Form'
+                  : tab === 'comments' && notes.length > 0
+                    ? `Comments (${notes.length})`
+                    : tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.flex} {...tabPanResponder.panHandlers}>
+          {activeTab === 'details' && renderDetailsTab()}
+          {activeTab === 'form' && hasForm && renderFormTab()}
+          {activeTab === 'comments' && renderCommentsTab()}
+        </View>
+
+        {activeTab === 'details' && getAllowedStatuses(currentTask).length > 0 && (
+          <View
+            style={[
+              styles.actionButtonsContainer,
+              { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
+            ]}
+          >
+            <TouchableOpacity
+              style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
+              onPress={() => setStatusPickerVisible(true)}
+            >
+              <MaterialIcons name="swap-horiz" size={20} color="#FFFFFF" />
+              <Text style={styles.actionButtonText}>Change Status</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </KeyboardAvoidingView>
 
       <Modal
         visible={statusPickerVisible}
@@ -699,6 +861,39 @@ export const TaskDetailScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Full-screen image viewer */}
+      <Modal
+        visible={!!imageViewerUri}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImageViewerUri(null)}
+      >
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity style={styles.imageViewerClose} onPress={() => setImageViewerUri(null)}>
+            <MaterialIcons name="close" size={28} color="#fff" />
+          </TouchableOpacity>
+          {imageViewerUri && (
+            <Image
+              source={{ uri: imageViewerUri }}
+              style={styles.imageViewerImage}
+              resizeMode="contain"
+            />
+          )}
+          <TouchableOpacity
+            style={styles.imageViewerDownload}
+            onPress={() => {
+              if (imageViewerUri) {
+                Linking.openURL(imageViewerUri).catch(() =>
+                  Alert.alert('Error', 'Could not open this file.')
+                );
+              }
+            }}
+          >
+            <MaterialIcons name="download" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -754,10 +949,7 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyMedium,
     marginBottom: 4,
   },
-  descriptionText: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyRegular,
-    lineHeight: 20,
+  descriptionContainer: {
     marginBottom: 12,
   },
   statusRow: {
@@ -1116,5 +1308,29 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '80%',
+  },
+  imageViewerDownload: {
+    position: 'absolute',
+    bottom: 50,
+    padding: 12,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 24,
   },
 });

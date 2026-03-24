@@ -13,6 +13,22 @@ import { KpiComputedCard, KpiCardMetricType } from '../models/types';
 // Helpers
 // ---------------------------------------------------------------------------
 
+type AnyId = number | string | null | undefined;
+
+/** Type-safe ID equality: handles mixed number/string IDs from Convex + pgId */
+function idEq(a: AnyId, b: AnyId): boolean {
+  if (a == null || b == null) return a == b;
+  // eslint-disable-next-line eqeqeq
+  return a == b || String(a) === String(b);
+}
+
+/** Check if an ID is contained in a list (handles mixed types) */
+function idIn(id: AnyId, list: AnyId[]): boolean {
+  if (id == null) return false;
+  const s = String(id);
+  return list.some(v => String(v) === s);
+}
+
 function parseJson(val: string | Record<string, unknown> | null | undefined): Record<string, unknown> {
   if (!val) return {};
   if (typeof val === 'string') {
@@ -37,12 +53,12 @@ export function isMetricType(type: string): type is KpiCardMetricType {
 // ---------------------------------------------------------------------------
 
 interface TaskFilter {
-  status_id?: number | number[];
-  priority_id?: number | number[];
-  spot_id?: number | number[];
-  statuses?: number[];
-  priorities?: number[];
-  assignees?: number[];
+  status_id?: AnyId | AnyId[];
+  priority_id?: AnyId | AnyId[];
+  spot_id?: AnyId | AnyId[];
+  statuses?: AnyId[];
+  priorities?: AnyId[];
+  assignees?: AnyId[];
   status_type?: string;
   dateRange?: string;
   unassigned?: boolean;
@@ -52,23 +68,22 @@ interface TaskFilter {
 function matchesFilter(
   task: SyncedTask,
   filters: TaskFilter,
-  workspaceId: number | null,
-  statusesByAction: Map<string, number[]>,
-  taskUserMap: Map<number, number[]>,
+  workspaceId: AnyId,
+  statusesByAction: Map<string, AnyId[]>,
+  taskUserMap: Map<string, AnyId[]>,
 ): boolean {
   // Workspace filter
-  if (workspaceId != null && Number(task.workspace_id) !== workspaceId) return false;
+  if (workspaceId != null && !idEq(task.workspace_id, workspaceId)) return false;
 
   // Status filter (singular legacy)
   if (filters.status_id != null) {
     const ids = Array.isArray(filters.status_id) ? filters.status_id : [filters.status_id];
-    if (!ids.includes(Number(task.status_id))) return false;
+    if (!idIn(task.status_id, ids)) return false;
   }
 
   // Status filter (plural / builder)
   if (Array.isArray(filters.statuses) && filters.statuses.length > 0) {
-    const ids = filters.statuses.map(Number).filter(Number.isFinite);
-    if (ids.length > 0 && !ids.includes(Number(task.status_id))) return false;
+    if (!idIn(task.status_id, filters.statuses)) return false;
   }
 
   // Status type filter (e.g., 'in_progress' -> WORKING action)
@@ -82,37 +97,35 @@ function matchesFilter(
     const action = actionMap[filters.status_type];
     if (action) {
       const allowedIds = statusesByAction.get(action) ?? [];
-      if (allowedIds.length > 0 && !allowedIds.includes(Number(task.status_id))) return false;
+      if (allowedIds.length > 0 && !idIn(task.status_id, allowedIds)) return false;
     }
   }
 
   // Priority filter
   if (filters.priority_id != null) {
     const ids = Array.isArray(filters.priority_id) ? filters.priority_id : [filters.priority_id];
-    if (!ids.includes(Number(task.priority_id))) return false;
+    if (!idIn(task.priority_id, ids)) return false;
   }
   if (Array.isArray(filters.priorities) && filters.priorities.length > 0) {
-    const ids = filters.priorities.map(Number).filter(Number.isFinite);
-    if (ids.length > 0 && !ids.includes(Number(task.priority_id))) return false;
+    if (!idIn(task.priority_id, filters.priorities)) return false;
   }
 
   // Assignee filter
   if (Array.isArray(filters.assignees) && filters.assignees.length > 0) {
-    const assigneeIds = filters.assignees.map(Number).filter(Number.isFinite);
-    const taskAssignees = taskUserMap.get(Number(task.id)) ?? [];
-    if (!taskAssignees.some(a => assigneeIds.includes(a))) return false;
+    const taskAssignees = taskUserMap.get(String(task.id)) ?? [];
+    if (!taskAssignees.some(a => idIn(a, filters.assignees!))) return false;
   }
 
   // Unassigned filter
   if (filters.unassigned === true) {
-    const taskAssignees = taskUserMap.get(Number(task.id)) ?? [];
+    const taskAssignees = taskUserMap.get(String(task.id)) ?? [];
     if (taskAssignees.length > 0) return false;
   }
 
   // Spot filter
   if (filters.spot_id != null) {
     const ids = Array.isArray(filters.spot_id) ? filters.spot_id : [filters.spot_id];
-    if (!ids.includes(Number(task.spot_id))) return false;
+    if (!idIn(task.spot_id, ids)) return false;
   }
 
   return true;
@@ -153,10 +166,10 @@ export interface KpiComputeParams {
   tasks: SyncedTask[];
   statuses: SyncedStatus[];
   kpiCards: SyncedKpiCard[];
-  workspaceId: number | null;
-  currentUserId: number | null;
-  /** Map of taskId -> array of assigned userIds */
-  taskUserMap: Map<number, number[]>;
+  workspaceId: AnyId;
+  currentUserId: AnyId;
+  /** Map of taskId (string key) -> array of assigned userIds */
+  taskUserMap: Map<string, AnyId[]>;
 }
 
 /**
@@ -167,8 +180,8 @@ export function computeKpiCards(params: KpiComputeParams): KpiComputedCard[] {
   const { tasks, statuses, kpiCards, workspaceId, currentUserId, taskUserMap } = params;
 
   // Pre-compute status lookups
-  const finalStatusIds = statuses.filter(s => s.final).map(s => s.id);
-  const statusesByAction = new Map<string, number[]>();
+  const finalStatusIds: AnyId[] = statuses.filter(s => s.final).map(s => s.id);
+  const statusesByAction = new Map<string, AnyId[]>();
   for (const s of statuses) {
     const action = String((s as any).action || '').toUpperCase();
     if (action) {
@@ -179,7 +192,7 @@ export function computeKpiCards(params: KpiComputeParams): KpiComputedCard[] {
   }
 
   // Working status IDs (WORKING action)
-  const workingStatusIds = statusesByAction.get('WORKING') ?? [];
+  const workingStatusIds: AnyId[] = statusesByAction.get('WORKING') ?? [];
 
   // Filter + scope cards
   const scopedCards = kpiCards
@@ -187,11 +200,11 @@ export function computeKpiCards(params: KpiComputeParams): KpiComputedCard[] {
     .filter(c => isMetricType(c.type))
     .filter(c => {
       if (workspaceId == null) return c.workspace_id == null;
-      return c.workspace_id == null || Number(c.workspace_id) === workspaceId;
+      return c.workspace_id == null || idEq(c.workspace_id, workspaceId);
     })
     .filter(c => {
       if (currentUserId == null) return c.user_id == null;
-      return c.user_id == null || Number(c.user_id) === currentUserId;
+      return c.user_id == null || idEq(c.user_id, currentUserId);
     })
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 
@@ -200,7 +213,7 @@ export function computeKpiCards(params: KpiComputeParams): KpiComputedCard[] {
   // Exclude soft-deleted tasks, then filter by workspace
   const activeTasks = tasks.filter(t => !t.deleted_at);
   const workspaceTasks = workspaceId != null
-    ? activeTasks.filter(t => Number(t.workspace_id) === workspaceId)
+    ? activeTasks.filter(t => idEq(t.workspace_id, workspaceId))
     : activeTasks;
 
   const results: KpiComputedCard[] = [];
@@ -253,11 +266,11 @@ function computeSingleCard(
   queryConfig: Record<string, unknown>,
   filters: TaskFilter,
   workspaceTasks: SyncedTask[],
-  workspaceId: number | null,
-  finalStatusIds: number[],
-  workingStatusIds: number[],
-  statusesByAction: Map<string, number[]>,
-  taskUserMap: Map<number, number[]>,
+  workspaceId: AnyId,
+  finalStatusIds: AnyId[],
+  workingStatusIds: AnyId[],
+  statusesByAction: Map<string, AnyId[]>,
+  taskUserMap: Map<string, AnyId[]>,
 ): CardResult {
   // Filter tasks based on card's query_config
   const filtered = workspaceTasks.filter(t =>
@@ -274,13 +287,12 @@ function computeSingleCard(
       let count: number;
       if (isInProgress && workingStatusIds.length > 0) {
         count = workspaceTasks.filter(t =>
-          workingStatusIds.includes(Number(t.status_id)) &&
+          idIn(t.status_id, workingStatusIds) &&
           matchesFilter(t, { ...filters, status_id: undefined, status_type: undefined }, null, statusesByAction, taskUserMap),
         ).length;
       } else if (Array.isArray(filters.statuses) && filters.statuses.length > 0) {
-        const ids = filters.statuses.map(Number).filter(Number.isFinite);
         count = workspaceTasks.filter(t =>
-          ids.includes(Number(t.status_id)) &&
+          idIn(t.status_id, filters.statuses!) &&
           matchesFilter(t, { ...filters, statuses: undefined }, null, statusesByAction, taskUserMap),
         ).length;
       } else {
@@ -295,7 +307,7 @@ function computeSingleCard(
       midnight.setHours(0, 0, 0, 0);
       const midnightTime = midnight.getTime();
       const count = workspaceTasks.filter(t => {
-        if (!finalStatusIds.includes(Number(t.status_id))) return false;
+        if (!idIn(t.status_id, finalStatusIds)) return false;
         const updated = t.updated_at;
         if (!updated) return false;
         return new Date(updated).getTime() >= midnightTime;
@@ -308,8 +320,7 @@ function computeSingleCard(
       const count = filtered.filter(t => {
         const dueDate = t.due_date as string | null | undefined;
         if (!dueDate) return false;
-        // Exclude completed tasks
-        if (finalStatusIds.includes(Number(t.status_id))) return false;
+        if (idIn(t.status_id, finalStatusIds)) return false;
         return new Date(dueDate) < now;
       }).length;
       return {
@@ -343,10 +354,9 @@ function computeSingleCard(
     }
 
     case 'time_avg': {
-      // Average time from created_at to updated_at for completed tasks
       let taskPool = filtered;
       if (finalStatusIds.length > 0) {
-        taskPool = workspaceTasks.filter(t => finalStatusIds.includes(Number(t.status_id)));
+        taskPool = workspaceTasks.filter(t => idIn(t.status_id, finalStatusIds));
       }
       let totalMs = 0;
       let validCount = 0;
@@ -381,14 +391,12 @@ function computeSingleCard(
       startDate.setDate(startDate.getDate() - (days - 1));
       const startTime = startDate.getTime();
 
-      // Get completed tasks in the range
       const recentDone = workspaceTasks.filter(t => {
-        if (!finalStatusIds.includes(Number(t.status_id))) return false;
+        if (!idIn(t.status_id, finalStatusIds)) return false;
         if (!t.updated_at) return false;
         return new Date(t.updated_at).getTime() >= startTime;
       });
 
-      // Build daily trend
       const trend: number[] = Array.from({ length: days }, (_, idx) => {
         const dayStart = new Date(startDate);
         dayStart.setDate(dayStart.getDate() + idx);

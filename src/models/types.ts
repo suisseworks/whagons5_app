@@ -219,7 +219,7 @@ export type KpiCardType =
 
 /** Computed result for a KPI card */
 export interface KpiComputedCard {
-  id: number;
+  id: number | string;
   label: string;
   value: string;
   iconName: string;

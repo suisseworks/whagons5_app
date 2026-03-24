@@ -22,9 +22,10 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A3B30"
       },
-      "package": "com.whagons.v5",
+      "package": "com.whagons.whagons",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "softwareKeyboardLayoutMode": "adjustResize",
       "googleServicesFile": "./google-services.json"
     },
     "web": {
@@ -49,7 +50,8 @@
           "locationWhenInUsePermission": "Allow Whagons to use your location to map spots and rooms."
         }
       ],
-      "expo-video"
+      "expo-video",
+      "./plugins/withNotifee.js"
     ]
   }
 }

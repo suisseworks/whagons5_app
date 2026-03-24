@@ -88,7 +88,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
     }
   }, [visible, filters]);
 
-  const isEverything = selectedWorkspace === 'Everything';
+  const isEverything = selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared';
 
   // ---------------------------------------------------------------------------
   // Derived data
