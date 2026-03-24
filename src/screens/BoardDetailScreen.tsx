@@ -153,7 +153,7 @@ export const BoardDetailScreen: React.FC = () => {
     const author = userMap.get(item.created_by);
     const authorName = author?.name || 'Unknown';
     const cardBg = isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)';
-    const cardBorder = isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7';
+    const cardBorder = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)';
 
     return (
       <View style={[styles.messageCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
@@ -211,12 +211,12 @@ export const BoardDetailScreen: React.FC = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       <LinearGradient
-        colors={[colors.background, isDarkMode ? '#121615' : '#EFE8DD']}
+        colors={[colors.background, isDarkMode ? '#121615' : '#F0F0F2']}
         style={StyleSheet.absoluteFillObject}
       />
 
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' }]}>
+      <View style={[styles.header, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
         <TouchableOpacity
           style={styles.headerBack}
           onPress={() => navigation.goBack()}
@@ -268,7 +268,7 @@ export const BoardDetailScreen: React.FC = () => {
               <MaterialIcons
                 name="chat-bubble-outline"
                 size={48}
-                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D5CFC6'}
+                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
               />
               <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>
                 No posts yet
@@ -294,7 +294,7 @@ export const BoardDetailScreen: React.FC = () => {
             styles.composerContainer,
             {
               backgroundColor: colors.surface,
-              borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+              borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
               paddingBottom: 12 + insets.bottom,
             },
           ]}
@@ -331,7 +331,7 @@ export const BoardDetailScreen: React.FC = () => {
               {
                 backgroundColor: messageInput.trim() && !isSending
                   ? primaryColor
-                  : isDarkMode ? 'rgba(255,255,255,0.08)' : '#D5CFC6',
+                  : isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB',
               },
             ]}
             onPress={handleSendMessage}

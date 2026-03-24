@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   Image,
-  Alert,
   Modal,
   ActivityIndicator,
   PanResponder,
@@ -33,13 +32,22 @@ import { useData } from '../context/DataContext';
 import { useTenant } from '../hooks/useTenant';
 import { RootStackParamList } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
-import { DetailRow } from '../components/DetailRow';
 import { FormFiller } from '../components/FormFiller';
 import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { apiClient } from '../services/apiClient';
 import { getCurrentUser } from '../firebase/authService';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { Toast, ToastRef } from '../components/Toast';
+
+const FLAG_HEX: Record<string, string> = {
+  red: '#ef4444',
+  orange: '#f97316',
+  yellow: '#eab308',
+  green: '#22c55e',
+  blue: '#3b82f6',
+  purple: '#a855f7',
+};
 
 interface NoteAttachmentData {
   storageId: string;
@@ -94,9 +102,7 @@ const NoteAttachmentView: React.FC<{
     if (isImage && onImagePress) {
       onImagePress(url);
     } else {
-      Linking.openURL(url).catch(() =>
-        Alert.alert('Error', 'Could not open this file.')
-      );
+      Linking.openURL(url).catch(() => {});
     }
   }, [url, isImage, onImagePress]);
 
@@ -114,7 +120,7 @@ const NoteAttachmentView: React.FC<{
 
   if (isImage && !url) {
     return (
-      <View style={[noteAttachStyles.filePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4' }]}>
+      <View style={[noteAttachStyles.filePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}>
         <ActivityIndicator size="small" color={colors.textSecondary} />
       </View>
     );
@@ -125,7 +131,7 @@ const NoteAttachmentView: React.FC<{
       activeOpacity={0.7}
       onPress={handleFilePress}
       disabled={!url}
-      style={[noteAttachStyles.fileChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4' }]}
+      style={[noteAttachStyles.fileChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}
     >
       <MaterialIcons name="attach-file" size={14} color={colors.textSecondary} />
       <Text style={[noteAttachStyles.fileName, { color: colors.text }]} numberOfLines={1}>
@@ -204,11 +210,14 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const toastRef = useRef<ToastRef>(null);
   const { getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
   const { subdomain, token, user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
-  const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
+  const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
+  const secondarySurface = isDarkMode ? '#242424' : '#F5F5F7';
+  const tertiaryText = isDarkMode ? 'rgba(255,255,255,0.45)' : '#73726C';
 
   const userMap = useMemo(() => {
     const map = new Map<number | string, string>();
@@ -307,7 +316,7 @@ export const TaskDetailScreen: React.FC = () => {
     const text = commentText.trim();
     if (!text && pendingAttachments.length === 0) return;
     if (!task.id || !tenantId) {
-      Alert.alert('Error', 'Cannot add comment: task ID or tenant is missing.');
+      toastRef.current?.show({ type: 'error', title: 'Error', body: 'Cannot add comment: task ID or tenant is missing.' });
       return;
     }
 
@@ -331,7 +340,7 @@ export const TaskDetailScreen: React.FC = () => {
       setPendingAttachments([]);
       setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to post comment');
+      toastRef.current?.show({ type: 'error', title: 'Error', body: err?.message || 'Failed to post comment' });
     } finally {
       setSendingComment(false);
     }
@@ -370,17 +379,27 @@ export const TaskDetailScreen: React.FC = () => {
   const handleFormSubmit = useCallback(async () => {
     if (!formSchema || !task.formId || !task.id || !tenantId) return;
 
+    if (!convexTaskId) {
+      toastRef.current?.show({ type: 'error', title: 'Error', body: 'Cannot submit form: task reference is missing.' });
+      return;
+    }
+
     const errors = formSchema.fields.filter(
       (f) => f.required && (formValues[f.id] === undefined || formValues[f.id] === null || formValues[f.id] === '' || (Array.isArray(formValues[f.id]) && (formValues[f.id] as unknown[]).length === 0)),
     );
     if (errors.length > 0) {
       setFormShowValidation(true);
-      Alert.alert('Validation Error', 'Please fill in all required fields.');
+      toastRef.current?.show({ type: 'warning', title: 'Validation Error', body: 'Please fill in all required fields.' });
       return;
     }
 
     setFormSubmitting(true);
-    const formVersionId = existingSubmission?.formVersionId ?? (task.formId ? getFormVersionId(task.formId) : null) ?? 0;
+    const formVersionId = existingSubmission?.formVersionId ?? (task.formId ? getFormVersionId(task.formId) : null);
+    if (!formVersionId) {
+      toastRef.current?.show({ type: 'error', title: 'Error', body: 'Cannot submit form: form version not found.' });
+      setFormSubmitting(false);
+      return;
+    }
     try {
       if (existingSubmission) {
         await updateTaskFormMutation({
@@ -396,24 +415,37 @@ export const TaskDetailScreen: React.FC = () => {
           data: formValues,
         });
       }
-      Alert.alert('Success', existingSubmission ? 'Form updated.' : 'Form submitted.');
+      toastRef.current?.show({ type: 'success', title: existingSubmission ? 'Form Updated' : 'Form Submitted', body: existingSubmission ? 'Your changes have been saved.' : 'Your response has been recorded.' });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      Alert.alert('Error', `Failed to save form: ${message}`);
+      toastRef.current?.show({ type: 'error', title: 'Error', body: `Failed to save form: ${message}` });
     } finally {
       setFormSubmitting(false);
     }
-  }, [formSchema, formValues, task, existingSubmission, tenantId]);
+  }, [formSchema, formValues, task, existingSubmission, tenantId, convexTaskId, getFormVersionId, createTaskFormMutation, updateTaskFormMutation]);
 
   const { width: windowWidth } = useWindowDimensions();
   const descriptionContentWidth = windowWidth - spacing.md * 2;
 
   const renderDetailsTab = () => (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
-      <Text style={[styles.taskTitle, { color: colors.text }]}>{task.title}</Text>
-      {task.id && (
-        <Text style={[styles.taskId, { color: colors.textSecondary }]}>#{task.id}</Text>
-      )}
+      {/* Title row: task name + flag + #id inline */}
+      <View style={styles.titleRow}>
+        <Text style={[styles.taskTitle, { color: colors.text }]} numberOfLines={3}>{task.title}</Text>
+        {task.flagColor && (
+          <MaterialCommunityIcons
+            name="bookmark"
+            size={20}
+            color={FLAG_HEX[task.flagColor] ?? task.flagColor}
+            style={{ marginTop: 2 }}
+          />
+        )}
+        {task.id && (
+          <Text style={[styles.taskIdInline, { color: tertiaryText }]}>#{task.id}</Text>
+        )}
+      </View>
+
+      {/* Description */}
       {!!task.description && (
         <View style={styles.descriptionContainer}>
           <RenderHtml
@@ -421,7 +453,7 @@ export const TaskDetailScreen: React.FC = () => {
             source={{ html: task.description }}
             baseStyle={{
               color: colors.textSecondary,
-              fontSize: fontSizes.sm,
+              fontSize: 13,
               fontFamily: fontFamilies.bodyRegular,
               lineHeight: 20,
             }}
@@ -435,100 +467,91 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       )}
 
-      <View style={styles.statusRow}>
+      {/* Badge row: status + priority as tinted pills */}
+      <View style={styles.badgeRow}>
         {currentStatus !== '' && (
           <TouchableOpacity onPress={() => setStatusPickerVisible(true)} activeOpacity={0.7}>
             <CustomChip label={currentStatus} color={statusColor(currentStatus, currentStatusColor)} />
           </TouchableOpacity>
         )}
-        {currentStatus !== '' && <View style={{ width: 8 }} />}
         <CustomChip label={task.priority} color={priorityColor(task.priority)} />
-      </View>
-
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
-      >
-        <DetailRow icon="location-on" label="Location" value={task.spot} />
-        <View style={styles.divider} />
-        <DetailRow icon="schedule" label="Created" value={task.createdAt} />
         {task.approval && (
-          <>
-            <View style={styles.divider} />
-            <DetailRow icon="approval" label="Approval" value={task.approval} />
-          </>
+          <CustomChip label={task.approval} color="#BBDEFB" textColor="#0D47A1" compact />
         )}
         {task.sla && (
-          <>
-            <View style={styles.divider} />
-            <DetailRow icon="timer" label="SLA" value={task.sla} />
-          </>
+          <CustomChip
+            label={task.sla}
+            color={task.sla.toLowerCase().includes('breached') ? '#FFCDD2' : '#B2DFDB'}
+            textColor={task.sla.toLowerCase().includes('breached') ? '#B71C1C' : '#004D40'}
+            compact
+          />
         )}
       </View>
 
-      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
-      >
-        <View style={styles.cardHeader}>
-          <MaterialIcons name="people-outline" size={20} color={colors.textSecondary} />
-          <Text style={[styles.cardTitle, { color: colors.text }]}>Assignees</Text>
+      {/* Metadata grid — 2 columns */}
+      <View style={styles.metaGrid}>
+        <View style={[styles.metaCell, { backgroundColor: secondarySurface }]}>
+          <Text style={[styles.metaCellLabel, { color: tertiaryText }]}>LOCATION</Text>
+          <Text style={[styles.metaCellValue, { color: colors.text }]} numberOfLines={2}>
+            {task.spot || '—'}
+          </Text>
         </View>
-        <View style={styles.chipsRow}>
+        <View style={[styles.metaCell, { backgroundColor: secondarySurface }]}>
+          <Text style={[styles.metaCellLabel, { color: tertiaryText }]}>CREATED</Text>
+          <Text style={[styles.metaCellValue, { color: colors.text }]}>
+            {task.createdAt || '—'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Assignees section */}
+      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>ASSIGNEES</Text>
+      {task.assignees.length > 0 ? (
+        <View style={styles.assigneeList}>
           {task.assignees.map((assignee, index) => (
-            <View key={index} style={styles.assigneeChip}>
+            <View key={index} style={[styles.assigneeRow, { backgroundColor: secondarySurface }]}>
               {assignee.picture ? (
-                <Image source={{ uri: assignee.picture }} style={styles.assigneeAvatarImage} />
+                <Image source={{ uri: assignee.picture }} style={styles.assigneeAvatarImg} />
               ) : (
-                <View style={styles.assigneeAvatar}>
-                  <Text style={styles.assigneeInitial}>{getInitials(assignee.name)}</Text>
+                <View style={[styles.assigneeAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}>
+                  <Text style={[styles.assigneeAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}>
+                    {getInitials(assignee.name)}
+                  </Text>
                 </View>
               )}
-              <Text style={[styles.assigneeName, { color: colors.text }]}>{assignee.name}</Text>
+              <Text style={[styles.assigneeNameText, { color: colors.text }]}>{assignee.name}</Text>
             </View>
           ))}
         </View>
-      </View>
+      ) : (
+        <View style={[styles.assigneeEmpty, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+          <Text style={[styles.assigneeEmptyText, { color: tertiaryText }]}>Tap to assign</Text>
+        </View>
+      )}
 
-        {task.tags.length > 0 && (
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor: cardBorder }]}
-        >
-          <View style={styles.cardHeader}>
-            <MaterialIcons name="label-outline" size={20} color={colors.textSecondary} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Tags</Text>
-          </View>
-          <View style={styles.chipsRow}>
+      {/* Tags */}
+      {task.tags.length > 0 && (
+        <>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>TAGS</Text>
+          <View style={styles.tagsWrap}>
             {task.tags.map((tag, index) => {
               const info = tagInfoMap.get(tag);
               const bgColor = info?.color || '#6B7280';
-              const textColor = contrastTextColor(bgColor);
+              const txtColor = contrastTextColor(bgColor);
               const iconClass = info?.icon;
               const { name: iconName, solid, brand } = iconClass
                 ? parseWorkspaceIcon(iconClass)
                 : { name: 'tag', solid: true, brand: false };
               return (
-                <View key={index} style={{ marginRight: 6, marginBottom: 6, flexDirection: 'row', alignItems: 'center', backgroundColor: bgColor, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 }}>
-                  <View style={{ marginRight: 5 }}>
-                    <FaIcon name={iconName} size={11} color={textColor} solid={solid} brand={brand} />
-                  </View>
-                  <Text style={{ fontSize: 13, fontFamily: 'Montserrat_500Medium', color: textColor }}>{tag}</Text>
+                <View key={index} style={[styles.tagPill, { backgroundColor: bgColor }]}>
+                  <FaIcon name={iconName} size={10} color={txtColor} solid={solid} brand={brand} />
+                  <Text style={[styles.tagPillText, { color: txtColor }]}>{tag}</Text>
                 </View>
               );
             })}
           </View>
-        </View>
+        </>
       )}
-
-      {/* Timestamps Card */}
-      <View style={[styles.card, styles.timestampsCard, { borderColor: cardBorder, backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.6)' : 'rgba(255, 255, 255, 0.6)' }]}
-      >
-        <View style={styles.timestampRow}>
-          <MaterialIcons name="schedule" size={16} color={colors.textSecondary} />
-          <Text style={[styles.timestampLabel, { color: colors.textSecondary }]}>Created:</Text>
-          <Text style={[styles.timestampValue, { color: colors.text }]}>{task.createdAt}</Text>
-        </View>
-        <View style={[styles.timestampRow, { marginTop: 8 }]}> 
-          <MaterialIcons name="update" size={16} color={colors.textSecondary} />
-          <Text style={[styles.timestampLabel, { color: colors.textSecondary }]}>Last updated:</Text>
-          <Text style={[styles.timestampValue, { color: colors.text }]}>{task.createdAt}</Text>
-        </View>
-      </View>
     </ScrollView>
   );
 
@@ -630,8 +653,8 @@ export const TaskDetailScreen: React.FC = () => {
                       styles.commentBubble,
                       {
                         backgroundColor: isDarkMode
-                          ? 'rgba(31, 36, 34, 0.7)'
-                          : '#FFFFFF',
+                          ? 'rgba(255,255,255,0.06)'
+                          : '#F5F5F7',
                       },
                     ]}
                   >
@@ -664,7 +687,7 @@ export const TaskDetailScreen: React.FC = () => {
       {pendingAttachments.length > 0 && (
         <View style={[styles.attachmentPreview, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}>
           {pendingAttachments.map((a, i) => (
-            <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4' }]}>
+            <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}>
               <MaterialIcons
                 name={a.fileType.startsWith('image/') ? 'image' : 'attach-file'}
                 size={14}
@@ -690,7 +713,7 @@ export const TaskDetailScreen: React.FC = () => {
           style={[
             styles.commentInput,
             {
-              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
+              backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
               color: colors.text,
             },
           ]}
@@ -743,7 +766,7 @@ export const TaskDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        <View style={styles.tabBar}>
+        <View style={[styles.tabBar, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
           {(hasForm
             ? (['details', 'form', 'comments'] as TabKey[])
             : (['details', 'comments'] as TabKey[])
@@ -756,6 +779,7 @@ export const TaskDetailScreen: React.FC = () => {
               <Text
                 style={[
                   styles.tabText,
+                  { color: isDarkMode ? 'rgba(255,255,255,0.45)' : '#73726C' },
                   activeTab === tab && { color: primaryColor },
                 ]}
               >
@@ -776,18 +800,13 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
 
         {activeTab === 'details' && getAllowedStatuses(currentTask).length > 0 && (
-          <View
-            style={[
-              styles.actionButtonsContainer,
-              { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
-            ]}
-          >
+          <View style={styles.actionButtonsContainer}>
             <TouchableOpacity
-              style={[styles.actionButton, styles.startButton, { backgroundColor: primaryColor }]}
+              style={[styles.actionButton, { backgroundColor: isDarkMode ? '#F0F0F0' : '#1A1A1A' }]}
               onPress={() => setStatusPickerVisible(true)}
             >
-              <MaterialIcons name="swap-horiz" size={20} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>Change Status</Text>
+              <MaterialIcons name="swap-horiz" size={16} color={isDarkMode ? '#1A1A1A' : '#FFFFFF'} />
+              <Text style={[styles.actionButtonText, { color: isDarkMode ? '#1A1A1A' : '#FFFFFF' }]}>Change Status</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -827,10 +846,10 @@ export const TaskDetailScreen: React.FC = () => {
                     style={[
                       styles.statusPickerItem,
                       {
-                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
+                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0,0,0,0.04)',
                       },
                       isCurrentStatus && {
-                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
                       },
                     ]}
                     onPress={() => handleStatusChange(s)}
@@ -885,7 +904,7 @@ export const TaskDetailScreen: React.FC = () => {
             onPress={() => {
               if (imageViewerUri) {
                 Linking.openURL(imageViewerUri).catch(() =>
-                  Alert.alert('Error', 'Could not open this file.')
+                  toastRef.current?.show({ type: 'error', title: 'Error', body: 'Could not open this file.' })
                 );
               }
             }}
@@ -894,6 +913,8 @@ export const TaskDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      <Toast ref={toastRef} />
     </SafeAreaView>
   );
 };
@@ -918,8 +939,7 @@ const styles = StyleSheet.create({
   },
   tabBar: {
     flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E6E1D7',
+    borderBottomWidth: 0.5,
   },
   tab: {
     flex: 1,
@@ -929,209 +949,165 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   tabText: {
-    fontSize: fontSizes.sm,
+    fontSize: 13,
     fontFamily: fontFamilies.bodyMedium,
-    color: '#7A817C',
   },
   tabContent: {
     flex: 1,
   },
   tabContentContainer: {
     padding: spacing.md,
+    paddingBottom: 32,
+  },
+
+  /* ── Title row ── */
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
   },
   taskTitle: {
-    fontSize: fontSizes.xl,
-    fontFamily: fontFamilies.displaySemibold,
-    marginBottom: 4,
-  },
-  taskId: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
-    marginBottom: 4,
-  },
-  descriptionContainer: {
-    marginBottom: 12,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    marginBottom: 24,
-  },
-  card: {
-    borderRadius: radius.lg,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    ...shadows.subtle,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  cardTitle: {
-    marginLeft: 8,
-    fontSize: fontSizes.md,
+    flex: 1,
+    fontSize: 17,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#1E2321',
   },
-  divider: {
-    height: 1,
-    backgroundColor: '#E6E1D7',
-    marginVertical: 12,
+  taskIdInline: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+    marginTop: 4,
   },
-  chipsRow: {
+
+  /* ── Description ── */
+  descriptionContainer: {
+    marginTop: 6,
+    marginBottom: 0,
+  },
+
+  /* ── Badge row ── */
+  badgeRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+    marginBottom: 14,
   },
-  assigneeChip: {
+
+  /* ── Metadata grid ── */
+  metaGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F3EEE4',
-    borderRadius: 20,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    marginRight: 8,
+    gap: 8,
+    marginBottom: 4,
+  },
+  metaCell: {
+    flex: 1,
+    padding: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  metaCellLabel: {
+    fontSize: 10.5,
+    fontFamily: fontFamilies.bodySemibold,
+    letterSpacing: 0.3,
+    marginBottom: 3,
+  },
+  metaCellValue: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+
+  /* ── Section label ── */
+  sectionLabel: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodySemibold,
+    letterSpacing: 0.4,
+    marginTop: 18,
     marginBottom: 8,
   },
-  assigneeAvatar: {
+
+  /* ── Assignees ── */
+  assigneeList: {
+    gap: 6,
+  },
+  assigneeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  assigneeAvatarImg: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#E0E0E0',
+  },
+  assigneeAvatarCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  assigneeAvatarImage: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-  },
-  assigneeInitial: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyBold,
-    color: '#1E2321',
-  },
-  assigneeName: {
-    marginLeft: 8,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyMedium,
-    color: '#1E2321',
-  },
-  attachmentCount: {
-    marginLeft: 8,
-    backgroundColor: 'rgba(20, 183, 163, 0.1)',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  attachmentCountText: {
-    fontSize: fontSizes.xs,
+  assigneeAvatarInitial: {
+    fontSize: 11,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#C77B43',
   },
-  emptyAttachments: {
-    alignItems: 'center',
-    paddingVertical: 16,
+  assigneeNameText: {
+    marginLeft: 10,
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
   },
-  emptyText: {
-    marginTop: 8,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyMedium,
-    color: '#8B8E84',
-  },
-  addPhotoButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#14B7A3',
+  assigneeEmpty: {
+    borderWidth: 0.5,
+    borderStyle: 'dashed',
     borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
   },
-  addPhotoText: {
-    marginLeft: 4,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
+  assigneeEmptyText: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyRegular,
+    fontStyle: 'italic',
   },
-  imagesGrid: {
+
+  /* ── Tags ── */
+  tagsWrap: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginTop: 12,
+    gap: 6,
   },
-  imageContainer: {
-    width: '31%',
-    aspectRatio: 1,
-    marginRight: '2%',
-    marginBottom: 8,
-    borderRadius: 8,
-    overflow: 'hidden',
-  },
-  attachedImage: {
-    width: '100%',
-    height: '100%',
-  },
-  removeImageButton: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: '#F44336',
-    borderRadius: 12,
-    padding: 4,
-  },
-  timestampsCard: {
-    borderWidth: 1,
-  },
-  timestampRow: {
+  tagPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    gap: 5,
   },
-  timestampLabel: {
-    marginLeft: 8,
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
-  },
-  timestampValue: {
-    marginLeft: 4,
-    fontSize: fontSizes.xs,
+  tagPillText: {
+    fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
   },
+
+  /* ── Action bar ── */
   actionButtonsContainer: {
-    flexDirection: 'row',
     padding: 16,
-    backgroundColor: 'transparent',
-    ...shadows.subtle,
   },
   actionButton: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    borderRadius: radius.md,
-  },
-  startButton: {
-    marginRight: 12,
-  },
-  stopButton: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-  },
-  doneButton: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
   },
   actionButtonText: {
     marginLeft: 8,
-    fontSize: fontSizes.sm,
+    fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#FFFFFF',
   },
+
+  /* ── Comments ── */
   commentsCenter: {
     flex: 1,
     justifyContent: 'center',
@@ -1149,15 +1125,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyRegular,
     textAlign: 'center',
-  },
-  retryButton: {
-    marginTop: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  retryText: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
   },
   commentsList: {
     padding: 16,
@@ -1190,41 +1157,33 @@ const styles = StyleSheet.create({
   commentAuthor: {
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
-    color: '#1E2321',
   },
   commentTime: {
     marginLeft: 8,
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
-    color: '#8B8E84',
   },
   commentBubble: {
     marginTop: 4,
-    backgroundColor: '#FFFFFF',
     borderRadius: radius.md,
     padding: 12,
   },
   commentText: {
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyRegular,
-    color: '#1E2321',
   },
   commentInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: 'transparent',
-    ...shadows.subtle,
   },
   commentInput: {
     flex: 1,
-    backgroundColor: '#F3EEE4',
     borderRadius: radius.pill,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
-    color: '#1E2321',
   },
   attachButton: {
     marginRight: 4,
@@ -1267,8 +1226,9 @@ const styles = StyleSheet.create({
   statusPickerSheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    borderWidth: 1,
+    borderWidth: 0.5,
     borderBottomWidth: 0,
+    borderColor: 'rgba(0,0,0,0.08)',
     paddingTop: 12,
     paddingBottom: 32,
     paddingHorizontal: 20,
@@ -1278,7 +1238,7 @@ const styles = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#D1CBC0',
+    backgroundColor: '#D1D1D1',
     alignSelf: 'center' as const,
     marginBottom: 16,
   },
@@ -1296,7 +1256,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     borderRadius: radius.md,
-    borderBottomWidth: 1,
+    borderBottomWidth: 0.5,
   },
   statusPickerDot: {
     width: 12,

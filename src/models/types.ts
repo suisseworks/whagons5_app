@@ -23,6 +23,8 @@ export interface TaskItem {
   statusColor?: string | null;
   statusId?: string | number | null;
   categoryId?: string | number | null;
+  categoryColor?: string | null;
+  categoryIcon?: string | null;
   /** Resolved workspace pgId (used for workspace filtering) */
   workspaceId?: string | number | null;
   assignees: Assignee[];
@@ -243,6 +245,7 @@ export type RootStackParamList = {
   SpotsMap: { focusSpotId?: number } | undefined;
   Gamification: undefined;
   PointHistory: undefined;
+  Stats: undefined;
 };
 
 export type MainTabParamList = {

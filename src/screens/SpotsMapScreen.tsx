@@ -22,7 +22,7 @@ export const SpotsMapScreen: React.FC = () => {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
       {/* Header */}
-      <View style={[styles.header, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' }]}>
+      <View style={[styles.header, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' }]}>
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
@@ -32,7 +32,7 @@ export const SpotsMapScreen: React.FC = () => {
 
       {/* Coming Soon Content */}
       <View style={styles.content}>
-        <MaterialIcons name="map" size={64} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'} />
+        <MaterialIcons name="map" size={64} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
         <Text style={[styles.title, { color: colors.text }]}>Map</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
           Interactive map view is on the way

@@ -26,7 +26,7 @@ type SettingsNavProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>
 
 export const SettingsScreen: React.FC = () => {
   const navigation = useNavigation<SettingsNavProp>();
-  const { colors, primaryColor, isDarkMode, toggleDarkMode, showKpiCards, setShowKpiCards } = useTheme();
+  const { colors, primaryColor, isDarkMode, toggleDarkMode } = useTheme();
   const { preferences, updatePreferences, hasPermission } = useNotifications();
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
@@ -352,14 +352,6 @@ export const SettingsScreen: React.FC = () => {
             subtitle="Use dark theme"
             value={isDarkMode}
             onValueChange={toggleDarkMode}
-          />
-          <View style={styles.divider} />
-          <SwitchTile
-            icon="bar-chart"
-            title="Show KPI Cards"
-            subtitle="Display metrics above task list"
-            value={showKpiCards}
-            onValueChange={setShowKpiCards}
           />
           <View style={styles.divider} />
           <ListTile

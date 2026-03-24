@@ -267,7 +267,7 @@ export const LoginScreen: React.FC = () => {
   // ---- Phone layout ----
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
-      <StatusBar barStyle="dark-content" backgroundColor="#F4F1EA" translucent={false} />
+      <StatusBar barStyle="dark-content" backgroundColor="#FAFAFA" translucent={false} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
@@ -312,7 +312,7 @@ export const LoginScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F4F1EA',
+    backgroundColor: '#FAFAFA',
   },
   flex: {
     flex: 1,
@@ -391,7 +391,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E6E1D7',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     borderRadius: radius.md,
     paddingHorizontal: 14,
     marginBottom: 12,
@@ -430,7 +430,7 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E6E1D7',
+    backgroundColor: 'rgba(0, 0, 0, 0.08)',
   },
   dividerText: {
     marginHorizontal: 14,
@@ -442,7 +442,7 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#E6E1D7',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',

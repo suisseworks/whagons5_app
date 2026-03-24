@@ -50,22 +50,36 @@ function resolveStatus(
   return { name: s.name, color: s.color ?? null };
 }
 
+function formatTime12(d: Date): string {
+  let h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, '0');
+  const ampm = h >= 12 ? 'p.m.' : 'a.m.';
+  h = h % 12 || 12;
+  return `${h}:${m} ${ampm}`;
+}
+
 function formatDate(dateStr?: string | null): string {
   if (!dateStr) return '';
   try {
     const d = new Date(dateStr);
     const now = new Date();
-    const isToday = d.toDateString() === now.toDateString();
+    const time = formatTime12(d);
+
+    if (d.toDateString() === now.toDateString()) return `Today ${time}`;
+
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
-    const isYesterday = d.toDateString() === yesterday.toDateString();
-    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`;
 
-    if (isToday) return `Today ${time}`;
-    if (isYesterday) return `Yesterday ${time}`;
-    return d.toLocaleDateString();
+    const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
+    if (diffDays < 7) {
+      const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
+      return `${weekday} ${time}`;
+    }
+    const label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    return `${label} ${time}`;
   } catch {
-    return dateStr;
+    return dateStr ?? '';
   }
 }
 
@@ -74,18 +88,20 @@ function mapTaskToItem(
   spotMap: Map<AnyId, string>,
   priorityMap: Map<AnyId, { name: string; color?: string | null }>,
   statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
-  assigneeMap: Map<AnyId, Assignee[]>, // taskId → list of assignees
-  tagMap: Map<AnyId, string[]>,      // taskId → list of tag names
+  assigneeMap: Map<AnyId, Assignee[]>,
+  tagMap: Map<AnyId, string[]>,
   initialStatus: { name: string; color: string | null } | null,
   templateFormMap: Map<AnyId, { formId: AnyId; formName: string }>,
   userFlagMap: Map<AnyId, string>,
+  categoryInfoMap: Map<AnyId, { color?: string | null; icon?: string | null }>,
 ): TaskItem {
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
 
   const templateId = task.template_id;
   const formInfo = templateId ? templateFormMap.get(templateId) : undefined;
 
-  const flagColor = userFlagMap.get(task.id) ?? (task as any).flag_color ?? null;
+  const flagColor = userFlagMap.get(task.id) ?? (task as any).flagColor ?? (task as any).flag_color ?? null;
+  const catInfo = task.category_id ? categoryInfoMap.get(task.category_id) : undefined;
 
   return {
     id: String(task.id),
@@ -98,6 +114,8 @@ function mapTaskToItem(
     statusColor: status.color,
     statusId: task.status_id ?? null,
     categoryId: task.category_id ?? null,
+    categoryColor: catInfo?.color ?? null,
+    categoryIcon: catInfo?.icon ?? null,
     workspaceId: task.workspace_id ?? null,
     assignees: assigneeMap.get(task.id) ?? [],
     createdAt: formatDate(task.created_at),
@@ -518,17 +536,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const getAllowedStatuses = useCallback((task: TaskItem): StatusOption[] => {
     const categoryId = task.categoryId;
     const statusId = task.statusId;
-    if (!categoryId || !statusId) return statuses;
+
+    const categoryStatusIds = categoryId ? categoryStatusIdsMap.get(categoryId) : undefined;
+    const categoryFiltered = categoryStatusIds
+      ? statuses.filter((s) => categoryStatusIds.has(s.id))
+      : statuses.filter((s) => categoryId && s.categoryId != null && String(s.categoryId) === String(categoryId));
+    const fallback = categoryFiltered.length > 0 ? categoryFiltered : statuses;
+
+    if (!categoryId || !statusId) return fallback;
 
     const groupId = categoryTransitionGroupMap.get(categoryId);
-    if (!groupId) return statuses;
+    if (!groupId) return fallback;
 
     const key = `${groupId}:${statusId}`;
     const allowedIds = transitionMap.get(key);
-    if (!allowedIds || allowedIds.size === 0) return statuses;
+    if (!allowedIds || allowedIds.size === 0) return fallback;
 
     return statuses.filter((s) => s.id === statusId || allowedIds.has(s.id));
-  }, [statuses, categoryTransitionGroupMap, transitionMap]);
+  }, [statuses, categoryTransitionGroupMap, transitionMap, categoryStatusIdsMap]);
 
   // ---------------------------------------------------------------------------
   // Map tasks
@@ -538,12 +563,20 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return data.tasks.filter((t) => !t.deleted_at);
   }, [data.tasks]);
 
+  const categoryInfoMap = useMemo(() => {
+    const m = new Map<AnyId, { color?: string | null; icon?: string | null }>();
+    for (const c of data.categories) {
+      m.set(c.id, { color: c.color ?? null, icon: (c as any).icon ?? null });
+    }
+    return m;
+  }, [data.categories]);
+
   const allMappedTasks = useMemo(() => {
     if (activeTasks.length === 0) return [];
     return activeTasks.map((t) =>
-      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap),
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap),
     );
-  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap]);
+  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap]);
 
   // Helper: set a local override that auto-clears after a short delay
   const setTimedOverride = useCallback((taskId: string, override: Partial<TaskItem>) => {
@@ -584,8 +617,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } else {
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
-        const wsId = ws.id;
-        result = allMappedTasks.filter((t) => t.workspaceId === wsId);
+        const wsIdStr = String(ws.id);
+        result = allMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+        if (result.length === 0 && allMappedTasks.length > 0) {
+          const sampleIds = allMappedTasks.slice(0, 5).map((t) => `${t.workspaceId}(${typeof t.workspaceId})`);
+          console.warn(`[TaskContext] Workspace "${selectedWorkspace}" (id=${ws.id}, type=${typeof ws.id}) matched 0/${allMappedTasks.length} tasks. Sample task wsIds: [${sampleIds.join(', ')}]`);
+        }
       } else {
         result = allMappedTasks;
       }
@@ -633,7 +670,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
     }
     const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
-    if (ws) return allMappedTasks.filter((t) => t.workspaceId === ws.id);
+    if (ws) {
+      const wsIdStr = String(ws.id);
+      return allMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+    }
     return allMappedTasks;
   }, [allMappedTasks, data.workspaces, selectedWorkspace, sharedTaskIds]);
 
@@ -980,7 +1020,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const getFormVersionId = useCallback((formId: AnyId): AnyId | null => {
     const fv = formVersionMap.get(formId);
-    return fv?.id ?? null;
+    if (!fv) return null;
+    return (fv as any)._id ?? fv.id ?? null;
   }, [formVersionMap]);
 
   const getTaskFormSubmission = useCallback((taskId: string): { id: AnyId; formVersionId: AnyId; data: Record<string, unknown> } | null => {

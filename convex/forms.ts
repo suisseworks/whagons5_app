@@ -33,7 +33,13 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const { user } = await withTenant(ctx, args.tenantId);
-    return ctx.db.insert("forms", { ...args, createdBy: user._id });
+    return ctx.db.insert("forms", {
+      tenantId: args.tenantId,
+      name: args.name,
+      description: args.description,
+      type: args.type,
+      createdBy: user._id,
+    });
   },
 });
 
@@ -159,7 +165,12 @@ export const createVersion = mutation({
   },
   handler: async (ctx, args) => {
     await withTenant(ctx, args.tenantId);
-    return ctx.db.insert("formVersions", args);
+    return ctx.db.insert("formVersions", {
+      tenantId: args.tenantId,
+      formId: args.formId,
+      version: args.version,
+      fields: args.fields,
+    });
   },
 });
 

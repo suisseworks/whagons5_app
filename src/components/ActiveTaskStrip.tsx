@@ -34,7 +34,7 @@ const TaskPill: React.FC<{
   isDarkMode: boolean;
 }> = ({ task, isSingle, doneLabel, onDone, onRemove, onPress, primaryColor, colors, isDarkMode }) => {
   const sColor = statusColor(task.status, task.statusColor);
-  const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
+  const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
 
   if (isSingle) {
     // Full-width banner style for a single task
@@ -209,9 +209,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: radius.md,
     borderLeftWidth: 3,
-    borderWidth: 1,
+    borderWidth: 0.5,
     paddingLeft: 10,
-    paddingRight: 64, // leave room for the FAB that protrudes from the bottom bar
+    paddingRight: 64,
     paddingVertical: 8,
     ...shadows.subtle,
   },
@@ -257,7 +257,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderRadius: radius.md,
-    borderWidth: 1,
+    borderWidth: 0.5,
     paddingHorizontal: 10,
     paddingVertical: 6,
     maxWidth: 200,

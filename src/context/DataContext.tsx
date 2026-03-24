@@ -543,8 +543,8 @@ function mapTaskUser(doc: any, fk: FkLookups): SyncedTaskUser {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    task_id: resolveFk(fk.tasks, doc.taskId),
-    user_id: resolveFk(fk.users, doc.userId),
+    task_id: doc.taskId ? resolveFk(fk.tasks, doc.taskId) : doc.task_id,
+    user_id: doc.userId ? resolveFk(fk.users, doc.userId) : doc.user_id,
   };
 }
 
@@ -552,8 +552,8 @@ function mapTaskTag(doc: any, fk: FkLookups): SyncedTaskTag {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    task_id: resolveFk(fk.tasks, doc.taskId),
-    tag_id: resolveFk(fk.tags, doc.tagId),
+    task_id: doc.taskId ? resolveFk(fk.tasks, doc.taskId) : doc.task_id,
+    tag_id: doc.tagId ? resolveFk(fk.tags, doc.tagId) : doc.tag_id,
   };
 }
 
@@ -766,6 +766,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     skipArgs ?? { tenantId: tenantId! },
   );
 
+  // Plugins (powerups)
+  const rawPlugins = useQuery(
+    api.settings.listPlugins,
+    skipArgs ?? { tenantId: tenantId! },
+  );
+
   // Shared tasks
   const rawSharedToMe = useQuery(
     api.taskResources.listSharedToMe,
@@ -851,9 +857,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       workspaceChat: EMPTY,
 
       kpiCards: rawKpiCards ? rawKpiCards.map(mapKpiCard) : EMPTY,
-      plugins: EMPTY,
+      plugins: rawPlugins ? rawPlugins.map((p: any) => ({
+        ...p,
+        id: p.pgId ?? p._id,
+        is_enabled: p.isEnabled ?? false,
+      })) : EMPTY,
     };
-  }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards]);
+  }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards, rawPlugins]);
 
   const sharedTaskIds = useMemo(() => {
     const ids = new Set<number | string>();

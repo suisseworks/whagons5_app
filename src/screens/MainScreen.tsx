@@ -22,7 +22,6 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
@@ -34,12 +33,19 @@ import { ActiveTaskStrip } from '../components/ActiveTaskStrip';
 import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
 import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
-import { KpiStrip } from '../components/KpiStrip';
 import { ColabScreen } from './ColabScreen';
-import { useKpiCards } from '../hooks/useKpiCards';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 
+// ---------------------------------------------------------------------------
+// Surface color tokens (3-level hierarchy)
+// ---------------------------------------------------------------------------
+const SURFACE = {
+  light: { primary: '#FFFFFF', secondary: '#F3F3F3', tertiary: '#EEEEEF' },
+  dark:  { primary: '#1A1A1A', secondary: '#2A2A2A', tertiary: '#2E2E2E' },
+};
+
+// ---------------------------------------------------------------------------
 type MainScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Main'>;
 
 interface NavItem {
@@ -48,18 +54,19 @@ interface NavItem {
   color?: string;
 }
 
-const navItems: NavItem[] = [
+const BASE_NAV_ITEMS: NavItem[] = [
   { icon: 'checklist', label: 'Tasks' },
   { icon: 'forum', label: 'Colab' },
   { icon: 'people-outline', label: 'Boards' },
-  { icon: 'cleaning-services', label: 'Cleaning' },
 ];
+
+const CLEANING_NAV_ITEM: NavItem = { icon: 'cleaning-services', label: 'Cleaning' };
 
 // ---------------------------------------------------------------------------
 // Stable FlatList helpers (module-level to avoid re-creation)
 // ---------------------------------------------------------------------------
 const keyExtractor = (item: TaskItem, index: number) => item.id || String(index);
-const ItemSeparator = () => <View style={{ height: 12 }} />;
+const ItemSeparator = () => <View style={{ height: 8 }} />;
 
 // ---------------------------------------------------------------------------
 // SwipeableTaskItem – extracted outside MainScreen to avoid re-creation on
@@ -150,7 +157,7 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
   const insets = useSafeAreaInsets();
-  const { colors, primaryColor, isDarkMode, showKpiCards: showKpiPref } = useTheme();
+  const { colors, primaryColor, isDarkMode } = useTheme();
   const {
     tasks,
     totalTaskCount,
@@ -171,10 +178,19 @@ export const MainScreen: React.FC = () => {
     setSelectedWorkspace,
     hasActiveFilters,
     filters,
+    availableStatuses,
   } = useTasks();
 
   const { data, isSyncing, hasEverSynced, refresh, syncError, isInitialSync } = useData();
-  const { cards: kpiCards, hasCards: hasKpiCards } = useKpiCards({ selectedWorkspace });
+
+  const isCleaningEnabled = useMemo(() => {
+    const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
+    return plugin?.is_enabled === true;
+  }, [data.plugins]);
+
+  const navItems = useMemo(() => {
+    return isCleaningEnabled ? [...BASE_NAV_ITEMS, CLEANING_NAV_ITEM] : BASE_NAV_ITEMS;
+  }, [isCleaningEnabled]);
 
   // -- Sync pill: show while syncing / offline, briefly after sync, then hide --
   const wasSyncingRef = useRef(false);
@@ -272,16 +288,60 @@ export const MainScreen: React.FC = () => {
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [colabInChat, setColabInChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeStatusChip, setActiveStatusChip] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedNav >= navItems.length) {
+      setSelectedNav(0);
+    }
+  }, [navItems.length, selectedNav]);
+
+  const surfaces = isDarkMode ? SURFACE.dark : SURFACE.light;
+
+  const handleCreateTask = useCallback(() => {
+    navigation.navigate('CreateTask');
+  }, [navigation]);
 
   const onRefresh = useCallback(async () => {
     await refresh();
   }, [refresh]);
 
-  // Client-side search filter
+  const statusChips = useMemo(() => {
+    const counts = new Map<string, { count: number; color: string }>();
+    for (const t of tasks) {
+      const key = t.status.toLowerCase();
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        counts.set(key, { count: 1, color: t.statusColor || '#9CA3AF' });
+      }
+    }
+    const chips: { label: string; statusKey: string; color: string; count: number }[] = [
+      { label: 'All', statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: tasks.length },
+    ];
+    for (const s of availableStatuses) {
+      const key = s.name.toLowerCase();
+      const entry = counts.get(key);
+      chips.push({
+        label: s.name,
+        statusKey: key,
+        color: s.color || '#9CA3AF',
+        count: entry?.count ?? 0,
+      });
+    }
+    return chips;
+  }, [tasks, availableStatuses, isDarkMode]);
+
+  // Client-side search + status chip filter
   const displayedTasks = useMemo(() => {
+    let filtered = tasks;
+    if (activeStatusChip) {
+      filtered = filtered.filter((t) => t.status.toLowerCase() === activeStatusChip);
+    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return tasks;
-    return tasks.filter(
+    if (!q) return filtered;
+    return filtered.filter(
       (t) =>
         t.title.toLowerCase().includes(q) ||
         t.spot.toLowerCase().includes(q) ||
@@ -289,7 +349,8 @@ export const MainScreen: React.FC = () => {
         t.assignees.some((a) => a.name.toLowerCase().includes(q)) ||
         t.tags.some((tag) => tag.toLowerCase().includes(q)),
     );
-  }, [tasks, searchQuery]);
+  }, [tasks, searchQuery, activeStatusChip]);
+
 
   const handleTaskPress = useCallback(
     (task: TaskItem) => {
@@ -298,18 +359,14 @@ export const MainScreen: React.FC = () => {
     [navigation],
   );
 
-  const handleCreateTask = useCallback(() => {
-    navigation.navigate('CreateTask');
-  }, [navigation]);
-
   // Build workspace-scoped user set: IDs of users assigned to tasks in the selected workspace
   const workspaceUserIds = useMemo(() => {
     if (selectedWorkspace === 'Everything') return null; // show all users
     const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
     if (!ws) return null;
-    // Collect task IDs belonging to this workspace
+    const wsIdStr = String(ws.id);
     const wsTaskIds = new Set(
-      data.tasks.filter((t) => (t as any).workspace_id === ws.id).map((t) => t.id),
+      data.tasks.filter((t) => String((t as any).workspace_id) === wsIdStr).map((t) => t.id),
     );
     // Collect user IDs assigned to those tasks
     const userIds = new Set<number>();
@@ -346,14 +403,14 @@ export const MainScreen: React.FC = () => {
     if (selectedWorkspace === 'Everything') return workingTasks;
     const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
     if (!ws) return workingTasks;
-    // We need task workspace IDs — get them from the raw synced tasks
-    const taskWsMap = new Map<number, number | null | undefined>();
+    const wsIdStr = String(ws.id);
+    const taskWsMap = new Map<number, string>();
     for (const t of data.tasks) {
-      taskWsMap.set(t.id, (t as any).workspace_id);
+      taskWsMap.set(t.id as number, String((t as any).workspace_id));
     }
     return workingTasks.filter((wt) => {
       const wtId = Number(wt.id);
-      return taskWsMap.get(wtId) === ws.id;
+      return taskWsMap.get(wtId) === wsIdStr;
     });
   }, [workingTasks, selectedWorkspace, data.workspaces, data.tasks]);
 
@@ -415,17 +472,56 @@ export const MainScreen: React.FC = () => {
     [cardDensity, isDarkMode, primaryColor, handleTaskPress, handleSwipeLeft, handleSwipeRight],
   );
 
+  const handleChipPress = useCallback((statusKey: string) => {
+    setActiveStatusChip((prev) => (prev === statusKey ? null : statusKey || null));
+  }, []);
+
   const renderListHeader = () => {
-    const showKpi = hasKpiCards && showKpiPref && displayedTasks.length > 0;
-    if (!showSyncPill && !showKpi) return null;
+    const showChips = tasks.length > 0 && statusChips.length > 1;
+    if (!showSyncPill && !showChips) return null;
 
     const syncLabel = syncError ? 'Offline' : isSyncing ? 'Syncing' : 'Updated';
-    const syncColor = syncError ? '#D08F36' : isSyncing ? primaryColor : colors.textSecondary;
+    const syncColor = syncError ? '#EF9F27' : isSyncing ? primaryColor : colors.textSecondary;
 
     return (
       <View>
-        {/* KPI Cards Strip */}
-        {showKpi && <KpiStrip cards={kpiCards} />}
+        {/* Status filter chips */}
+        {showChips && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.chipStrip}
+            contentContainerStyle={styles.chipStripContent}
+          >
+            {statusChips.map((chip) => {
+              const isActive = activeStatusChip === chip.statusKey || (!activeStatusChip && chip.statusKey === '');
+              return (
+                <TouchableOpacity
+                  key={chip.statusKey || '_all'}
+                  style={[
+                    styles.filterChip,
+                    {
+                      backgroundColor: isActive
+                        ? (isDarkMode ? surfaces.primary : '#FFFFFF')
+                        : (isDarkMode ? surfaces.secondary : '#F5F5F7'),
+                      borderColor: isActive
+                        ? (isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)')
+                        : 'transparent',
+                    },
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => handleChipPress(chip.statusKey)}
+                >
+                  <View style={[styles.chipDot, { backgroundColor: chip.color }]} />
+                  <Text style={[styles.chipLabel, { color: colors.textSecondary }]}>{chip.label}</Text>
+                  <Text style={[styles.chipCount, { color: chip.count === 0 ? (isDarkMode ? 'rgba(255,255,255,0.3)' : '#BDBDBD') : colors.text }]}>
+                    {chip.count}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        )}
 
         {/* Sync Pill */}
         {showSyncPill && (
@@ -481,8 +577,8 @@ export const MainScreen: React.FC = () => {
               style={[
                 styles.colabSpaceItem,
                 {
-                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#FFFFFF',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                 },
               ]}
               activeOpacity={0.7}
@@ -521,7 +617,7 @@ export const MainScreen: React.FC = () => {
         }}
         ListEmptyComponent={
           <View style={styles.placeholderContainer}>
-            <MaterialIcons name="campaign" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'} />
+            <MaterialIcons name="campaign" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
             <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>
               No boards yet
             </Text>
@@ -570,7 +666,7 @@ export const MainScreen: React.FC = () => {
           <View
             style={[
               styles.emptyIconCircle,
-              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EDE7' },
+              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0F0F2' },
             ]}
           >
             <MaterialIcons name="search-off" size={40} color={colors.textSecondary} />
@@ -583,16 +679,36 @@ export const MainScreen: React.FC = () => {
       );
     }
 
+    // Status chip filter hiding all tasks
+    if (activeStatusChip && tasks.length > 0) {
+      return (
+        <View style={styles.emptyContainer}>
+          <View
+            style={[
+              styles.emptyIconCircle,
+              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0F0F2' },
+            ]}
+          >
+            <MaterialIcons name="filter-list-off" size={40} color={colors.textSecondary} />
+          </View>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>No matching tasks</Text>
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+            Try selecting a different status or tap "All"
+          </Text>
+        </View>
+      );
+    }
+
     // Sync complete, genuinely no tasks
     return (
       <View style={styles.emptyContainer}>
         <View
-          style={[
-            styles.emptyIconCircle,
-            { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EDE7' },
-          ]}
-        >
-          <MaterialIcons name="task-alt" size={40} color={isDarkMode ? 'rgba(255,255,255,0.18)' : '#C5BEB3'} />
+            style={[
+              styles.emptyIconCircle,
+              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0F0F2' },
+            ]}
+          >
+            <MaterialIcons name="task-alt" size={40} color={isDarkMode ? 'rgba(255,255,255,0.18)' : '#D1D5DB'} />
         </View>
         <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks yet</Text>
         <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
@@ -643,22 +759,19 @@ export const MainScreen: React.FC = () => {
       return renderBoardsList();
     }
 
-    // Remaining tabs (Cleaning, etc.) show placeholder
-    const placeholderData = [
-      { nav: 3, icon: 'cleaning-services', title: 'Cleaning', subtitle: 'Cleaning management coming soon' },
-    ];
+    // Cleaning tab placeholder
+    if (navItems[selectedNav]?.label === 'Cleaning') {
+      return (
+        <View style={styles.placeholderContainer}>
+          <MaterialIcons name="cleaning-services" size={64} color="#BDBDBD" />
+          <Text style={[styles.placeholderTitle, { color: colors.text }]}>Cleaning</Text>
+          <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>Cleaning management coming soon</Text>
+          <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>Coming soon</Text>
+        </View>
+      );
+    }
 
-    const phData = placeholderData.find(d => d.nav === selectedNav);
-    if (!phData) return null;
-
-    return (
-      <View style={styles.placeholderContainer}>
-        <MaterialIcons name={phData.icon as any} size={64} color="#BDBDBD" />
-        <Text style={[styles.placeholderTitle, { color: colors.text }]}>{phData.title}</Text>
-        <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>{phData.subtitle}</Text>
-        <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>Coming soon</Text>
-      </View>
-    );
+    return null;
   };
 
   // Show full-screen sync screen on initial sync with no data
@@ -668,68 +781,39 @@ export const MainScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <LinearGradient
-        colors={[colors.background, isDarkMode ? '#121615' : '#EFE8DD']}
-        style={StyleSheet.absoluteFillObject}
-      />
-      {/* App Bar */}
-      <View style={[styles.appBar, { borderBottomColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#E8E1D6' }]}>
+      {/* App Bar — 3 zones: menu / workspace / actions */}
+      <View style={[styles.appBar, { backgroundColor: colors.background }]}>
         <TouchableOpacity
           style={styles.menuButton}
           onPress={() => drawerRef.current?.open()}
         >
-          <MaterialIcons name="menu" size={24} color={colors.text} />
+          <MaterialIcons name="menu" size={22} color={colors.text} />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[
-            styles.workspaceSelector,
-            {
-              borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.12)' : '#E6E0D7',
-              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-            },
-          ]}
+          style={styles.workspaceSelector}
           onPress={() => setWorkspaceMenuVisible(true)}
         >
-          {(() => {
-            const selWs = workspaceLookup.get(selectedWorkspace);
-            const selColor = selWs?.color || DEFAULT_WORKSPACE_COLOR;
-            const { name: selIconName, solid: selSolid, brand: selBrand } = parseWorkspaceIcon(selWs?.icon);
-            const isEverything = selectedWorkspace === 'Everything';
-            const isShared = selectedWorkspace === 'Shared';
-            return (
-              <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : isShared ? '#8B5CF6' : selColor, marginRight: 6 }]}>
-                {isEverything ? (
-                  <MaterialIcons name="layers" size={12} color="#FFFFFF" />
-                ) : isShared ? (
-                  <MaterialIcons name="inbox" size={12} color="#FFFFFF" />
-                ) : (
-                  <FaIcon name={selIconName} size={11} color="#FFFFFF" solid={selSolid} brand={selBrand} />
-                )}
-              </View>
-            );
-          })()}
           <Text numberOfLines={1} style={[styles.workspaceText, { color: colors.text }]}>
             {selectedWorkspace}
           </Text>
-          <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
+          <MaterialIcons name="expand-more" size={18} color={colors.textSecondary} />
         </TouchableOpacity>
 
         <View style={styles.appBarActions}>
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => navigation.navigate('SpotsMap')}
+            onPress={() => navigation.navigate('Stats' as any)}
           >
-            <MaterialIcons name="map" size={22} color={colors.textSecondary} />
+            <MaterialIcons name="bar-chart" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
-
           <TouchableOpacity
             style={styles.iconButton}
             onPress={() => setFilterSheetVisible(true)}
           >
             <MaterialIcons
-              name="filter-list"
-              size={22}
+              name="tune"
+              size={20}
               color={hasActiveFilters ? primaryColor : colors.textSecondary}
             />
             {hasActiveFilters && (
@@ -745,19 +829,7 @@ export const MainScreen: React.FC = () => {
             style={styles.iconButton}
             onPress={() => navigation.navigate('Settings')}
           >
-            <View style={{ width: 24, height: 24 }}>
-              <MaterialIcons name="account-circle" size={24} color={colors.textSecondary} />
-              <View style={{
-                position: 'absolute',
-                top: 0.5,
-                left: 0.5,
-                width: 23,
-                height: 23,
-                borderRadius: 11.5,
-                borderWidth: 1.5,
-                borderColor: syncError ? '#9ca3af' : isSyncing ? '#f59e0b' : '#22c55e',
-              }} />
-            </View>
+            <MaterialIcons name="account-circle" size={22} color={colors.textSecondary} />
             {notificationCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -771,33 +843,25 @@ export const MainScreen: React.FC = () => {
 
       {/* Search bar – Tasks tab only */}
       {selectedNav === 0 && (
-        <View
-          style={[
-            styles.searchBarContainer,
-            {
-              borderBottomColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#E8E1D6',
-            },
-          ]}
-        >
+        <View style={styles.searchBarContainer}>
           <View
             style={[
               styles.searchBar,
               {
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
-                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : '#E6E0D7',
+                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
               },
             ]}
           >
             <MaterialIcons
               name="search"
-              size={20}
-              color={colors.textSecondary}
+              size={16}
+              color="#999999"
               style={{ marginRight: 8 }}
             />
             <TextInput
               style={[styles.searchInput, { color: colors.text }]}
               placeholder="Search tasks..."
-              placeholderTextColor={colors.textSecondary}
+              placeholderTextColor="#999999"
               value={searchQuery}
               onChangeText={setSearchQuery}
               returnKeyType="search"
@@ -808,7 +872,7 @@ export const MainScreen: React.FC = () => {
                 onPress={() => setSearchQuery('')}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               >
-                <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                <MaterialIcons name="close" size={16} color="#999999" />
               </TouchableOpacity>
             )}
           </View>
@@ -916,7 +980,7 @@ export const MainScreen: React.FC = () => {
           activeOpacity={1}
           onPress={() => setWorkspaceMenuVisible(false)}
         >
-          <View style={[styles.workspaceMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7' }]}
+          <View style={[styles.workspaceMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }]}
           >
             {workspaces.map((workspace, index) => {
               const wsData = workspaceLookup.get(workspace);
@@ -990,7 +1054,7 @@ export const MainScreen: React.FC = () => {
               styles.statusPickerSheet,
               {
                 backgroundColor: colors.surface,
-                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
               },
             ]}
             onStartShouldSetResponder={() => true}
@@ -1014,12 +1078,12 @@ export const MainScreen: React.FC = () => {
                   <TouchableOpacity
                     key={s.id}
                     style={[
-                      styles.statusPickerItem,
-                      {
-                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
-                      },
-                      isCurrentStatus && {
-                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                    styles.statusPickerItem,
+                    {
+                      borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+                    },
+                    isCurrentStatus && {
+                      backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
                       },
                     ]}
                     onPress={() => handleStatusSelect(s)}
@@ -1076,7 +1140,7 @@ export const MainScreen: React.FC = () => {
               styles.statusPickerSheet,
               {
                 backgroundColor: colors.surface,
-                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
               },
             ]}
             onStartShouldSetResponder={() => true}
@@ -1097,8 +1161,8 @@ export const MainScreen: React.FC = () => {
               style={[
                 styles.assigneeSearchContainer,
                 {
-                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F2EC',
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : '#E6E1D7',
+                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
                 },
               ]}
             >
@@ -1134,10 +1198,10 @@ export const MainScreen: React.FC = () => {
                       style={[
                         styles.statusPickerItem,
                         {
-                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE1',
+                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
                         },
                         isAssigned && {
-                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F7F4EF',
+                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
                         },
                       ]}
                       onPress={() => handleAssigneeSelect({ id: u.id, name: u.name })}
@@ -1179,28 +1243,25 @@ const styles = StyleSheet.create({
   appBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 64,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    backgroundColor: 'transparent',
+    height: 52,
+    paddingHorizontal: 12,
+    paddingBottom: 4,
   },
   menuButton: {
-    padding: 8,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   workspaceSelector: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+    justifyContent: 'center',
+    gap: 4,
   },
   workspaceText: {
-    flexShrink: 1,
-    fontSize: fontSizes.sm,
+    fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
   },
   appBarActions: {
@@ -1208,16 +1269,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   iconButton: {
-    padding: 8,
-    marginLeft: 4,
-  },
-  filterDot: {
-    position: 'absolute',
-    right: 5,
-    top: 5,
-    width: 7,
-    height: 7,
-    borderRadius: 4,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   filterCountBadge: {
     position: 'absolute',
@@ -1237,44 +1292,72 @@ const styles = StyleSheet.create({
   },
   notificationBadge: {
     position: 'absolute',
-    right: 2,
-    top: 2,
-    backgroundColor: '#E2573C',
-    borderRadius: 9,
-    minWidth: 18,
-    height: 18,
+    right: 4,
+    top: 4,
+    backgroundColor: '#E24B4A',
+    borderRadius: 7,
+    minWidth: 14,
+    height: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#F4F1EA',
   },
   notificationBadgeText: {
     color: '#FFFFFF',
-    fontSize: 10,
+    fontSize: 9,
     fontFamily: fontFamilies.bodyBold,
   },
   content: {
     flex: 1,
   },
-  // Search bar
   searchBarContainer: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
+    paddingTop: 4,
+    paddingBottom: 8,
   },
   searchBar: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    height: 40,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    height: 36,
   },
   searchInput: {
     flex: 1,
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodyMedium,
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyRegular,
     paddingVertical: 0,
+  },
+  // Status filter chips
+  chipStrip: {
+    flexGrow: 0,
+    marginBottom: 4,
+  },
+  chipStripContent: {
+    paddingHorizontal: 0,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 32,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 0.5,
+    gap: 6,
+  },
+  chipDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  chipLabel: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  chipCount: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
   },
   // Task list
   listContent: {
@@ -1334,7 +1417,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 2,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
   },
   syncDot: {
     width: 6,
@@ -1361,13 +1443,13 @@ const styles = StyleSheet.create({
   swipeBackgroundRight: {
     left: 0,
     right: '50%',
-    backgroundColor: '#EDE9E1',
+    backgroundColor: '#F0F0F2',
   },
   swipeBackgroundLeft: {
     right: 0,
     left: '50%',
     justifyContent: 'flex-end',
-    backgroundColor: '#E2EDF0',
+    backgroundColor: '#EBF5FF',
   },
   swipeText: {
     marginHorizontal: 8,
@@ -1456,7 +1538,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     ...shadows.lifted,
   },
-
   menuModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
@@ -1466,11 +1547,11 @@ const styles = StyleSheet.create({
   },
   workspaceMenu: {
     backgroundColor: '#FFFFFF',
-    borderRadius: radius.md,
-    borderWidth: 1,
+    borderRadius: 12,
+    borderWidth: 0.5,
     paddingVertical: 8,
-    minWidth: 180,
-    ...shadows.subtle,
+    minWidth: 200,
+    ...shadows.lifted,
   },
   workspaceMenuItem: {
     paddingHorizontal: 16,
@@ -1515,18 +1596,17 @@ const styles = StyleSheet.create({
   statusPickerSheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    borderWidth: 1,
+    borderWidth: 0.5,
     borderBottomWidth: 0,
     paddingTop: 12,
     paddingBottom: 32,
     paddingHorizontal: 20,
-    ...shadows.subtle,
   },
   statusPickerHandle: {
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#D1CBC0',
+    backgroundColor: '#D1D5DB',
     alignSelf: 'center' as const,
     marginBottom: 16,
   },
@@ -1549,7 +1629,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 12,
     borderRadius: radius.md,
-    borderBottomWidth: 1,
+    borderBottomWidth: 0.5,
   },
   statusPickerDot: {
     width: 12,
@@ -1571,7 +1651,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 10,
-    borderWidth: 1,
+    borderWidth: 0.5,
   },
   assigneeSearchInput: {
     flex: 1,
@@ -1609,8 +1689,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     padding: 14,
-    borderRadius: radius.lg,
-    borderWidth: 1,
+    borderRadius: 12,
+    borderWidth: 0.5,
   },
   colabSpaceIcon: {
     width: 40,

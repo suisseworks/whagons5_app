@@ -142,7 +142,7 @@ export const TenantSelectScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F4F1EA',
+    backgroundColor: '#FAFAFA',
   },
   header: {
     alignItems: 'center',
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E6E1D7',
+    borderColor: 'rgba(0, 0, 0, 0.08)',
     borderRadius: radius.lg,
     paddingHorizontal: 16,
     paddingVertical: 16,

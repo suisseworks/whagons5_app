@@ -19,6 +19,7 @@ import { TenantSelectScreen } from '../screens/TenantSelectScreen';
 import { SpotsMapScreen } from '../screens/SpotsMapScreen';
 import { GamificationScreen } from '../screens/GamificationScreen';
 import { PointHistoryScreen } from '../screens/PointHistoryScreen';
+import { StatsScreen } from '../screens/StatsScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -51,6 +52,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="SpotsMap" component={SpotsMapScreen} />
         <Stack.Screen name="Gamification" component={GamificationScreen} />
         <Stack.Screen name="PointHistory" component={PointHistoryScreen} />
+        <Stack.Screen name="Stats" component={StatsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

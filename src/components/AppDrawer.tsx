@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
+import { useData } from '../context/DataContext';
 import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList, CardDensity } from '../models/types';
-import { quotes, inspirationalImages, getDailyIndex } from '../utils/helpers';
-// SQLite cache removed — Convex handles all data
-import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
+import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -30,201 +30,244 @@ interface AppDrawerProps {
 export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
-  const { cardDensity, setCardDensity } = useTasks();
+  const { cardDensity, setCardDensity, selectedWorkspace, setSelectedWorkspace, workspaceObjects, totalTaskCount } = useTasks();
   const { logout, user, subdomain } = useAuth();
+  const { data } = useData();
   const { unreadCount: notificationCount } = useNotifications();
 
-  const quoteIndex = getDailyIndex(quotes.length);
-  const imageIndex = getDailyIndex(inspirationalImages.length);
-  const selectedQuote = quotes[quoteIndex];
-  const selectedImage = inspirationalImages[imageIndex];
+  const surfaceSecondary = isDarkMode ? '#2A2A2A' : '#F5F5F7';
+  const borderTertiary = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+  const textTertiary = isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)';
+  const infoColor = '#2563EB';
 
-  const handleNotifications = () => {
-    onClose();
-    navigation.navigate('Notifications');
-  };
+  const taskCountsByWorkspace = useMemo(() => {
+    const counts = new Map<string | number, number>();
+    for (const task of data.tasks) {
+      const wsId = (task as any).workspace_id;
+      if (wsId != null) {
+        counts.set(wsId, (counts.get(wsId) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [data.tasks]);
 
-  const handleSettings = () => {
+  const handleNavigate = (screen: keyof RootStackParamList) => {
     onClose();
-    navigation.navigate('Settings');
-  };
-
-  const handleThemes = () => {
-    onClose();
-    navigation.navigate('Themes');
+    navigation.navigate(screen as any);
   };
 
   const handleLogout = async () => {
     onClose();
     await logout();
     navigation.dispatch(
-      CommonActions.reset({
-        index: 0,
-        routes: [{ name: 'Login' }],
-      }),
+      CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }),
     );
   };
 
+  const handleWorkspaceSelect = (name: string) => {
+    setSelectedWorkspace(name);
+    onClose();
+  };
+
+  const orgName = subdomain
+    ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1)
+    : 'Whagons';
+
+  const userInitial = user?.name?.charAt(0).toUpperCase() ?? '?';
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerContent}>
-            <View style={[styles.logoBadge, { backgroundColor: `${primaryColor}20` }]}>
-              <Image source={require('../../assets/whagons-check.png')} style={styles.logoImage} />
+      <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
+
+        {/* ── Profile card ─────────────────────────────────────────── */}
+        <View style={[styles.profileCard, { backgroundColor: surfaceSecondary }]}>
+          <View style={styles.orgRow}>
+            <View style={[styles.orgAvatar, { backgroundColor: `${primaryColor}20` }]}>
+              <Image source={require('../../assets/whagons-check.png')} style={styles.orgLogo} />
             </View>
-            <View>
-              <Text style={[styles.headerTitle, { color: colors.text }]}>Whagons</Text>
-              <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>Operational Intelligence in Action.</Text>
-            </View>
-          </View>
-          {subdomain && (
-            <View style={[styles.tenantBadge, { backgroundColor: `${primaryColor}15` }]}>
-              <MaterialIcons name="business" size={14} color={primaryColor} />
-              <Text style={[styles.tenantName, { color: primaryColor }]}>
-                {subdomain.charAt(0).toUpperCase() + subdomain.slice(1)}
+            <View style={styles.orgInfo}>
+              <Text style={[styles.orgName, { color: colors.text }]}>{orgName}</Text>
+              <Text style={[styles.orgTagline, { color: textTertiary }]}>
+                Operational Intelligence
               </Text>
             </View>
-          )}
+          </View>
+
           {user && (
-            <Text style={[styles.headerUser, { color: colors.textSecondary }]}>{user.name ?? user.email}</Text>
+            <View style={styles.userRow}>
+              <View style={[styles.userAvatar, { backgroundColor: primaryColor }]}>
+                <Text style={styles.userAvatarText}>{userInitial}</Text>
+              </View>
+              <Text style={[styles.userName, { color: colors.textSecondary }]} numberOfLines={1}>
+                {user.name ?? user.email}
+              </Text>
+              <View style={[styles.rolePill, { backgroundColor: `${primaryColor}15` }]}>
+                <Text style={[styles.roleText, { color: primaryColor }]}>Member</Text>
+              </View>
+            </View>
           )}
         </View>
 
-        {/* Menu Items */}
+        {/* ── Workspaces section ───────────────────────────────────── */}
+        <Text style={[styles.sectionHeader, { color: textTertiary }]}>WORKSPACES</Text>
+
+        {/* Everything */}
         <TouchableOpacity
           style={[
-            styles.menuItem,
-            styles.menuItemElevated,
-            { backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.9)' : 'rgba(255, 255, 255, 0.9)' },
+            styles.workspaceRow,
+            selectedWorkspace === 'Everything' && { backgroundColor: surfaceSecondary },
           ]}
-          onPress={handleNotifications}
+          onPress={() => handleWorkspaceSelect('Everything')}
+          activeOpacity={0.6}
         >
-          <View style={styles.menuIconContainer}>
-            <MaterialIcons name="notifications-none" size={22} color={colors.textSecondary} />
-            {notificationCount > 0 && (
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>
-                  {notificationCount > 9 ? '9+' : notificationCount}
-                </Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.menuText, { color: colors.text }]}>Notifications</Text>
+          <View style={[styles.workspaceDot, { backgroundColor: isDarkMode ? '#6B7280' : '#374151' }]} />
+          <Text
+            style={[
+              styles.workspaceName,
+              { color: selectedWorkspace === 'Everything' ? infoColor : colors.text },
+              selectedWorkspace === 'Everything' && { fontFamily: fontFamilies.bodySemibold },
+            ]}
+            numberOfLines={1}
+          >
+            Everything
+          </Text>
+          <Text style={[styles.workspaceCount, { color: textTertiary }]}>{totalTaskCount}</Text>
+        </TouchableOpacity>
+
+        {workspaceObjects.map((ws) => {
+          const isActive = selectedWorkspace === ws.name;
+          const wsColor = ws.color || DEFAULT_WORKSPACE_COLOR;
+          const count = taskCountsByWorkspace.get(ws.id) ?? 0;
+          return (
+            <TouchableOpacity
+              key={String(ws.id)}
+              style={[
+                styles.workspaceRow,
+                isActive && { backgroundColor: surfaceSecondary },
+              ]}
+              onPress={() => handleWorkspaceSelect(ws.name)}
+              activeOpacity={0.6}
+            >
+              <View style={[styles.workspaceDot, { backgroundColor: wsColor }]} />
+              <Text
+                style={[
+                  styles.workspaceName,
+                  { color: isActive ? infoColor : colors.text },
+                  isActive && { fontFamily: fontFamilies.bodySemibold },
+                ]}
+                numberOfLines={1}
+              >
+                {ws.name}
+              </Text>
+              <Text style={[styles.workspaceCount, { color: textTertiary }]}>{count}</Text>
+            </TouchableOpacity>
+          );
+        })}
+
+        <View style={[styles.sectionDivider, { borderColor: borderTertiary }]} />
+
+        {/* ── General section ──────────────────────────────────────── */}
+        <Text style={[styles.sectionHeader, { color: textTertiary }]}>GENERAL</Text>
+
+        {/* Notifications */}
+        <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Notifications')} activeOpacity={0.6}>
+          <MaterialIcons name="notifications-none" size={20} color={colors.textSecondary} />
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Notifications</Text>
           {notificationCount > 0 && (
-            <View style={styles.countBadge}>
-              <Text style={styles.countBadgeText}>{notificationCount}</Text>
+            <View style={styles.notifBadge}>
+              <Text style={styles.notifBadgeText}>
+                {notificationCount > 99 ? '99+' : notificationCount}
+              </Text>
             </View>
           )}
         </TouchableOpacity>
 
-        <View style={styles.divider} />
-
-        <TouchableOpacity style={styles.menuItem} onPress={handleSettings}>
-          <MaterialIcons name="person-outline" size={22} color={colors.textSecondary} />
-          <Text style={[styles.menuText, { color: colors.text }]}>Profile</Text>
+        {/* Profile */}
+        <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Settings')} activeOpacity={0.6}>
+          <MaterialIcons name="person-outline" size={20} color={colors.textSecondary} />
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Profile</Text>
+          <MaterialIcons name="chevron-right" size={14} color={textTertiary} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.menuItem} onPress={handleThemes}>
-          <MaterialIcons name="palette" size={22} color={colors.textSecondary} />
-          <Text style={[styles.menuText, { color: colors.text }]}>Themes</Text>
+        {/* Settings */}
+        <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Settings')} activeOpacity={0.6}>
+          <MaterialIcons name="settings" size={20} color={colors.textSecondary} />
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Settings</Text>
+          <MaterialIcons name="chevron-right" size={14} color={textTertiary} />
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.menuItem} onPress={() => { onClose(); navigation.navigate('Gamification'); }}>
-          <MaterialIcons name="emoji-events" size={22} color={colors.textSecondary} />
-          <Text style={[styles.menuText, { color: colors.text }]}>Gamification</Text>
-        </TouchableOpacity>
+        <View style={[styles.sectionDivider, { borderColor: borderTertiary }]} />
 
-        <TouchableOpacity style={styles.menuItem} onPress={handleSettings}>
-          <MaterialIcons name="settings" size={22} color={colors.textSecondary} />
-          <Text style={[styles.menuText, { color: colors.text }]}>Settings</Text>
-        </TouchableOpacity>
+        {/* ── Preferences section ──────────────────────────────────── */}
+        <Text style={[styles.sectionHeader, { color: textTertiary }]}>PREFERENCES</Text>
 
-        <View style={styles.divider} />
-
-        {/* Switches */}
-        <View style={styles.switchItem}>
+        {/* Dark mode */}
+        <View style={styles.menuRow}>
           <MaterialIcons
             name={isDarkMode ? 'dark-mode' : 'light-mode'}
-            size={22}
+            size={20}
             color={colors.textSecondary}
           />
-          <Text style={[styles.menuText, { color: colors.text }]}>Dark Mode</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Dark Mode</Text>
           <Switch
             value={isDarkMode}
             onValueChange={toggleDarkMode}
             trackColor={{ false: '#E0E0E0', true: `${primaryColor}80` }}
             thumbColor={isDarkMode ? primaryColor : '#FAFAFA'}
+            style={styles.switchControl}
           />
         </View>
 
-        <View style={styles.densitySection}>
-          <View style={styles.densityLabelRow}>
-            <MaterialIcons
-              name={cardDensity === 'compact' ? 'view-agenda' : cardDensity === 'detailed' ? 'view-stream' : 'view-day'}
-              size={22}
-              color={colors.textSecondary}
-            />
-            <Text style={[styles.menuText, { color: colors.text }]}>Card Density</Text>
-          </View>
-          <View
-            style={[
-              styles.densityToggle,
-              {
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F0EBE3',
-                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
-              },
-            ]}
-          >
-            {(['compact', 'normal', 'detailed'] as CardDensity[]).map((d) => {
-              const isActive = cardDensity === d;
-              return (
-                <TouchableOpacity
-                  key={d}
+        {/* Card density */}
+        <View style={styles.menuRow}>
+          <MaterialIcons
+            name={cardDensity === 'compact' ? 'view-agenda' : cardDensity === 'detailed' ? 'view-stream' : 'view-day'}
+            size={20}
+            color={colors.textSecondary}
+          />
+          <Text style={[styles.menuLabel, { color: colors.text }]}>Card Density</Text>
+        </View>
+        <View style={styles.densityPills}>
+          {(['compact', 'normal', 'detailed'] as CardDensity[]).map((d) => {
+            const isActive = cardDensity === d;
+            return (
+              <TouchableOpacity
+                key={d}
+                style={[
+                  styles.densityPill,
+                  {
+                    backgroundColor: isActive ? (isDarkMode ? `${primaryColor}30` : `${primaryColor}12`) : surfaceSecondary,
+                    borderColor: isActive ? `${primaryColor}40` : 'transparent',
+                  },
+                ]}
+                onPress={() => setCardDensity(d)}
+                activeOpacity={0.7}
+              >
+                <Text
                   style={[
-                    styles.densityOption,
-                    isActive && {
-                      backgroundColor: isDarkMode ? primaryColor : primaryColor,
+                    styles.densityPillText,
+                    {
+                      color: isActive ? primaryColor : colors.textSecondary,
+                      fontFamily: isActive ? fontFamilies.bodySemibold : fontFamilies.bodyMedium,
                     },
                   ]}
-                  onPress={() => setCardDensity(d)}
-                  activeOpacity={0.7}
                 >
-                  <Text
-                    style={[
-                      styles.densityOptionText,
-                      { color: isActive ? '#FFFFFF' : colors.textSecondary },
-                      isActive && { fontFamily: fontFamilies.bodySemibold },
-                    ]}
-                  >
-                    {d.charAt(0).toUpperCase() + d.slice(1)}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                  {d.charAt(0).toUpperCase() + d.slice(1)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
 
-        <View style={styles.divider} />
+        <View style={[styles.sectionDivider, { borderColor: borderTertiary }]} />
 
-        {/* Logout */}
-        <TouchableOpacity style={styles.menuItem} onPress={handleLogout}>
-          <MaterialIcons name="logout" size={24} color="#F44336" />
-          <Text style={[styles.menuText, { color: '#F44336' }]}>Log out</Text>
+        {/* ── Log out ──────────────────────────────────────────────── */}
+        <TouchableOpacity style={styles.menuRow} onPress={handleLogout} activeOpacity={0.6}>
+          <MaterialIcons name="logout" size={20} color="#DC2626" />
+          <Text style={[styles.menuLabel, { color: '#DC2626' }]}>Log out</Text>
         </TouchableOpacity>
 
-        {/* Inspirational Section */}
-        <View style={styles.inspirationalSection}>
-          <View style={styles.imageContainer}>
-            <Image source={{ uri: selectedImage }} style={styles.inspirationalImage} />
-            <View style={styles.imageGradient} />
-          </View>
-          <Text style={[styles.quoteText, { color: colors.textSecondary }]}>
-            "{selectedQuote.text}"
-          </Text>
-          <Text style={[styles.authorText, { color: colors.textSecondary }]}>— {selectedQuote.author}</Text>
-        </View>
+        <View style={{ height: 32 }} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -234,171 +277,170 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
-    paddingBottom: spacing.lg,
+
+  // ── Profile card ────────────────────────────────────────────────────
+  profileCard: {
+    paddingTop: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    borderBottomLeftRadius: 16,
+    borderBottomRightRadius: 16,
+    marginBottom: 8,
   },
-  headerContent: {
+  orgRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  logoBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  orgAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
-  logoImage: {
-    width: 28,
-    height: 28,
+  orgLogo: {
+    width: 24,
+    height: 24,
     resizeMode: 'contain',
   },
-  headerTitle: {
-    fontSize: fontSizes.lg,
-    fontFamily: fontFamilies.displaySemibold,
+  orgInfo: {
+    flex: 1,
   },
-  headerSubtitle: {
-    marginTop: 2,
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
-    letterSpacing: 0.3,
-  },
-  tenantBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    marginTop: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: radius.pill,
-  },
-  tenantName: {
-    marginLeft: 6,
-    fontSize: fontSizes.xs,
+  orgName: {
+    fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
-    letterSpacing: 0.2,
   },
-  headerUser: {
-    marginTop: 6,
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
+  orgTagline: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 1,
   },
-  menuItem: {
+  userRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    marginTop: 14,
   },
-  menuItemElevated: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    borderRadius: radius.md,
-    backgroundColor: 'rgba(255, 255, 255, 0.8)',
-    ...shadows.subtle,
-  },
-  menuIconContainer: {
-    position: 'relative',
-  },
-  badge: {
-    position: 'absolute',
-    right: -6,
-    top: -6,
-    backgroundColor: '#F44336',
-    borderRadius: 8,
-    minWidth: 16,
-    height: 16,
+  userAvatar: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    marginRight: 8,
   },
-  badgeText: {
+  userAvatarText: {
     color: '#FFFFFF',
-    fontSize: 9,
-    fontFamily: fontFamilies.bodyBold,
-  },
-  menuText: {
-    flex: 1,
-    marginLeft: 16,
-    fontSize: fontSizes.md,
-    fontFamily: fontFamilies.bodyMedium,
-  },
-  countBadge: {
-    backgroundColor: '#F44336',
-    borderRadius: 12,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  countBadgeText: {
-    color: '#FFFFFF',
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyBold,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.06)',
-    marginVertical: 8,
-  },
-  switchItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-  },
-  densitySection: {
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-  },
-  densityLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  densityToggle: {
-    flexDirection: 'row',
-    borderRadius: radius.sm,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  densityOption: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 7,
-    borderRadius: radius.sm - 1,
-  },
-  densityOptionText: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
-  },
-  inspirationalSection: {
-    margin: 16,
-  },
-  imageContainer: {
-    borderRadius: radius.lg,
-    overflow: 'hidden',
-    height: 160,
-  },
-  inspirationalImage: {
-    width: '100%',
-    height: '100%',
-  },
-  imageGradient: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
-  },
-  quoteText: {
-    marginTop: 12,
-    fontSize: fontSizes.sm,
-    fontStyle: 'italic',
-    fontFamily: fontFamilies.bodyRegular,
-    lineHeight: 20,
-  },
-  authorText: {
-    marginTop: 6,
-    fontSize: fontSizes.xs,
+    fontSize: 10,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  userName: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  rolePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: radius.pill,
+  },
+  roleText: {
+    fontSize: 9.5,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+
+  // ── Section headers & dividers ──────────────────────────────────────
+  sectionHeader: {
+    fontSize: 10,
+    fontFamily: fontFamilies.bodySemibold,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 6,
+  },
+  sectionDivider: {
+    borderTopWidth: 0.5,
+    marginVertical: 4,
+    marginHorizontal: 20,
+  },
+
+  // ── Workspace rows ──────────────────────────────────────────────────
+  workspaceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginHorizontal: 10,
+  },
+  workspaceDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 3,
+    marginRight: 10,
+  },
+  workspaceName: {
+    flex: 1,
+    fontSize: 12.5,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  workspaceCount: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
+    marginLeft: 8,
+  },
+
+  // ── Menu rows ───────────────────────────────────────────────────────
+  menuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 20,
+  },
+  menuLabel: {
+    flex: 1,
+    marginLeft: 14,
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+
+  // ── Notification badge ──────────────────────────────────────────────
+  notifBadge: {
+    height: 18,
+    minWidth: 18,
+    borderRadius: 9,
+    backgroundColor: '#FCEBEB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 5,
+  },
+  notifBadgeText: {
+    fontSize: 10,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#A32D2D',
+  },
+
+  // ── Dark mode switch ────────────────────────────────────────────────
+  switchControl: {
+    transform: [{ scaleX: 0.85 }, { scaleY: 0.85 }],
+  },
+
+  // ── Card density pills ──────────────────────────────────────────────
+  densityPills: {
+    flexDirection: 'row',
+    paddingLeft: 54,
+    paddingRight: 20,
+    gap: 6,
+    paddingBottom: 4,
+  },
+  densityPill: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  densityPillText: {
+    fontSize: 11,
   },
 });

@@ -1,33 +1,67 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { fontFamilies, fontSizes, radius } from '../config/designTokens';
+import { fontFamilies, radius } from '../config/designTokens';
 
 interface CustomChipProps {
   label: string;
   color: string;
   textColor?: string;
   compact?: boolean;
+  /** Use a light tinted background with semantic text color instead of solid fill */
+  tinted?: boolean;
+  /** Optional icon element rendered to the left of the label */
+  icon?: React.ReactNode;
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return null;
+  return {
+    r: parseInt(result[1], 16),
+    g: parseInt(result[2], 16),
+    b: parseInt(result[3], 16),
+  };
+}
+
+function darkenHex(hex: string, factor: number = 0.35): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const r = Math.round(rgb.r * (1 - factor));
+  const g = Math.round(rgb.g * (1 - factor));
+  const b = Math.round(rgb.b * (1 - factor));
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
 export const CustomChip: React.FC<CustomChipProps> = ({
   label,
   color,
-  textColor = '#FFFFFF',
+  textColor,
   compact = false,
+  tinted = false,
+  icon,
 }) => {
+  const rgb = hexToRgb(color);
+  const bgColor = tinted && rgb
+    ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.14)`
+    : color;
+  const fgColor = tinted
+    ? (textColor ?? darkenHex(color))
+    : (textColor ?? '#FFFFFF');
+
   return (
     <View
       style={[
-        styles.chip,
-        { backgroundColor: color },
-        compact && styles.chipCompact,
+        tinted ? styles.chipTinted : styles.chip,
+        { backgroundColor: bgColor },
+        compact && (tinted ? styles.chipTintedCompact : styles.chipCompact),
       ]}
     >
+      {icon && <View style={styles.iconWrap}>{icon}</View>}
       <Text
         style={[
-          styles.label,
-          { color: textColor },
-          compact && styles.labelCompact,
+          tinted ? styles.labelTinted : styles.label,
+          { color: fgColor },
+          compact && (tinted ? styles.labelTintedCompact : styles.labelCompact),
         ]}
       >
         {label}
@@ -38,20 +72,44 @@ export const CustomChip: React.FC<CustomChipProps> = ({
 
 const styles = StyleSheet.create({
   chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 6,
+    flexShrink: 0,
+  },
+  iconWrap: {
+    marginRight: 5,
+  },
+  chipCompact: {
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  label: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  labelCompact: {
+    fontSize: 13,
+  },
+  chipTinted: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: radius.pill,
     flexShrink: 0,
   },
-  chipCompact: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
+  chipTintedCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 3,
   },
-  label: {
-    fontSize: fontSizes.xs,
+  labelTinted: {
+    fontSize: 10.5,
     fontFamily: fontFamilies.bodySemibold,
   },
-  labelCompact: {
-    fontSize: 11,
+  labelTintedCompact: {
+    fontSize: 10.5,
   },
 });

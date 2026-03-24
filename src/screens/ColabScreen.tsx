@@ -267,7 +267,7 @@ const LinkPreviewCard: React.FC<{
         styles.linkPreviewCard,
         {
           backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#FFFFFF',
-          borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#E6E0D7',
+          borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0, 0, 0, 0.08)',
         },
       ]}
       activeOpacity={0.7}
@@ -317,7 +317,7 @@ const QuickReactionBar: React.FC<{
           styles.reactionBar,
           {
             backgroundColor: isDarkMode ? '#2A2F2D' : '#FFFFFF',
-            borderColor: isDarkMode ? 'rgba(255,255,255,0.12)' : '#E6E0D7',
+            borderColor: isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0, 0, 0, 0.08)',
           },
         ]}
       >
@@ -1116,7 +1116,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                     <MaterialIcons name="check" size={16} color="#FFFFFF" />
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.editBtn, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#E6E0D7' }]}
+                    style={[styles.editBtn, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0, 0, 0, 0.08)' }]}
                     onPress={handleCancelEdit}
                   >
                     <MaterialIcons name="close" size={16} color={colors.textSecondary} />
@@ -1198,7 +1198,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                           : {
                               backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF',
                               borderBottomLeftRadius: 4,
-                              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+                              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                               borderWidth: 1,
                             },
                       ]}
@@ -1323,7 +1323,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           styles.inputContainer,
           {
             backgroundColor: colors.surface,
-            borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+            borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
             paddingBottom: Math.max(8, insets.bottom),
           },
         ]}
@@ -1365,7 +1365,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                 ? primaryColor
                 : isDarkMode
                   ? 'rgba(255,255,255,0.08)'
-                  : '#D5CFC6',
+                  : '#D1D5DB',
             },
           ]}
           onPress={onSend}
@@ -1391,7 +1391,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       style={[
         styles.tabBar,
         {
-          borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6',
+          borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)',
         },
       ]}
     >
@@ -1467,7 +1467,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           <MaterialIcons
             name="workspaces"
             size={56}
-            color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'}
+            color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'}
           />
           <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 16 }]}>
             No workspaces
@@ -1508,7 +1508,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                 styles.conversationItem,
                 {
                   backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                 },
               ]}
               activeOpacity={0.7}
@@ -1552,7 +1552,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
             <MaterialIcons
               name="workspaces"
               size={56}
-              color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'}
+              color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'}
             />
             <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 16 }]}>
               No workspaces
@@ -1591,7 +1591,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         <View
           style={[
             styles.chatHeader,
-            { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' },
+            { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
           ]}
         >
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -1627,7 +1627,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               <MaterialIcons
                 name="chat-bubble-outline"
                 size={48}
-                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D5CFC6'}
+                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
               />
               <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
@@ -1695,7 +1695,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
             styles.conversationItem,
             {
               backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
             },
           ]}
           activeOpacity={0.7}
@@ -1766,7 +1766,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
             styles.searchBar,
             {
               backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4',
-              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+              borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
             },
           ]}
         >
@@ -1805,7 +1805,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
             <MaterialIcons
               name="chat-bubble-outline"
               size={56}
-              color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D5CFC6'}
+              color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'}
             />
             <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 16 }]}>
               No conversations yet
@@ -1844,7 +1844,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           <View
             style={[
               styles.chatHeader,
-              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' },
+              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
             ]}
           >
             <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -1875,7 +1875,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         <View
           style={[
             styles.chatHeader,
-            { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' },
+            { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
           ]}
         >
           <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -1919,7 +1919,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               <MaterialIcons
                 name="chat-bubble-outline"
                 size={48}
-                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D5CFC6'}
+                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
               />
               <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
@@ -1970,7 +1970,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           <View
             style={[
               styles.modalHeader,
-              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#E8E1D6' },
+              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
             ]}
           >
             <TouchableOpacity
@@ -2014,7 +2014,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               style={[
                 styles.modeButton,
                 newChatMode === 'dm' && { backgroundColor: `${primaryColor}18`, borderColor: primaryColor },
-                newChatMode !== 'dm' && { borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7' },
+                newChatMode !== 'dm' && { borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)' },
               ]}
               onPress={() => {
                 setNewChatMode('dm');
@@ -2039,7 +2039,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               style={[
                 styles.modeButton,
                 newChatMode === 'group' && { backgroundColor: `${primaryColor}18`, borderColor: primaryColor },
-                newChatMode !== 'group' && { borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7' },
+                newChatMode !== 'group' && { borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)' },
               ]}
               onPress={() => setNewChatMode('group')}
             >
@@ -2073,7 +2073,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                     {
                       backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
                       color: colors.text,
-                      borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                     },
                   ]}
                   placeholder="e.g. Design Team, Morning Shift..."
@@ -2094,7 +2094,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                 styles.searchBar,
                 {
                   backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4',
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E0D7',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                   marginTop: newChatMode === 'group' ? 16 : 0,
                 },
               ]}
@@ -2129,7 +2129,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
                             ? `${primaryColor}40`
                             : isDarkMode
                               ? 'rgba(255,255,255,0.06)'
-                              : '#E6E0D7',
+                              : 'rgba(0, 0, 0, 0.08)',
                       },
                     ]}
                     onPress={() => {

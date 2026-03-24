@@ -15,6 +15,7 @@ export const AssigneeAvatars: React.FC<AssigneeAvatarsProps> = ({
   maxDisplay = 3,
 }) => {
   const avatarColors = ['#F1D7C2', '#CFE6DF', '#E7E1C6', '#D9D3E8', '#F0C9C9'];
+  const overflow = assignees.length - maxDisplay;
   return (
     <View style={styles.container}>
       {assignees.slice(0, maxDisplay).map((assignee, index) => (
@@ -29,6 +30,11 @@ export const AssigneeAvatars: React.FC<AssigneeAvatarsProps> = ({
           )}
         </View>
       ))}
+      {overflow > 0 && (
+        <View style={[styles.avatar, styles.overflowBadge]}>
+          <Text style={styles.overflowText}>+{overflow}</Text>
+        </View>
+      )}
     </View>
   );
 };
@@ -58,5 +64,13 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyBold,
     color: '#2A2E2B',
+  },
+  overflowBadge: {
+    backgroundColor: '#E5E7EB',
+  },
+  overflowText: {
+    fontSize: 10,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#6B7280',
   },
 });

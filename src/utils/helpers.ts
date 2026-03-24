@@ -26,15 +26,19 @@ export const parseWorkspaceIcon = (
 // Default workspace color fallback
 export const DEFAULT_WORKSPACE_COLOR = '#3b82f6';
 
-// Priority color helper
+// Priority color helper — 4-level system with distinct, meaningful colors
 export const priorityColor = (priority: string): string => {
   switch (priority.toLowerCase()) {
+    case 'critical':
+    case 'urgent':
+      return '#E24B4A';
     case 'high':
-      return '#EF5350'; // Colors.red.shade500
+      return '#EF9F27';
     case 'medium':
-      return '#FFA726'; // Colors.orange.shade500
+      return '#4CAF50';
+    case 'low':
     default:
-      return '#66BB6A'; // Colors.green.shade500
+      return '#64B5F6';
   }
 };
 
@@ -55,11 +59,11 @@ export const formatTimestamp = (timestamp: Date): string => {
   const diffDays = Math.floor(diffMs / 86400000);
 
   if (diffMins < 60) {
-    return `${diffMins}m ago`;
+    return `${diffMins}m`;
   } else if (diffHours < 24) {
-    return `${diffHours}h ago`;
+    return `${diffHours}h`;
   } else if (diffDays < 7) {
-    return `${diffDays}d ago`;
+    return `${diffDays}d`;
   } else {
     return `${timestamp.getMonth() + 1}/${timestamp.getDate()}/${timestamp.getFullYear()}`;
   }
