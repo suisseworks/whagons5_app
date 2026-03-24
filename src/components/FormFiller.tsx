@@ -7,7 +7,7 @@
  * Supported field types:
  *   text, textarea, select, checkbox, date, number, time, datetime,
  *   single-checkbox, list, barcode (with camera scanner),
- *   signature/image/fixed-image (display-only placeholders for now)
+ *   signature (drawable pad), image/fixed-image (display-only placeholders)
  */
 
 import React, { useState } from 'react';
@@ -21,6 +21,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { FormSchema, FormSchemaField } from '../context/TaskContext';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
+import { SignaturePad } from './SignaturePad';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
 
 // ---------------------------------------------------------------------------
@@ -260,17 +261,28 @@ export const FormFiller: React.FC<FormFillerProps> = ({
         );
 
       case 'signature':
+        return (
+          <SignaturePad
+            value={value as string | null | undefined}
+            onChange={(sig) => handleFieldChange(field.id, sig)}
+            disabled={readOnly}
+            strokeColor={isDarkMode ? '#FFFFFF' : '#000000'}
+            borderColor={borderColor}
+            backgroundColor={inputBg}
+          />
+        );
+
       case 'image':
       case 'fixed-image':
         return (
           <View style={[styles.placeholderField, { borderColor }]}>
             <MaterialIcons
-              name={field.type === 'signature' ? 'draw' : 'image'}
+              name="image"
               size={24}
               color={colors.textSecondary}
             />
             <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
-              {field.type === 'signature' ? 'Signature' : field.type === 'image' ? 'Image upload' : 'Image'} — available on web
+              {field.type === 'image' ? 'Image upload' : 'Image'} — available on web
             </Text>
           </View>
         );

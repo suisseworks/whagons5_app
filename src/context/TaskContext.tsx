@@ -41,13 +41,13 @@ function mapPriority(
 
 function resolveStatus(
   statusId: AnyId,
-  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
+  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean; icon?: string | null; action?: string | null }>,
   initialStatus: { name: string; color: string | null } | null,
-): { name: string; color: string | null } {
-  if (!statusId) return initialStatus ?? { name: '', color: null };
+): { name: string; color: string | null; icon: string | null; action: string | null } {
+  if (!statusId) return { ...(initialStatus ?? { name: '', color: null }), icon: null, action: null };
   const s = statusMap.get(statusId);
-  if (!s) return initialStatus ?? { name: '', color: null };
-  return { name: s.name, color: s.color ?? null };
+  if (!s) return { ...(initialStatus ?? { name: '', color: null }), icon: null, action: null };
+  return { name: s.name, color: s.color ?? null, icon: s.icon ?? null, action: s.action ?? null };
 }
 
 function formatTime12(d: Date): string {
@@ -87,7 +87,7 @@ function mapTaskToItem(
   task: SyncedTask,
   spotMap: Map<AnyId, string>,
   priorityMap: Map<AnyId, { name: string; color?: string | null }>,
-  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>,
+  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean; icon?: string | null; action?: string | null }>,
   assigneeMap: Map<AnyId, Assignee[]>,
   tagMap: Map<AnyId, string[]>,
   initialStatus: { name: string; color: string | null } | null,
@@ -113,6 +113,8 @@ function mapTaskToItem(
     status: status.name,
     statusColor: status.color,
     statusId: task.status_id ?? null,
+    statusIcon: status.icon,
+    statusAction: status.action,
     categoryId: task.category_id ?? null,
     categoryColor: catInfo?.color ?? null,
     categoryIcon: catInfo?.icon ?? null,
@@ -144,6 +146,8 @@ export interface StatusOption {
   categoryId?: AnyId;
   initial?: boolean;
   final?: boolean;
+  icon?: string | null;
+  action?: string | null;
 }
 
 export interface CategoryOption {
@@ -306,8 +310,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [data.priorities]);
 
   const statusMap = useMemo(() => {
-    const m = new Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean }>();
-    for (const s of data.statuses) m.set(s.id, { name: s.name, color: s.color, final: s.final, initial: s.initial });
+    const m = new Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean; icon?: string | null; action?: string | null }>();
+    for (const s of data.statuses) m.set(s.id, { name: s.name, color: s.color, final: s.final, initial: s.initial, icon: (s as any).icon ?? null, action: (s as any).action ?? null });
     return m;
   }, [data.statuses]);
 
@@ -465,6 +469,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       categoryId: s.category_id ?? null,
       initial: s.initial,
       final: s.final,
+      icon: (s as any).icon ?? null,
+      action: (s as any).action ?? null,
     }));
   }, [data.statuses]);
 

@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { fontFamilies, radius } from '../config/designTokens';
 
 interface CustomChipProps {
@@ -11,6 +11,8 @@ interface CustomChipProps {
   tinted?: boolean;
   /** Optional icon element rendered to the left of the label */
   icon?: React.ReactNode;
+  /** If true, apply a subtle pulse animation (e.g. for working/active status) */
+  animated?: boolean;
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
@@ -39,7 +41,25 @@ export const CustomChip: React.FC<CustomChipProps> = ({
   compact = false,
   tinted = false,
   icon,
+  animated = false,
 }) => {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!animated) {
+      pulseAnim.setValue(1);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.55, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [animated, pulseAnim]);
+
   const rgb = hexToRgb(color);
   const bgColor = tinted && rgb
     ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.14)`
@@ -48,12 +68,16 @@ export const CustomChip: React.FC<CustomChipProps> = ({
     ? (textColor ?? darkenHex(color))
     : (textColor ?? '#FFFFFF');
 
+  const Container = animated ? Animated.View : View;
+  const animStyle = animated ? { opacity: pulseAnim } : undefined;
+
   return (
-    <View
+    <Container
       style={[
         tinted ? styles.chipTinted : styles.chip,
         { backgroundColor: bgColor },
         compact && (tinted ? styles.chipTintedCompact : styles.chipCompact),
+        animStyle,
       ]}
     >
       {icon && <View style={styles.iconWrap}>{icon}</View>}
@@ -66,7 +90,7 @@ export const CustomChip: React.FC<CustomChipProps> = ({
       >
         {label}
       </Text>
-    </View>
+    </Container>
   );
 };
 

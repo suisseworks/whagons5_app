@@ -277,7 +277,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         )}
         {task.formName && (
           <View style={[styles.formIndicator, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}>
-            <MaterialIcons name="description" size={10} color={tertiaryText} />
+            <MaterialIcons name="description" size={13} color={tertiaryText} />
           </View>
         )}
         {task.approval && (
@@ -428,9 +428,9 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
   },
   formIndicator: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
     flexShrink: 0,

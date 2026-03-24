@@ -22,6 +22,8 @@ export interface TaskItem {
   status: string;
   statusColor?: string | null;
   statusId?: string | number | null;
+  statusIcon?: string | null;
+  statusAction?: string | null;
   categoryId?: string | number | null;
   categoryColor?: string | null;
   categoryIcon?: string | null;

@@ -222,8 +222,11 @@ export const TaskDetailScreen: React.FC = () => {
   const userMap = useMemo(() => {
     const map = new Map<number | string, string>();
     for (const u of data.users) {
-      map.set(Number(u.id), u.name);
-      if ((u as any)._id && (u as any)._id !== u.id) map.set((u as any)._id, u.name);
+      const numId = Number(u.id);
+      if (!isNaN(numId)) map.set(numId, u.name);
+      map.set(String(u.id), u.name);
+      const convexId = (u as any)._id;
+      if (convexId) map.set(convexId, u.name);
     }
     return map;
   }, [data.users]);
@@ -238,6 +241,8 @@ export const TaskDetailScreen: React.FC = () => {
   const [currentStatus, setCurrentStatus] = useState(task.status);
   const [currentStatusColor, setCurrentStatusColor] = useState(task.statusColor);
   const [currentStatusId, setCurrentStatusId] = useState(task.statusId);
+  const [currentStatusIcon, setCurrentStatusIcon] = useState(task.statusIcon ?? null);
+  const [currentStatusAction, setCurrentStatusAction] = useState(task.statusAction ?? null);
 
   const currentTask = useMemo(
     () => ({ ...task, status: currentStatus, statusColor: currentStatusColor, statusId: currentStatusId }),
@@ -309,6 +314,8 @@ export const TaskDetailScreen: React.FC = () => {
     setCurrentStatus(status.name);
     setCurrentStatusColor(status.color);
     setCurrentStatusId(status.id);
+    setCurrentStatusIcon(status.icon ?? null);
+    setCurrentStatusAction(status.action ?? null);
     setStatusPickerVisible(false);
   };
 
@@ -469,11 +476,23 @@ export const TaskDetailScreen: React.FC = () => {
 
       {/* Badge row: status + priority as tinted pills */}
       <View style={styles.badgeRow}>
-        {currentStatus !== '' && (
-          <TouchableOpacity onPress={() => setStatusPickerVisible(true)} activeOpacity={0.7}>
-            <CustomChip label={currentStatus} color={statusColor(currentStatus, currentStatusColor)} />
-          </TouchableOpacity>
-        )}
+        {currentStatus !== '' && (() => {
+          const isWorking = currentStatusAction?.toUpperCase() === 'WORKING';
+          const parsedIcon = currentStatusIcon ? parseWorkspaceIcon(currentStatusIcon) : null;
+          const chipColor = statusColor(currentStatus, currentStatusColor);
+          return (
+            <TouchableOpacity onPress={() => setStatusPickerVisible(true)} activeOpacity={0.7}>
+              <CustomChip
+                label={currentStatus.toUpperCase()}
+                color={chipColor}
+                animated={isWorking}
+                icon={parsedIcon ? (
+                  <FaIcon name={parsedIcon.name} size={11} color="#FFFFFF" solid={parsedIcon.solid} brand={parsedIcon.brand} />
+                ) : undefined}
+              />
+            </TouchableOpacity>
+          );
+        })()}
         <CustomChip label={task.priority} color={priorityColor(task.priority)} />
         {task.approval && (
           <CustomChip label={task.approval} color="#BBDEFB" textColor="#0D47A1" compact />
@@ -628,10 +647,13 @@ export const TaskDetailScreen: React.FC = () => {
           }
         >
           {notes.map((note) => {
-            const isMe = authUser?.id === note.user_id || (authUser as any)?._id === note.user_id;
+            const noteUid = note.user_id;
+            const isMe = authUser?.id === noteUid
+              || String(authUser?.id) === String(noteUid)
+              || (authUser as any)?._id === noteUid;
             const authorName = isMe
               ? 'You'
-              : userMap.get(note.user_id) || userMap.get(Number(note.user_id)) || `User #${note.user_id}`;
+              : userMap.get(noteUid) || userMap.get(String(noteUid)) || userMap.get(Number(noteUid)) || `User #${noteUid}`;
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
                 <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}>
