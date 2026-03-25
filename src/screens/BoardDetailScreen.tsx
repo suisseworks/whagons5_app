@@ -25,7 +25,7 @@ import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/des
 import { getInitials } from '../utils/helpers';
 import { ActivityIndicator } from 'react-native';
 import { useMutation } from 'convex/react';
-import { api } from '../../convex/_generated/api';
+import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
 

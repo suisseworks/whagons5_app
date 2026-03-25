@@ -16,7 +16,7 @@ import React, {
   ReactNode,
 } from 'react';
 import { useQuery } from 'convex/react';
-import { api } from '../../convex/_generated/api';
+import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 
 // ---------------------------------------------------------------------------
@@ -557,12 +557,12 @@ function mapTaskTag(doc: any, fk: FkLookups): SyncedTaskTag {
   };
 }
 
-function mapTaskForm(doc: any): SyncedTaskForm {
+function mapTaskForm(doc: any, fk?: FkLookups): SyncedTaskForm {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    task_id: doc.taskId,
-    form_version_id: doc.formVersionId,
+    task_id: fk?.tasks ? (resolveFk(fk.tasks, doc.taskId) ?? doc.taskId) : doc.taskId,
+    form_version_id: fk?.formVersions ? (resolveFk(fk.formVersions, doc.formVersionId) ?? doc.formVersionId) : doc.formVersionId,
   };
 }
 
@@ -819,7 +819,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       templates: refData ? refData.templates.map(mapTemplate) : EMPTY,
       forms: refData ? refData.forms?.map(mapForm) ?? EMPTY : EMPTY,
       formVersions: refData ? refData.formVersions?.map(mapFormVersion) ?? EMPTY : EMPTY,
-      taskForms: EMPTY,
+      taskForms: refData ? refData.taskForms?.map((d: any) => mapTaskForm(d, fk)) ?? EMPTY : EMPTY,
 
       taskUsers: pivotData ? pivotData.taskUsers.map((d: any) => mapTaskUser(d, fk)) : EMPTY,
       taskTags: pivotData ? pivotData.taskTags.map((d: any) => mapTaskTag(d, fk)) : EMPTY,

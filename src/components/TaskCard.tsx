@@ -87,6 +87,27 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 const MAX_VISIBLE_TAGS = 3;
 
+/** Parse markdown checklist from description and return counts + non-checklist text */
+function parseChecklist(desc: string): { checked: number; total: number; plainText: string } | null {
+  const lines = desc.split(/\n|(?=- \[)/);
+  let checked = 0;
+  let total = 0;
+  const plain: string[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (/^-\s*\[x\]/i.test(line)) {
+      total++;
+      checked++;
+    } else if (/^-\s*\[ ?\]/.test(line)) {
+      total++;
+    } else if (line) {
+      plain.push(line);
+    }
+  }
+  if (total === 0) return null;
+  return { checked, total, plainText: plain.join(' ').trim() };
+}
+
 
 
 /** Continuously rotating spinner for "in-progress" status badges */
@@ -250,11 +271,33 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
       </View>
 
       {/* Description preview (only in detailed mode) */}
-      {effectiveDensity === 'detailed' && !!task.description && (
-        <Text style={[styles.descriptionPreview, { color: tertiaryText }]} numberOfLines={2}>
-          {task.description}
-        </Text>
-      )}
+      {effectiveDensity === 'detailed' && !!task.description && (() => {
+        const cl = parseChecklist(task.description!);
+        if (cl) {
+          return (
+            <View style={styles.checklistRow}>
+              <MaterialCommunityIcons
+                name={cl.checked === cl.total ? 'checkbox-marked-outline' : 'checkbox-blank-outline'}
+                size={14}
+                color={cl.checked === cl.total ? '#22C55E' : tertiaryText}
+              />
+              <Text style={[styles.checklistProgress, { color: cl.checked === cl.total ? '#22C55E' : tertiaryText }]}>
+                {cl.checked}/{cl.total}
+              </Text>
+              {cl.plainText ? (
+                <Text style={[styles.descriptionPreview, { color: tertiaryText, marginTop: 0, marginLeft: 4, flex: 1 }]} numberOfLines={1}>
+                  {cl.plainText}
+                </Text>
+              ) : null}
+            </View>
+          );
+        }
+        return (
+          <Text style={[styles.descriptionPreview, { color: tertiaryText }]} numberOfLines={2}>
+            {task.description}
+          </Text>
+        );
+      })()}
 
       {/* Row 2: Status badge (UPPERCASE) + Location */}
       <View style={styles.metaRow}>
@@ -392,6 +435,17 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginTop: 4,
     marginLeft: 36,
+  },
+  checklistRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+    marginLeft: 36,
+    gap: 4,
+  },
+  checklistProgress: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
   },
   metaRow: {
     flexDirection: 'row',

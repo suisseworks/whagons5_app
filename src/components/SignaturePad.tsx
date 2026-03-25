@@ -1,12 +1,12 @@
-import React, { useRef, useCallback, useState } from 'react';
+import React, { useRef, useCallback, useState, useMemo } from 'react';
 import {
   View,
   TouchableOpacity,
   StyleSheet,
   LayoutChangeEvent,
-  Image,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
+import { SvgXml } from 'react-native-svg';
 import {
   Gesture,
   GestureDetector,
@@ -44,6 +44,31 @@ function buildSvgDataUri(
   return `data:image/svg+xml;base64,${encoded}`;
 }
 
+/** Renders a saved signature from its data URI (base64 SVG or PNG) */
+const ExistingSignature: React.FC<{ value: string }> = ({ value }) => {
+  const svgXml = useMemo(() => {
+    // Decode base64 SVG data URI → raw SVG string
+    if (value.startsWith('data:image/svg+xml;base64,')) {
+      try {
+        return atob(value.slice('data:image/svg+xml;base64,'.length));
+      } catch { return null; }
+    }
+    return null;
+  }, [value]);
+
+  if (svgXml) {
+    return (
+      <View style={styles.preview}>
+        <SvgXml xml={svgXml} width="100%" height="100%" />
+      </View>
+    );
+  }
+
+  // Fallback for PNG data URIs from web signatures
+  const { Image } = require('react-native');
+  return <Image source={{ uri: value }} style={styles.preview} resizeMode="contain" />;
+};
+
 export const SignaturePad: React.FC<SignaturePadProps> = ({
   value,
   onChange,
@@ -79,6 +104,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
   );
 
   const pan = Gesture.Pan()
+    .runOnJS(true)
     .enabled(!disabled && !hasExistingValue)
     .minDistance(0)
     .onBegin((e) => {
@@ -120,11 +146,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
         onLayout={onLayout}
       >
         {hasExistingValue ? (
-          <Image
-            source={{ uri: value! }}
-            style={styles.preview}
-            resizeMode="contain"
-          />
+          <ExistingSignature value={value!} />
         ) : (
           <GestureDetector gesture={pan}>
             <View style={styles.canvas}>

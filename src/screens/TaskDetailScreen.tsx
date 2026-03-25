@@ -18,13 +18,14 @@ import {
   Platform,
   Linking,
 } from 'react-native';
+import { useVideoPlayer, VideoView } from 'expo-video';
 import RenderHtml from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQuery, useMutation } from 'convex/react';
-import { api } from '../../convex/_generated/api';
+import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
@@ -39,6 +40,23 @@ import { apiClient } from '../services/apiClient';
 import { getCurrentUser } from '../firebase/authService';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { Toast, ToastRef } from '../components/Toast';
+
+/** Parse markdown checklist items from a description string */
+function parseChecklistItems(desc: string): { label: string; checked: boolean }[] | null {
+  const lines = desc.split(/\n/);
+  const items: { label: string; checked: boolean }[] = [];
+  for (const raw of lines) {
+    const line = raw.trim();
+    const checkedMatch = line.match(/^-\s*\[x\]\s*(.*)/i);
+    const uncheckedMatch = line.match(/^-\s*\[ ?\]\s*(.*)/);
+    if (checkedMatch) {
+      items.push({ label: checkedMatch[1].trim(), checked: true });
+    } else if (uncheckedMatch) {
+      items.push({ label: uncheckedMatch[1].trim(), checked: false });
+    }
+  }
+  return items.length > 0 ? items : null;
+}
 
 const FLAG_HEX: Record<string, string> = {
   red: '#ef4444',
@@ -85,6 +103,23 @@ function fixConvexStorageUrl(url: string): string {
   return url;
 }
 
+/** Inline video player for note attachments */
+const NoteVideoPlayer: React.FC<{ url: string }> = ({ url }) => {
+  const player = useVideoPlayer(url, (p) => {
+    p.loop = false;
+  });
+  return (
+    <View style={noteAttachStyles.videoContainer}>
+      <VideoView
+        player={player}
+        style={noteAttachStyles.video}
+        allowsPictureInPicture
+        allowsFullscreen
+      />
+    </View>
+  );
+};
+
 const NoteAttachmentView: React.FC<{
   attachment: NoteAttachmentData;
   colors: any;
@@ -96,6 +131,7 @@ const NoteAttachmentView: React.FC<{
   });
   const url = rawUrl ? fixConvexStorageUrl(rawUrl) : null;
   const isImage = attachment.fileType.startsWith('image/');
+  const isVideo = attachment.fileType.startsWith('video/');
 
   const handleFilePress = useCallback(() => {
     if (!url) return;
@@ -106,6 +142,19 @@ const NoteAttachmentView: React.FC<{
     }
   }, [url, isImage, onImagePress]);
 
+  // Loading state for images and videos
+  if ((isImage || isVideo) && !url) {
+    return (
+      <View style={[noteAttachStyles.filePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}>
+        <ActivityIndicator size="small" color={colors.textSecondary} />
+      </View>
+    );
+  }
+
+  if (isVideo && url) {
+    return <NoteVideoPlayer url={url} />;
+  }
+
   if (isImage && url) {
     return (
       <TouchableOpacity activeOpacity={0.8} onPress={handleFilePress}>
@@ -115,14 +164,6 @@ const NoteAttachmentView: React.FC<{
           resizeMode="cover"
         />
       </TouchableOpacity>
-    );
-  }
-
-  if (isImage && !url) {
-    return (
-      <View style={[noteAttachStyles.filePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}>
-        <ActivityIndicator size="small" color={colors.textSecondary} />
-      </View>
     );
   }
 
@@ -153,6 +194,18 @@ const noteAttachStyles = StyleSheet.create({
     height: 180,
     borderRadius: 8,
     marginTop: 6,
+  },
+  videoContainer: {
+    width: '100%',
+    height: 200,
+    borderRadius: 8,
+    marginTop: 6,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  video: {
+    width: '100%',
+    height: '100%',
   },
   filePlaceholder: {
     width: '100%',
@@ -253,8 +306,12 @@ export const TaskDetailScreen: React.FC = () => {
   const [formValues, setFormValues] = useState<Record<string, unknown>>(
     existingSubmission?.data ?? {},
   );
-  const [formSubmitting, setFormSubmitting] = useState(false);
-  const [formShowValidation, setFormShowValidation] = useState(false);
+  const [formSaveStatus, setFormSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [formTaskFormId, setFormTaskFormId] = useState<any>(existingSubmission?.id ?? null);
+  const formSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const formLatestValuesRef = useRef<Record<string, unknown>>(existingSubmission?.data ?? {});
+  const formIsSavingRef = useRef(false);
+  const formHasMountedRef = useRef(false);
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
 
   const convexTaskId = task.convexId ?? null;
@@ -382,54 +439,111 @@ export const TaskDetailScreen: React.FC = () => {
 
   const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
   const updateTaskFormMutation = useMutation(api.forms.updateTaskForm);
+  const updateTaskMutation = useMutation(api.tasks.update);
 
-  const handleFormSubmit = useCallback(async () => {
-    if (!formSchema || !task.formId || !task.id || !tenantId) return;
+  // --- Checklist state (local copy of description for instant UI) ---
+  const [localDescription, setLocalDescription] = useState(task.description ?? '');
 
-    if (!convexTaskId) {
-      toastRef.current?.show({ type: 'error', title: 'Error', body: 'Cannot submit form: task reference is missing.' });
-      return;
+  const handleChecklistToggle = useCallback(async (index: number) => {
+    const lines = localDescription.split('\n');
+    let checkIdx = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (/^-\s*\[[ x?]\]/i.test(line)) {
+        if (checkIdx === index) {
+          // Toggle
+          if (/^-\s*\[x\]/i.test(line)) {
+            lines[i] = lines[i].replace(/\[x\]/i, '[ ]');
+          } else {
+            lines[i] = lines[i].replace(/\[ ?\]/, '[x]');
+          }
+          break;
+        }
+        checkIdx++;
+      }
     }
+    const newDesc = lines.join('\n');
+    setLocalDescription(newDesc);
 
-    const errors = formSchema.fields.filter(
-      (f) => f.required && (formValues[f.id] === undefined || formValues[f.id] === null || formValues[f.id] === '' || (Array.isArray(formValues[f.id]) && (formValues[f.id] as unknown[]).length === 0)),
-    );
-    if (errors.length > 0) {
-      setFormShowValidation(true);
-      toastRef.current?.show({ type: 'warning', title: 'Validation Error', body: 'Please fill in all required fields.' });
-      return;
+    // Persist to backend
+    if (convexTaskId && tenantId) {
+      try {
+        await updateTaskMutation({ tenantId, id: convexTaskId as any, description: newDesc });
+      } catch (e) {
+        console.error('Failed to update checklist:', e);
+        setLocalDescription(localDescription); // revert on error
+      }
     }
+  }, [localDescription, convexTaskId, tenantId, updateTaskMutation]);
 
-    setFormSubmitting(true);
+  // Auto-save form data
+  const doFormSave = useCallback(async (data: Record<string, unknown>) => {
+    if (!tenantId || !convexTaskId || formIsSavingRef.current) return;
+    formIsSavingRef.current = true;
+    setFormSaveStatus('saving');
+
     const formVersionId = existingSubmission?.formVersionId ?? (task.formId ? getFormVersionId(task.formId) : null);
     if (!formVersionId) {
-      toastRef.current?.show({ type: 'error', title: 'Error', body: 'Cannot submit form: form version not found.' });
-      setFormSubmitting(false);
+      setFormSaveStatus('error');
+      formIsSavingRef.current = false;
       return;
     }
+
     try {
-      if (existingSubmission) {
-        await updateTaskFormMutation({
-          tenantId,
-          id: existingSubmission.id as any,
-          data: formValues,
-        });
+      if (formTaskFormId) {
+        await updateTaskFormMutation({ tenantId, id: formTaskFormId as any, data });
       } else {
-        await createTaskFormMutation({
+        const newId = await createTaskFormMutation({
           tenantId,
           taskId: convexTaskId as any,
           formVersionId: formVersionId as any,
-          data: formValues,
+          data,
         });
+        setFormTaskFormId(newId);
       }
-      toastRef.current?.show({ type: 'success', title: existingSubmission ? 'Form Updated' : 'Form Submitted', body: existingSubmission ? 'Your changes have been saved.' : 'Your response has been recorded.' });
+      setFormSaveStatus('saved');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      toastRef.current?.show({ type: 'error', title: 'Error', body: `Failed to save form: ${message}` });
+      console.error('[FORM] Auto-save failed:', message);
+      setFormSaveStatus('error');
     } finally {
-      setFormSubmitting(false);
+      formIsSavingRef.current = false;
     }
-  }, [formSchema, formValues, task, existingSubmission, tenantId, convexTaskId, getFormVersionId, createTaskFormMutation, updateTaskFormMutation]);
+  }, [tenantId, convexTaskId, formTaskFormId, existingSubmission, task.formId, getFormVersionId, createTaskFormMutation, updateTaskFormMutation]);
+
+  const handleFormChange = useCallback((newValues: Record<string, unknown>) => {
+    setFormValues(newValues);
+    formLatestValuesRef.current = newValues;
+    if (!formHasMountedRef.current) return;
+
+    if (formSaveTimerRef.current) clearTimeout(formSaveTimerRef.current);
+    setFormSaveStatus('saving');
+    formSaveTimerRef.current = setTimeout(() => {
+      doFormSave(formLatestValuesRef.current);
+    }, 800);
+  }, [doFormSave]);
+
+  // Mark form as mounted after first render
+  useEffect(() => {
+    if (hasForm) {
+      const timer = setTimeout(() => { formHasMountedRef.current = true; }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [hasForm]);
+
+  // Live sync: update form values when remote data changes (from another device)
+  const existingSubmissionJson = useMemo(() => JSON.stringify(existingSubmission?.data ?? {}), [existingSubmission]);
+  useEffect(() => {
+    // Skip during active local edits
+    if (formIsSavingRef.current || formSaveTimerRef.current) return;
+    const remoteData = existingSubmission?.data ?? {};
+    const localJson = JSON.stringify(formLatestValuesRef.current);
+    if (existingSubmissionJson !== localJson) {
+      setFormValues(remoteData);
+      formLatestValuesRef.current = remoteData;
+      if (existingSubmission?.id) setFormTaskFormId(existingSubmission.id);
+    }
+  }, [existingSubmissionJson, existingSubmission]);
 
   const { width: windowWidth } = useWindowDimensions();
   const descriptionContentWidth = windowWidth - spacing.md * 2;
@@ -452,27 +566,64 @@ export const TaskDetailScreen: React.FC = () => {
         )}
       </View>
 
-      {/* Description */}
-      {!!task.description && (
-        <View style={styles.descriptionContainer}>
-          <RenderHtml
-            contentWidth={descriptionContentWidth}
-            source={{ html: task.description }}
-            baseStyle={{
-              color: colors.textSecondary,
-              fontSize: 13,
-              fontFamily: fontFamilies.bodyRegular,
-              lineHeight: 20,
-            }}
-            tagsStyles={{
-              h1: { fontSize: fontSizes.md, fontFamily: fontFamilies.bodySemibold, lineHeight: 24, margin: 0 },
-              h2: { fontSize: fontSizes.sm + 1, fontFamily: fontFamilies.bodySemibold, lineHeight: 22, margin: 0 },
-              h3: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodySemibold, lineHeight: 20, margin: 0 },
-              p: { margin: 0 },
-            }}
-          />
-        </View>
-      )}
+      {/* Description / Checklist */}
+      {!!localDescription && (() => {
+        const checklistItems = parseChecklistItems(localDescription);
+        if (checklistItems) {
+          const checked = checklistItems.filter((i) => i.checked).length;
+          const total = checklistItems.length;
+          const progress = total > 0 ? checked / total : 0;
+          return (
+            <View style={styles.checklistContainer}>
+              {checklistItems.map((item, idx) => (
+                <TouchableOpacity key={idx} style={styles.checklistItem} onPress={() => handleChecklistToggle(idx)} activeOpacity={0.6}>
+                  <MaterialCommunityIcons
+                    name={item.checked ? 'checkbox-marked' : 'checkbox-blank-outline'}
+                    size={20}
+                    color={item.checked ? '#22C55E' : (isDarkMode ? 'rgba(255,255,255,0.35)' : '#D1D5DB')}
+                  />
+                  <Text
+                    style={[
+                      styles.checklistLabel,
+                      { color: item.checked ? colors.textSecondary : colors.text },
+                      item.checked && styles.checklistLabelChecked,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              {/* Progress bar */}
+              <View style={styles.checklistProgressRow}>
+                <View style={[styles.checklistProgressTrack, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F0F0F0' }]}>
+                  <View style={[styles.checklistProgressFill, { width: `${progress * 100}%`, backgroundColor: progress === 1 ? '#22C55E' : '#EF4444' }]} />
+                </View>
+                <Text style={[styles.checklistCount, { color: colors.textSecondary }]}>{checked}/{total}</Text>
+              </View>
+            </View>
+          );
+        }
+        return (
+          <View style={styles.descriptionContainer}>
+            <RenderHtml
+              contentWidth={descriptionContentWidth}
+              source={{ html: localDescription }}
+              baseStyle={{
+                color: colors.textSecondary,
+                fontSize: 13,
+                fontFamily: fontFamilies.bodyRegular,
+                lineHeight: 20,
+              }}
+              tagsStyles={{
+                h1: { fontSize: fontSizes.md, fontFamily: fontFamilies.bodySemibold, lineHeight: 24, margin: 0 },
+                h2: { fontSize: fontSizes.sm + 1, fontFamily: fontFamilies.bodySemibold, lineHeight: 22, margin: 0 },
+                h3: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodySemibold, lineHeight: 20, margin: 0 },
+                p: { margin: 0 },
+              }}
+            />
+          </View>
+        );
+      })()}
 
       {/* Badge row: status + priority as tinted pills */}
       <View style={styles.badgeRow}>
@@ -578,42 +729,39 @@ export const TaskDetailScreen: React.FC = () => {
     if (!formSchema) return null;
     return (
       <View style={styles.tabContent}>
+        {/* Save status indicator */}
+        <View style={[styles.formSaveStatusBar, { borderBottomColor: cardBorder }]}>
+          {formSaveStatus === 'saving' && (
+            <View style={styles.formSaveRow}>
+              <ActivityIndicator size="small" color={colors.textSecondary} />
+              <Text style={[styles.formSaveText, { color: colors.textSecondary }]}>Saving…</Text>
+            </View>
+          )}
+          {formSaveStatus === 'saved' && (
+            <View style={styles.formSaveRow}>
+              <MaterialIcons name="cloud-done" size={14} color="#22C55E" />
+              <Text style={[styles.formSaveText, { color: '#22C55E' }]}>Saved</Text>
+            </View>
+          )}
+          {formSaveStatus === 'error' && (
+            <View style={styles.formSaveRow}>
+              <MaterialIcons name="cloud-off" size={14} color="#EF4444" />
+              <Text style={[styles.formSaveText, { color: '#EF4444' }]}>Save failed</Text>
+            </View>
+          )}
+        </View>
+
         <ScrollView style={styles.flex} contentContainerStyle={styles.tabContentContainer}>
           <FormFiller
             schema={formSchema}
             values={formValues}
-            onChange={setFormValues}
-            readOnly={formSubmitting}
-            showValidation={formShowValidation}
+            onChange={handleFormChange}
+            showValidation={false}
             colors={colors}
             primaryColor={primaryColor}
             isDarkMode={isDarkMode}
           />
         </ScrollView>
-
-        <View
-          style={[
-            styles.actionButtonsContainer,
-            { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
-          ]}
-        >
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: primaryColor, opacity: formSubmitting ? 0.6 : 1 }]}
-            onPress={handleFormSubmit}
-            disabled={formSubmitting}
-          >
-            {formSubmitting ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <MaterialIcons name={existingSubmission ? 'save' : 'send'} size={20} color="#FFFFFF" />
-                <Text style={styles.actionButtonText}>
-                  {existingSubmission ? 'Update Form' : 'Submit Form'}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
       </View>
     );
   };
@@ -1006,6 +1154,47 @@ const styles = StyleSheet.create({
     marginBottom: 0,
   },
 
+  /* ── Checklist ── */
+  checklistContainer: {
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  checklistItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  checklistLabel: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyRegular,
+    flex: 1,
+  },
+  checklistLabelChecked: {
+    textDecorationLine: 'line-through',
+    opacity: 0.6,
+  },
+  checklistProgressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+  },
+  checklistProgressTrack: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    overflow: 'hidden',
+  },
+  checklistProgressFill: {
+    height: '100%',
+    borderRadius: 2,
+  },
+  checklistCount: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+
   /* ── Badge row ── */
   badgeRow: {
     flexDirection: 'row',
@@ -1113,6 +1302,23 @@ const styles = StyleSheet.create({
   },
 
   /* ── Action bar ── */
+  formSaveStatusBar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+  },
+  formSaveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  formSaveText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
   actionButtonsContainer: {
     padding: 16,
   },

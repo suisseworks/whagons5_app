@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
 import { useNavigation } from '@react-navigation/native';
@@ -780,7 +780,7 @@ export const MainScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
+    <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
       {/* App Bar — 3 zones: menu / workspace / actions */}
       <View style={[styles.appBar, { backgroundColor: colors.background }]}>
         <TouchableOpacity
@@ -1232,7 +1232,7 @@ export const MainScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 };
 
