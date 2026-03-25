@@ -14,7 +14,7 @@ import { TaskItem, Assignee, CardDensity } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
 import { useAuth } from './AuthContext';
 import { useMutation } from 'convex/react';
-import { api } from '../../convex/_generated/api';
+import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 
 const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
@@ -1000,8 +1000,27 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const taskFormMap = useMemo(() => {
     const m = new Map<AnyId, SyncedTaskForm>();
+    const dataKeyCount = (tf: SyncedTaskForm) => {
+      if (!tf.data) return 0;
+      try {
+        const d = typeof tf.data === 'string' ? JSON.parse(tf.data) : tf.data;
+        return Object.keys(d).length;
+      } catch { return 0; }
+    };
+
     for (const tf of data.taskForms) {
-      m.set(tf.task_id, tf);
+      const lookupKeys: AnyId[] = [tf.task_id];
+      const numId = Number(tf.task_id);
+      if (Number.isFinite(numId)) lookupKeys.push(numId as any);
+      if (tf.task_id != null) lookupKeys.push(String(tf.task_id) as any);
+
+      for (const key of lookupKeys) {
+        const existing = m.get(key);
+        // Keep the entry with the most data (most complete submission)
+        if (!existing || dataKeyCount(tf) > dataKeyCount(existing)) {
+          m.set(key, tf);
+        }
+      }
     }
     return m;
   }, [data.taskForms]);

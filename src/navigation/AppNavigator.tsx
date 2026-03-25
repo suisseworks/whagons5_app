@@ -25,7 +25,7 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const AppStatusBar = () => {
   const { isDarkMode, colors } = useTheme();
-  return <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor={colors.background} translucent={false} />;
+  return <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} backgroundColor="transparent" translucent={true} />;
 };
 
 export const AppNavigator: React.FC = () => {

@@ -6,7 +6,7 @@
  * All data is live-reactive via Convex useQuery().
  */
 import { useQuery } from 'convex/react';
-import { api } from '../../convex/_generated/api';
+import { api } from '../../../convex/_generated/api';
 import { useTenant } from './useTenant';
 import { useMemo } from 'react';
 

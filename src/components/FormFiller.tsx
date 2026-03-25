@@ -10,19 +10,57 @@
  *   signature (drawable pad), image/fixed-image (display-only placeholders)
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   TextInput,
   TouchableOpacity,
   StyleSheet,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { FormSchema, FormSchemaField } from '../context/TaskContext';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { SignaturePad } from './SignaturePad';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
+
+/** Fix self-hosted Convex storage URLs (dashboard domain → backend domain) */
+function fixConvexStorageUrl(url: string): string {
+  const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
+  if (!convexUrl) return url;
+  try {
+    const expected = new URL(convexUrl);
+    const actual = new URL(url);
+    if (actual.hostname !== expected.hostname) {
+      actual.hostname = expected.hostname;
+      return actual.toString();
+    }
+  } catch {}
+  return url;
+}
+
+/** Resolves a Convex storageId to a displayable image URL */
+const ConvexImage: React.FC<{ storageId: string; style?: any; resizeMode?: any }> = ({ storageId, style, resizeMode = 'contain' }) => {
+  const isFullUrl = storageId.startsWith('http') || storageId.startsWith('data:');
+  const rawUrl = useQuery(
+    api.taskResources.getFileUrl,
+    isFullUrl ? 'skip' : { storageId: storageId as any },
+  );
+  const uri = isFullUrl ? storageId : (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
+
+  if (!uri) {
+    return (
+      <View style={[style, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="small" />
+      </View>
+    );
+  }
+  return <Image source={{ uri }} style={style} resizeMode={resizeMode} />;
+};
 
 // ---------------------------------------------------------------------------
 // Props
@@ -273,7 +311,19 @@ export const FormFiller: React.FC<FormFillerProps> = ({
         );
 
       case 'image':
-      case 'fixed-image':
+      case 'fixed-image': {
+        const imageVal = value as string | undefined;
+        if (imageVal) {
+          return (
+            <View style={{ borderRadius: radius.md, overflow: 'hidden' }}>
+              <ConvexImage
+                storageId={imageVal}
+                style={{ width: '100%', height: 200, borderRadius: radius.md }}
+                resizeMode="contain"
+              />
+            </View>
+          );
+        }
         return (
           <View style={[styles.placeholderField, { borderColor }]}>
             <MaterialIcons
@@ -282,10 +332,11 @@ export const FormFiller: React.FC<FormFillerProps> = ({
               color={colors.textSecondary}
             />
             <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
-              {field.type === 'image' ? 'Image upload' : 'Image'} — available on web
+              {field.type === 'image' ? 'Image upload' : 'Image'} — upload on web
             </Text>
           </View>
         );
+      }
 
       default:
         return (
@@ -343,7 +394,14 @@ const NumberFieldInput: React.FC<{
   secondaryColor: string;
   primaryColor: string;
 }> = ({ value, onChange, readOnly, allowDecimals, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
-  const [textValue, setTextValue] = useState(value !== undefined && value !== 0 ? String(value) : '');
+  const [textValue, setTextValue] = useState(value != null && value !== 0 ? String(value) : '');
+
+  // Sync text display when value prop changes (e.g. loading saved data)
+  useEffect(() => {
+    if (value != null && value !== 0) {
+      setTextValue(String(value));
+    }
+  }, [value]);
 
   const handleChange = (text: string) => {
     setTextValue(text);
