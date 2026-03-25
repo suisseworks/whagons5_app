@@ -906,7 +906,7 @@ export const TaskDetailScreen: React.FC = () => {
           )}
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.sendButton, { backgroundColor: primaryColor, opacity: sendingComment ? 0.6 : 1 }]}
+          style={[styles.sendButton, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', opacity: sendingComment ? 0.6 : 1 }]}
           onPress={handleAddComment}
           disabled={sendingComment || (!commentText.trim() && pendingAttachments.length === 0)}
         >

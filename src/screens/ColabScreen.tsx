@@ -20,8 +20,9 @@ import {
   GestureResponderEvent,
   PanResponderGestureState,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-// KeyboardAvoidingView is handled by the parent navigator
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
+// KeyboardAvoidingView wraps chat views to keep input above keyboard
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -1324,7 +1325,6 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           {
             backgroundColor: colors.surface,
             borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
-            paddingBottom: Math.max(8, insets.bottom),
           },
         ]}
       >
@@ -1332,7 +1332,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
           style={[
             styles.textInput,
             {
-              backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4',
+              backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
               color: colors.text,
             },
           ]}
@@ -1379,7 +1379,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         </TouchableOpacity>
       </View>
     ),
-    [inputText, isSending, primaryColor, isDarkMode, colors, insets.bottom, handleAttachFile, uploadingFile],
+    [inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile],
   );
 
   // ---------------------------------------------------------------------------
@@ -1586,71 +1586,71 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     const wsColor = spaceWs.color || primaryColor;
 
     return (
-      <View style={{ flex: 1 }}>
-        {/* Header with back arrow */}
-        <View
-          style={[
-            styles.chatHeader,
-            { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
-          ]}
-        >
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <MaterialIcons name="arrow-back" size={22} color={colors.text} />
-          </TouchableOpacity>
-          <View style={[styles.chatHeaderIcon, { backgroundColor: `${wsColor}20` }]}>
-            <MaterialIcons name="forum" size={18} color={wsColor} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.chatHeaderTitle, { color: colors.text }]} numberOfLines={1}>
-              {spaceWs.name}
-            </Text>
-            <Text style={[styles.chatHeaderSub, { color: colors.textSecondary }]}>
-              Workspace chat
-            </Text>
-          </View>
-        </View>
-
-        {/* Messages */}
-        <FlatList
-          ref={chatListRef}
-          data={spaceMessages}
-          keyExtractor={(item) => String(item.id)}
-          inverted
-          contentContainerStyle={[
-            styles.messagesList,
-            spaceMessages.length === 0 && { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
-          ]}
-          keyboardDismissMode="interactive"
-          keyboardShouldPersistTaps="handled"
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', padding: 32 }}>
-              <MaterialIcons
-                name="chat-bubble-outline"
-                size={48}
-                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
-              />
-              <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
-              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="height" keyboardVerticalOffset={insets.top + 52}>
+          {/* Header with back arrow */}
+          <View
+            style={[
+              styles.chatHeader,
+              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
+            ]}
+          >
+            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+              <MaterialIcons name="arrow-back" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <View style={[styles.chatHeaderIcon, { backgroundColor: `${wsColor}20` }]}>
+              <MaterialIcons name="forum" size={18} color={wsColor} />
             </View>
-          }
-          renderItem={({ item: msg }) => {
-            const isMe = Number(msg.user_id) === Number(currentUserId);
-            const previews = linkPreviewsByWsChatId.get(msg.id) || [];
-            return renderMessageBubble({
-              msgId: msg.id,
-              userId: msg.user_id,
-              message: msg.message,
-              createdAt: msg.created_at,
-              isMe,
-              msgType: 'space',
-              linkPreviews: previews,
-            });
-          }}
-        />
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.chatHeaderTitle, { color: colors.text }]} numberOfLines={1}>
+                {spaceWs.name}
+              </Text>
+              <Text style={[styles.chatHeaderSub, { color: colors.textSecondary }]}>
+                Workspace chat
+              </Text>
+            </View>
+          </View>
 
-        {/* Input */}
-        {renderChatInput(handleSendSpaceMessage)}
-      </View>
+          {/* Messages */}
+          <FlatList
+            ref={chatListRef}
+            data={spaceMessages}
+            keyExtractor={(item) => String(item.id)}
+            inverted
+            contentContainerStyle={[
+              styles.messagesList,
+              spaceMessages.length === 0 && { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+            ]}
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              <View style={{ alignItems: 'center', padding: 32 }}>
+                <MaterialIcons
+                  name="chat-bubble-outline"
+                  size={48}
+                  color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
+                />
+                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
+              </View>
+            }
+            renderItem={({ item: msg }) => {
+              const isMe = Number(msg.user_id) === Number(currentUserId);
+              const previews = linkPreviewsByWsChatId.get(msg.id) || [];
+              return renderMessageBubble({
+                msgId: msg.id,
+                userId: msg.user_id,
+                message: msg.message,
+                createdAt: msg.created_at,
+                isMe,
+                msgType: 'space',
+                linkPreviews: previews,
+              });
+            }}
+          />
+
+          {/* Input */}
+          {renderChatInput(handleSendSpaceMessage)}
+      </KeyboardAvoidingView>
     );
   };
 
@@ -1870,81 +1870,81 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     }
 
     return (
-      <View style={{ flex: 1 }}>
-        {/* Chat header */}
-        <View
-          style={[
-            styles.chatHeader,
-            { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
-          ]}
-        >
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <MaterialIcons name="arrow-back" size={22} color={colors.text} />
-          </TouchableOpacity>
-          {isGroup ? (
-            <View style={[styles.chatHeaderIcon, { backgroundColor: `${primaryColor}20` }]}>
-              <MaterialIcons name="group" size={18} color={primaryColor} />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="height" keyboardVerticalOffset={insets.top + 52}>
+          {/* Chat header */}
+          <View
+            style={[
+              styles.chatHeader,
+              { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)' },
+            ]}
+          >
+            <TouchableOpacity style={styles.backButton} onPress={handleBack}>
+              <MaterialIcons name="arrow-back" size={22} color={colors.text} />
+            </TouchableOpacity>
+            {isGroup ? (
+              <View style={[styles.chatHeaderIcon, { backgroundColor: `${primaryColor}20` }]}>
+                <MaterialIcons name="group" size={18} color={primaryColor} />
+              </View>
+            ) : (
+              <View style={{ marginRight: 10 }}>
+                <UserAvatar user={otherUser} name={displayName} size={34} primaryColor={primaryColor} />
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.chatHeaderTitle, { color: colors.text }]} numberOfLines={1}>
+                {displayName}
+              </Text>
+              <Text style={[styles.chatHeaderSub, { color: colors.textSecondary }]}>
+                {isGroup
+                  ? `${participantCount} member${participantCount !== 1 ? 's' : ''}`
+                  : 'Direct message'}
+              </Text>
             </View>
-          ) : (
-            <View style={{ marginRight: 10 }}>
-              <UserAvatar user={otherUser} name={displayName} size={34} primaryColor={primaryColor} />
-            </View>
-          )}
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.chatHeaderTitle, { color: colors.text }]} numberOfLines={1}>
-              {displayName}
-            </Text>
-            <Text style={[styles.chatHeaderSub, { color: colors.textSecondary }]}>
-              {isGroup
-                ? `${participantCount} member${participantCount !== 1 ? 's' : ''}`
-                : 'Direct message'}
-            </Text>
           </View>
-        </View>
 
-        {/* Messages */}
-        <FlatList
-          ref={chatListRef}
-          data={conversationMessages}
-          keyExtractor={(item) => String(item.id)}
-          inverted
-          contentContainerStyle={[
-            styles.messagesList,
-            conversationMessages.length === 0 && { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
-          ]}
-          keyboardDismissMode="interactive"
-          keyboardShouldPersistTaps="handled"
-          ListEmptyComponent={
-            <View style={{ alignItems: 'center', padding: 32 }}>
-              <MaterialIcons
-                name="chat-bubble-outline"
-                size={48}
-                color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
-              />
-              <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
-              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
-            </View>
-          }
-          renderItem={({ item: msg }) => {
-            const isMe = Number(msg.user_id) === Number(currentUserId);
-            const reactions = reactionsByMessageId.get(msg.id) || [];
-            const previews = linkPreviewsByMessageId.get(msg.id) || [];
-            return renderMessageBubble({
-              msgId: msg.id,
-              userId: msg.user_id,
-              message: msg.message,
-              createdAt: msg.created_at,
-              isMe,
-              msgType: 'dm',
-              linkPreviews: previews,
-              reactions,
-            });
-          }}
-        />
+          {/* Messages */}
+          <FlatList
+            ref={chatListRef}
+            data={conversationMessages}
+            keyExtractor={(item) => String(item.id)}
+            inverted
+            contentContainerStyle={[
+              styles.messagesList,
+              conversationMessages.length === 0 && { flexGrow: 1, justifyContent: 'center', alignItems: 'center' },
+            ]}
+            keyboardDismissMode="interactive"
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={
+              <View style={{ alignItems: 'center', padding: 32 }}>
+                <MaterialIcons
+                  name="chat-bubble-outline"
+                  size={48}
+                  color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
+                />
+                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
+              </View>
+            }
+            renderItem={({ item: msg }) => {
+              const isMe = Number(msg.user_id) === Number(currentUserId);
+              const reactions = reactionsByMessageId.get(msg.id) || [];
+              const previews = linkPreviewsByMessageId.get(msg.id) || [];
+              return renderMessageBubble({
+                msgId: msg.id,
+                userId: msg.user_id,
+                message: msg.message,
+                createdAt: msg.created_at,
+                isMe,
+                msgType: 'dm',
+                linkPreviews: previews,
+                reactions,
+              });
+            }}
+          />
 
-        {/* Input */}
-        {renderChatInput(handleSendConversationMessage)}
-      </View>
+          {/* Input */}
+          {renderChatInput(handleSendConversationMessage)}
+      </KeyboardAvoidingView>
     );
   };
 
@@ -2615,16 +2615,15 @@ const styles = StyleSheet.create({
   // Input
   inputContainer: {
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    padding: 12,
-    paddingHorizontal: 16,
+    alignItems: 'center',
+    padding: 16,
     borderTopWidth: 1,
   },
   textInput: {
     flex: 1,
-    borderRadius: radius.lg,
+    borderRadius: radius.pill,
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
     maxHeight: 100,
