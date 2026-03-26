@@ -8,6 +8,7 @@ import { AssigneeAvatars } from './AssigneeAvatars';
 import { statusColor, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
+import { useAuth } from '../context/AuthContext';
 import { fontFamilies, radius, shadows } from '../config/designTokens';
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -157,11 +158,14 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
 
   const { colors, isDarkMode } = useTheme();
   const { tagInfoMap, isTaskWorking } = useTasks();
+  const { user: authUser } = useAuth();
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const tertiaryText = isDarkMode ? 'rgba(255, 255, 255, 0.45)' : '#9CA3AF';
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
   const statusType = classifyStatus(task.status);
   const working = isTaskWorking(task.id ?? '') || statusType === 'working';
+  const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
+  const hasSeen = isCreator && task.firstViewedAt != null;
 
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(0)).current;
@@ -203,6 +207,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
     }).start();
   }, [scaleAnim]);
 
+  const isDone = statusType === 'done';
   const stColor = statusColor(task.status, task.statusColor);
 
   const workingOverlayOpacity = working
@@ -238,6 +243,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           ]}
         />
       )}
+      <View style={isDone ? { opacity: 0.55 } : undefined}>
       {/* Row 1: CatIcon + Title + #ID + Flag + Priority */}
       <View style={styles.titleRow}>
         {task.categoryColor && (() => {
@@ -249,7 +255,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
             </View>
           );
         })()}
-        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+        <Text style={[styles.title, { color: colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }]} numberOfLines={1}>
           {task.title}
         </Text>
         {task.id && (
@@ -299,10 +305,10 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         );
       })()}
 
-      {/* Row 2: Status badge (UPPERCASE) + Location */}
+      {/* Row 2: Status badge + Location + Approval pill */}
       <View style={styles.metaRow}>
         <CustomChip
-          label={task.status.toUpperCase()}
+          label={task.status}
           color={stColor}
           icon={
             working
@@ -310,6 +316,37 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
               : <MaterialCommunityIcons name={STATUS_ICONS[statusType as Exclude<StatusType, 'working'>] ?? STATUS_ICONS.default} size={12} color="#FFFFFF" />
           }
         />
+        {task.approvalStatus === 'pending' && (
+          <View style={[styles.approvalPill, { backgroundColor: '#FFF7ED' }]}>
+            <MaterialCommunityIcons name="clock-outline" size={11} color="#EA580C" />
+            <Text style={[styles.approvalPillText, { color: '#EA580C' }]}>Pending</Text>
+          </View>
+        )}
+        {task.approvalStatus === 'approved' && (
+          <View style={[styles.approvalPill, { backgroundColor: '#F0FDF4' }]}>
+            <MaterialCommunityIcons name="check-circle-outline" size={11} color="#16A34A" />
+            <Text style={[styles.approvalPillText, { color: '#16A34A' }]}>Approved</Text>
+          </View>
+        )}
+        {task.approvalStatus === 'rejected' && (
+          <View style={[styles.approvalPill, { backgroundColor: '#FEF2F2' }]}>
+            <MaterialCommunityIcons name="close-circle-outline" size={11} color="#DC2626" />
+            <Text style={[styles.approvalPillText, { color: '#DC2626' }]}>Rejected</Text>
+          </View>
+        )}
+        {(task.ackTotal ?? 0) > 0 && (
+          <View style={[styles.ackBadge, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}>
+            <MaterialCommunityIcons name="eye-check" size={11} color={task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText} />
+            <Text style={[styles.ackBadgeText, { color: task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText }]}>
+              {task.ackDone}/{task.ackTotal}
+            </Text>
+          </View>
+        )}
+        {hasSeen && (
+          <View style={[styles.seenBadge, { backgroundColor: 'rgba(59,130,246,0.1)' }]}>
+            <MaterialIcons name="visibility" size={11} color="#3B82F6" />
+          </View>
+        )}
         {task.spot !== '' && (
           <View style={styles.spotChip}>
             <MaterialIcons name="place" size={13} color={tertiaryText} />
@@ -323,10 +360,10 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
             <MaterialIcons name="description" size={13} color={tertiaryText} />
           </View>
         )}
-        {task.approval && (
+        {task.approval && !task.approvalStatus && (
           <CustomChip label={task.approval} color="#BBDEFB" textColor="#0D47A1" compact />
         )}
-        {!task.approval && task.sla && (
+        {!task.approval && !task.approvalStatus && task.sla && (
           <CustomChip
             label={task.sla}
             color={task.sla.toLowerCase().includes('breached') ? '#FFCDD2' : '#B2DFDB'}
@@ -380,6 +417,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           </View>
         );
       })()}
+      </View>
       </Animated.View>
     </Pressable>
   );
@@ -509,5 +547,38 @@ const styles = StyleSheet.create({
   tagText: {
     fontSize: 11,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  approvalPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  approvalPillText: {
+    fontSize: 10.5,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  ackBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  ackBadgeText: {
+    fontSize: 10.5,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  seenBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 20,
+    height: 20,
+    borderRadius: 4,
+    flexShrink: 0,
   },
 });

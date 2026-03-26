@@ -14,6 +14,7 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -27,6 +28,7 @@ import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
+import { useMutationQueue } from '../context/MutationQueueContext';
 import { RootStackParamList, TaskItem, CardDensity } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskStrip } from '../components/ActiveTaskStrip';
@@ -182,6 +184,7 @@ export const MainScreen: React.FC = () => {
   } = useTasks();
 
   const { data, isSyncing, hasEverSynced, refresh, syncError, isInitialSync } = useData();
+  const { pendingCount, isReplaying } = useMutationQueue();
 
   const isCleaningEnabled = useMemo(() => {
     const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
@@ -199,8 +202,8 @@ export const MainScreen: React.FC = () => {
   const syncHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (syncError) {
-      // Offline – always visible
+    if (syncError || pendingCount > 0 || isReplaying) {
+      // Offline / pending mutations / replaying – always visible
       if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
       setShowSyncPill(true);
       syncPillOpacity.setValue(1);
@@ -224,7 +227,7 @@ export const MainScreen: React.FC = () => {
     return () => {
       if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
     };
-  }, [isSyncing, syncError, syncPillOpacity]);
+  }, [isSyncing, syncError, syncPillOpacity, pendingCount, isReplaying]);
 
   // Build workspace lookup by name for icon/color access
   const workspaceLookup = useMemo(() => {
@@ -320,8 +323,11 @@ export const MainScreen: React.FC = () => {
     const chips: { label: string; statusKey: string; color: string; count: number }[] = [
       { label: 'All', statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: tasks.length },
     ];
+    const seen = new Set<string>();
     for (const s of availableStatuses) {
       const key = s.name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
       const entry = counts.get(key);
       chips.push({
         label: s.name,
@@ -354,9 +360,13 @@ export const MainScreen: React.FC = () => {
 
   const handleTaskPress = useCallback(
     (task: TaskItem) => {
-      navigation.navigate('TaskDetail', { task });
+      if (selectedWorkspace === 'Shared' && (task.approvalStatus || task.shareId)) {
+        navigation.navigate('SharedTaskDetail', { task });
+      } else {
+        navigation.navigate('TaskDetail', { task });
+      }
     },
-    [navigation],
+    [navigation, selectedWorkspace],
   );
 
   // Build workspace-scoped user set: IDs of users assigned to tasks in the selected workspace
@@ -480,8 +490,19 @@ export const MainScreen: React.FC = () => {
     const showChips = tasks.length > 0 && statusChips.length > 1;
     if (!showSyncPill && !showChips) return null;
 
-    const syncLabel = syncError ? 'Offline' : isSyncing ? 'Syncing' : 'Updated';
-    const syncColor = syncError ? '#EF9F27' : isSyncing ? primaryColor : colors.textSecondary;
+    const baseSyncLabel = syncError
+      ? 'Offline'
+      : isReplaying
+        ? 'Syncing changes'
+        : isSyncing ? 'Syncing' : 'Updated';
+    const syncLabel = pendingCount > 0 && !isReplaying
+      ? `${baseSyncLabel} · ${pendingCount} pending`
+      : baseSyncLabel;
+    const syncColor = syncError
+      ? '#EF9F27'
+      : (isReplaying || pendingCount > 0)
+        ? '#F59E0B'
+        : isSyncing ? primaryColor : colors.textSecondary;
 
     return (
       <View>
@@ -774,8 +795,8 @@ export const MainScreen: React.FC = () => {
     return null;
   };
 
-  // Show full-screen sync screen on initial sync with no data
-  if (isInitialSync && isSyncing && data.tasks.length === 0) {
+  // Show full-screen sync screen only on true first-ever sync (no cached data either)
+  if (isInitialSync && isSyncing && data.tasks.length === 0 && !hasEverSynced) {
     return <InitialSyncScreen />;
   }
 
@@ -829,7 +850,18 @@ export const MainScreen: React.FC = () => {
             style={styles.iconButton}
             onPress={() => navigation.navigate('Settings')}
           >
-            <MaterialIcons name="account-circle" size={22} color={colors.textSecondary} />
+            {authUser?.photo_url ? (
+              <Image
+                source={{ uri: authUser.photo_url }}
+                style={styles.avatarImage}
+              />
+            ) : (
+              <View style={[styles.avatarFallback, { backgroundColor: colors.textSecondary }]}>
+                <Text style={styles.avatarInitials}>
+                  {(authUser?.name ?? '?').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
             {notificationCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -1273,6 +1305,23 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarImage: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+  },
+  avatarFallback: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarInitials: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
   },
   filterCountBadge: {
     position: 'absolute',

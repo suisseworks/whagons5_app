@@ -15,7 +15,7 @@
 import { openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 
 const DB_NAME = 'whagons_sync.db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let _db: SQLiteDatabase | null = null;
 
@@ -32,7 +32,7 @@ async function migrate(db: SQLiteDatabase): Promise<void> {
   );
   const currentVersion = versionRow?.user_version ?? 0;
 
-  if (currentVersion < DB_VERSION) {
+  if (currentVersion < 1) {
     await db.execAsync(`
       CREATE TABLE IF NOT EXISTS sync_data (
         tbl   TEXT    NOT NULL,
@@ -47,9 +47,26 @@ async function migrate(db: SQLiteDatabase): Promise<void> {
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
-
-      PRAGMA user_version = ${DB_VERSION};
     `);
+  }
+
+  if (currentVersion < 2) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS mutation_queue (
+        id          TEXT    PRIMARY KEY,
+        api_path    TEXT    NOT NULL,
+        args        TEXT    NOT NULL,
+        created_at  INTEGER NOT NULL,
+        status      TEXT    NOT NULL DEFAULT 'pending'
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_mutation_queue_status
+        ON mutation_queue(status, created_at);
+    `);
+  }
+
+  if (currentVersion < DB_VERSION) {
+    await db.execAsync(`PRAGMA user_version = ${DB_VERSION};`);
   }
 }
 
@@ -213,4 +230,74 @@ export async function setMeta(key: string, value: string): Promise<void> {
 export async function deleteMeta(key: string): Promise<void> {
   const db = await getDb();
   await db.runAsync(`DELETE FROM sync_meta WHERE key = ?`, [key]);
+}
+
+// ---- mutation_queue helpers -----------------------------------------------
+
+export interface QueuedMutation {
+  id: string;
+  api_path: string;
+  args: string;
+  created_at: number;
+  status: 'pending' | 'syncing' | 'failed';
+}
+
+/** Enqueue a mutation for later replay. */
+export async function enqueueMutation(
+  id: string,
+  apiPath: string,
+  args: Record<string, unknown>,
+): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `INSERT INTO mutation_queue (id, api_path, args, created_at, status) VALUES (?, ?, ?, ?, 'pending')`,
+    [id, apiPath, JSON.stringify(args), Date.now()],
+  );
+}
+
+/** Get all pending mutations in FIFO order. */
+export async function getPendingMutations(): Promise<QueuedMutation[]> {
+  const db = await getDb();
+  return db.getAllAsync<QueuedMutation>(
+    `SELECT * FROM mutation_queue WHERE status = 'pending' ORDER BY created_at ASC`,
+  );
+}
+
+/** Get total count of pending mutations. */
+export async function getPendingMutationCount(): Promise<number> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM mutation_queue WHERE status IN ('pending', 'syncing')`,
+  );
+  return row?.cnt ?? 0;
+}
+
+/** Mark a mutation as syncing. */
+export async function markMutationSyncing(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE mutation_queue SET status = 'syncing' WHERE id = ?`,
+    [id],
+  );
+}
+
+/** Mark a mutation as failed. */
+export async function markMutationFailed(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE mutation_queue SET status = 'failed' WHERE id = ?`,
+    [id],
+  );
+}
+
+/** Remove a mutation from the queue (on success). */
+export async function removeMutation(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM mutation_queue WHERE id = ?`, [id]);
+}
+
+/** Clear all mutations (e.g. on logout). */
+export async function clearMutationQueue(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(`DELETE FROM mutation_queue`);
 }

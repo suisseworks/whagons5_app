@@ -19,11 +19,13 @@ import {
   StyleSheet,
   Image,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { FormSchema, FormSchemaField } from '../context/TaskContext';
+import RenderHtml from 'react-native-render-html';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { SignaturePad } from './SignaturePad';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
@@ -122,9 +124,24 @@ export const FormFiller: React.FC<FormFillerProps> = ({
         {/* Label */}
         {field.type !== 'single-checkbox' && (
           <View style={styles.labelRow}>
-            <Text style={[styles.label, { color: colors.text }]}>
-              {field.label || 'Untitled field'}
-            </Text>
+            <RenderHtml
+              contentWidth={descriptionWidth}
+              source={{ html: field.label || 'Untitled field' }}
+              baseStyle={{
+                fontSize: fontSizes.sm,
+                fontFamily: fontFamilies.bodySemibold,
+                color: colors.text,
+                margin: 0,
+                padding: 0,
+              }}
+              tagsStyles={{
+                p: { margin: 0, padding: 0 },
+                body: { margin: 0, padding: 0 },
+                b: { fontFamily: fontFamilies.bodyBold },
+                i: { fontStyle: 'italic' },
+                u: { textDecorationLine: 'underline' },
+              }}
+            />
             {field.required && <Text style={styles.required}>*</Text>}
           </View>
         )}
@@ -347,18 +364,53 @@ export const FormFiller: React.FC<FormFillerProps> = ({
     }
   };
 
+  const { width: windowWidth } = useWindowDimensions();
+  const descriptionWidth = windowWidth - 32;
+
   return (
     <View style={styles.container}>
       {/* Header */}
       {(schema.title || schema.description) && (
         <View style={styles.header}>
           {schema.title && (
-            <Text style={[styles.headerTitle, { color: colors.text }]}>{schema.title}</Text>
+            <RenderHtml
+              contentWidth={descriptionWidth}
+              source={{ html: schema.title }}
+              baseStyle={{
+                fontSize: fontSizes.lg,
+                fontFamily: fontFamilies.bodySemibold,
+                color: colors.text,
+                margin: 0,
+                padding: 0,
+              }}
+              tagsStyles={{
+                p: { margin: 0, padding: 0 },
+                body: { margin: 0, padding: 0 },
+                b: { fontFamily: fontFamilies.bodyBold },
+                i: { fontStyle: 'italic' },
+                u: { textDecorationLine: 'underline' },
+              }}
+            />
           )}
           {schema.description && (
-            <Text style={[styles.headerDescription, { color: colors.textSecondary }]}>
-              {schema.description}
-            </Text>
+            <RenderHtml
+              contentWidth={descriptionWidth}
+              source={{ html: schema.description }}
+              baseStyle={{
+                color: colors.textSecondary,
+                fontSize: fontSizes.sm,
+                fontFamily: fontFamilies.bodyRegular,
+                padding: 0,
+                margin: 0,
+              }}
+              tagsStyles={{
+                p: { margin: 0, padding: 0 },
+                body: { margin: 0, padding: 0 },
+                b: { fontFamily: fontFamilies.bodyBold },
+                i: { fontStyle: 'italic' },
+                u: { textDecorationLine: 'underline' },
+              }}
+            />
           )}
         </View>
       )}
@@ -528,6 +580,8 @@ const SingleCheckboxInput: React.FC<{
   textColor: string;
   primaryColor: string;
 }> = ({ label, required, value, onChange, readOnly, textColor, primaryColor }) => {
+  const { width } = useWindowDimensions();
+  const htmlLabel = required ? `${label} <span style="color:#F44336">*</span>` : label;
   return (
     <TouchableOpacity
       style={styles.checkboxOption}
@@ -540,9 +594,26 @@ const SingleCheckboxInput: React.FC<{
         size={24}
         color={value ? primaryColor : '#9E9E9E'}
       />
-      <Text style={[styles.optionText, { color: textColor, marginLeft: 10 }]}>
-        {label}{required ? ' *' : ''}
-      </Text>
+      <View style={{ flex: 1, marginLeft: 10 }}>
+        <RenderHtml
+          contentWidth={width - 80}
+          source={{ html: htmlLabel }}
+          baseStyle={{
+            fontSize: fontSizes.sm,
+            fontFamily: fontFamilies.bodyRegular,
+            color: textColor,
+            margin: 0,
+            padding: 0,
+          }}
+          tagsStyles={{
+            p: { margin: 0, padding: 0 },
+            body: { margin: 0, padding: 0 },
+            b: { fontFamily: fontFamilies.bodyBold },
+            i: { fontStyle: 'italic' },
+            u: { textDecorationLine: 'underline' },
+          }}
+        />
+      </View>
     </TouchableOpacity>
   );
 };

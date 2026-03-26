@@ -11,6 +11,9 @@
 import React, {
   createContext,
   useContext,
+  useState,
+  useEffect,
+  useRef,
   useMemo,
   useCallback,
   ReactNode,
@@ -18,6 +21,8 @@ import React, {
 import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
+import { useNetwork } from './NetworkContext';
+import * as DB from '../store/database';
 
 // ---------------------------------------------------------------------------
 // Types (preserved from original – downstream code depends on these)
@@ -370,6 +375,12 @@ interface DataContextType {
   data: SyncedData;
   sharedTaskIds: Set<number | string>;
   sharedCount: number;
+  rawSharedToMe: any[] | undefined;
+  approvals: any[];
+  approvalApprovers: any[];
+  taskApprovalInstances: any[];
+  userTeams: any[];
+  roles: any[];
   isSyncing: boolean;
   hasEverSynced: boolean;
   syncError: string | null;
@@ -700,9 +711,87 @@ function mapKpiCard(doc: any): SyncedKpiCard {
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
+// ---------------------------------------------------------------------------
+// SQLite table names for offline cache
+// ---------------------------------------------------------------------------
+
+const SQLITE_TABLES: (keyof SyncedData)[] = [
+  'tasks', 'workspaces', 'statuses', 'priorities', 'categories',
+  'statusTransitionGroups', 'statusTransitions', 'spots', 'spotTypes',
+  'users', 'teams', 'tags', 'taskUsers', 'taskTags', 'taskFlags',
+  'boards', 'boardMembers', 'boardMessages', 'templates', 'forms',
+  'formVersions', 'taskForms', 'conversations', 'conversationParticipants',
+  'directMessages', 'messageReactions', 'linkPreviews', 'workspaceChat',
+  'kpiCards', 'plugins',
+];
+
+/** Persist an array of mapped docs to SQLite (fire-and-forget). */
+function persistToSqlite(table: string, rows: any[]) {
+  if (!rows || rows.length === 0) return;
+  const dbRows = rows.map((r) => ({
+    id: String(r.id ?? r._id ?? ''),
+    record: r,
+  }));
+  DB.upsertRows(table, dbRows).catch(() => {});
+}
+
+/** Load a table from SQLite and return parsed rows. */
+async function loadFromSqlite<T = any>(table: string): Promise<T[]> {
+  try {
+    return await DB.getAllRows<T>(table);
+  } catch {
+    return [];
+  }
+}
+
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { tenantId } = useTenant();
+  const { isOnline } = useNetwork();
   const skipArgs = !tenantId ? 'skip' as const : undefined;
+
+  // SQLite-hydrated data (loaded once on mount, replaced when Convex arrives)
+  const [cachedData, setCachedData] = useState<SyncedData | null>(null);
+  const [cacheLoaded, setCacheLoaded] = useState(false);
+  const hydrationTenantRef = useRef<string | null>(null);
+
+  // Hydrate from SQLite on mount / tenant change
+  useEffect(() => {
+    if (!tenantId) {
+      setCachedData(null);
+      setCacheLoaded(true);
+      return;
+    }
+    // Only hydrate once per tenant
+    if (hydrationTenantRef.current === tenantId) return;
+    hydrationTenantRef.current = tenantId;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        await DB.initDb();
+        const results: Partial<SyncedData> = {};
+        await Promise.all(
+          SQLITE_TABLES.map(async (table) => {
+            const rows = await loadFromSqlite(table);
+            if (rows.length > 0) {
+              (results as any)[table] = rows;
+            }
+          }),
+        );
+        if (cancelled) return;
+        // Only set cached data if we actually got rows
+        const hasData = Object.values(results).some((arr) => (arr as any[]).length > 0);
+        if (hasData) {
+          setCachedData({ ...EMPTY_DATA, ...results });
+        }
+      } catch {
+        // SQLite init failed — continue without cache
+      } finally {
+        if (!cancelled) setCacheLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tenantId]);
 
   // Reference data (bulk query)
   const refData = useQuery(
@@ -880,29 +969,82 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const sharedCount = sharedTaskIds.size;
 
-  const isLoading = !!tenantId && (refData === undefined || rawTasks === undefined);
-  const hasEverSynced = !!tenantId && refData !== undefined && rawTasks !== undefined;
+  const approvals = useMemo(() => refData?.approvals ? mapIds(refData.approvals) : EMPTY, [refData?.approvals]);
+  const approvalApprovers = useMemo(() => refData?.approvalApprovers ? mapIds(refData.approvalApprovers) : EMPTY, [refData?.approvalApprovers]);
+  const taskApprovalInstances = useMemo(() => refData?.taskApprovalInstances ? mapIds(refData.taskApprovalInstances) : EMPTY, [refData?.taskApprovalInstances]);
+  const userTeamsData = useMemo(() => refData?.userTeams ? mapIds(refData.userTeams) : EMPTY, [refData?.userTeams]);
+  const rolesData = useMemo(() => refData?.roles ? mapIds(refData.roles) : EMPTY, [refData?.roles]);
+
+  // ---------------------------------------------------------------------------
+  // Persist mapped Convex data to SQLite whenever it changes
+  // ---------------------------------------------------------------------------
+  const prevDataRef = useRef<SyncedData | null>(null);
+  useEffect(() => {
+    if (!tenantId) return;
+    const convexReady = refData !== undefined && rawTasks !== undefined;
+    if (!convexReady) return;
+    if (prevDataRef.current === data) return;
+    prevDataRef.current = data;
+
+    // Fire-and-forget persist each table
+    for (const table of SQLITE_TABLES) {
+      const rows = data[table] as any[];
+      if (rows && rows.length > 0) {
+        persistToSqlite(table, rows);
+      }
+    }
+    DB.setMeta('last_sync_ts', String(Date.now())).catch(() => {});
+  }, [data, tenantId, refData, rawTasks]);
+
+  // ---------------------------------------------------------------------------
+  // Determine loading / sync state
+  // ---------------------------------------------------------------------------
+  const convexReady = refData !== undefined && rawTasks !== undefined;
+  const hasCachedData = cachedData !== null;
+
+  // We're "loading" only if Convex hasn't arrived AND we have no cached data
+  const isLoading = !!tenantId && !convexReady && !hasCachedData;
+  const hasEverSynced = !!tenantId && (convexReady || hasCachedData);
+
+  // Use Convex data when available, else fall back to SQLite cache
+  const effectiveData = convexReady ? data : (cachedData ?? data);
+
+  const syncError = (!isOnline && !convexReady) ? 'No internet connection' : null;
+  const isSyncing = !!tenantId && !convexReady && isOnline;
 
   // refresh / forceResync are no-ops with Convex (data is always live)
   const refresh = useCallback(async () => {}, []);
-  const forceResync = useCallback(async () => {}, []);
+  const forceResync = useCallback(async () => {
+    if (!tenantId) return;
+    try {
+      await DB.clearAllData();
+      setCachedData(null);
+      hydrationTenantRef.current = null;
+    } catch {}
+  }, [tenantId]);
+
+  const contextValue = useMemo(() => ({
+    data: effectiveData,
+    sharedTaskIds,
+    sharedCount,
+    rawSharedToMe,
+    approvals,
+    approvalApprovers,
+    taskApprovalInstances,
+    userTeams: userTeamsData,
+    roles: rolesData,
+    isSyncing,
+    hasEverSynced,
+    syncError,
+    syncProgress: null as number | null,
+    isInitialSync: isLoading,
+    refresh,
+    forceResync,
+    dataManager: null,
+  }), [effectiveData, sharedTaskIds, sharedCount, rawSharedToMe, approvals, approvalApprovers, taskApprovalInstances, userTeamsData, rolesData, isSyncing, hasEverSynced, syncError, isLoading, refresh, forceResync]);
 
   return (
-    <DataContext.Provider
-      value={{
-        data,
-        sharedTaskIds,
-        sharedCount,
-        isSyncing: isLoading,
-        hasEverSynced,
-        syncError: null,
-        syncProgress: null,
-        isInitialSync: isLoading,
-        refresh,
-        forceResync,
-        dataManager: null,
-      }}
-    >
+    <DataContext.Provider value={contextValue}>
       {children}
     </DataContext.Provider>
   );

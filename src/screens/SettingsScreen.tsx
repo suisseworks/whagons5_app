@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
@@ -21,6 +22,8 @@ import { useAuth } from '../context/AuthContext';
 import { VERSION_DISPLAY } from '../config/version';
 import { useData } from '../context/DataContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+
+export const GPS_CAPTURE_STORAGE_KEY = '@whagons/gps_capture_enabled';
 
 type SettingsNavProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
 
@@ -35,6 +38,18 @@ export const SettingsScreen: React.FC = () => {
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [autoBackup, setAutoBackup] = useState(true);
   const [selectedLanguage, setSelectedLanguage] = useState('English');
+  const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(true);
+
+  useEffect(() => {
+    AsyncStorage.getItem(GPS_CAPTURE_STORAGE_KEY).then((val) => {
+      if (val !== null) setGpsCaptureEnabled(val === 'true');
+    });
+  }, []);
+
+  const handleGpsToggle = (val: boolean) => {
+    setGpsCaptureEnabled(val);
+    AsyncStorage.setItem(GPS_CAPTURE_STORAGE_KEY, String(val));
+  };
 
   const cardStyle = [
     styles.card,
@@ -340,6 +355,18 @@ export const SettingsScreen: React.FC = () => {
             value={preferences.vibrationEnabled}
             onValueChange={(val) => updatePreferences({ vibrationEnabled: val })}
             enabled={preferences.enabled}
+          />
+        </View>
+
+        {/* Task Creation Section */}
+        <SectionHeader title="Task Creation" />
+        <View style={cardStyle}>
+          <SwitchTile
+            icon="gps-fixed"
+            title="Capture GPS Location"
+            subtitle="Attach device location when creating tasks"
+            value={gpsCaptureEnabled}
+            onValueChange={handleGpsToggle}
           />
         </View>
 

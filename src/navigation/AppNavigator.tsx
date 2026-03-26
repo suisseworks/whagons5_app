@@ -10,6 +10,7 @@ import { SplashScreen } from '../screens/SplashScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { MainScreen } from '../screens/MainScreen';
 import { TaskDetailScreen } from '../screens/TaskDetailScreen';
+import { SharedTaskDetailScreen } from '../screens/SharedTaskDetailScreen';
 import { CreateTaskScreen } from '../screens/CreateTaskScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
@@ -61,6 +62,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="TenantSelect" component={TenantSelectScreen} />
         <Stack.Screen name="Main" component={MainScreen} />
         <Stack.Screen name="TaskDetail" component={TaskDetailScreen} />
+        <Stack.Screen name="SharedTaskDetail" component={SharedTaskDetailScreen} />
         <Stack.Screen name="CreateTask" component={CreateTaskScreen} />
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />

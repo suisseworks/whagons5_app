@@ -16,6 +16,7 @@ import { useAuth } from './AuthContext';
 import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
+import { computeApprovalStatusForTask } from '../utils/approvalStatus';
 
 const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
 const MAX_WORKING_TASKS = 5;
@@ -127,6 +128,10 @@ function mapTaskToItem(
     formId: formInfo?.formId ?? null,
     formName: formInfo?.formName ?? null,
     flagColor,
+    createdBy: task.created_by ?? null,
+    firstViewedAt: (task as any).firstViewedAt ?? null,
+    latitude: (task as any).latitude ?? null,
+    longitude: (task as any).longitude ?? null,
   };
 }
 
@@ -196,6 +201,13 @@ export interface FormSchemaField {
   };
 }
 
+export interface CreateTaskAttachment {
+  storageId: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+}
+
 export interface CreateTaskArgs {
   name: string;
   description?: string;
@@ -208,6 +220,9 @@ export interface CreateTaskArgs {
   userConvexIds?: string[];
   dueDate?: number;
   startDate?: number;
+  attachments?: CreateTaskAttachment[];
+  latitude?: number;
+  longitude?: number;
 }
 
 interface TaskContextType {
@@ -258,7 +273,7 @@ interface TaskContextType {
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { data, sharedTaskIds, sharedCount } = useData();
+  const { data, sharedTaskIds, sharedCount, rawSharedToMe, approvals: approvalsList, approvalApprovers, taskApprovalInstances } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
 
@@ -605,6 +620,64 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // so we no longer need a separate parallel array for index-based filtering.
 
   // ---------------------------------------------------------------------------
+  // Shared task enrichment: approval status + ack progress
+  // ---------------------------------------------------------------------------
+
+  const approvalMap = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const a of approvalsList) {
+      m[String(a._id ?? a.id)] = a;
+      if (a.id != null) m[String(a.id)] = a;
+    }
+    return m;
+  }, [approvalsList]);
+
+  const sharedEnrichmentMap = useMemo(() => {
+    const m = new Map<string, {
+      approvalStatus: 'pending' | 'approved' | 'rejected' | null;
+      shareId: string;
+      shareStatus: 'pending' | 'acknowledged' | null;
+      ackTotal: number;
+      ackDone: number;
+      permission: string | null;
+      approvalId: string | number | null;
+      taskConvexId: string | null;
+    }>();
+    if (!rawSharedToMe) return m;
+
+    for (const share of rawSharedToMe) {
+      if (!share.task) continue;
+      const taskId = share.task.id ?? share.task.pgId ?? share.task._id;
+      if (taskId == null) continue;
+
+      const task = share.task;
+      const taskConvexId = task._id ?? null;
+      const approvalId = task.approvalId ?? task.approval_id ?? null;
+      const approval = approvalId ? approvalMap[String(approvalId)] : undefined;
+
+      const derived = computeApprovalStatusForTask({
+        taskId: String(taskId),
+        taskConvexId: taskConvexId ?? undefined,
+        approvalId,
+        approval,
+        taskApprovalInstances: taskApprovalInstances as any[],
+      });
+
+      m.set(String(taskId), {
+        approvalStatus: derived,
+        shareId: share._id,
+        shareStatus: share.status ?? null,
+        ackTotal: share.ackTotal ?? 0,
+        ackDone: share.ackDone ?? 0,
+        permission: share.permission ?? null,
+        approvalId,
+        taskConvexId,
+      });
+    }
+    return m;
+  }, [rawSharedToMe, approvalMap, taskApprovalInstances]);
+
+  // ---------------------------------------------------------------------------
   // Filter + paginate
   // ---------------------------------------------------------------------------
   const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0 || filters.tags.length > 0;
@@ -616,10 +689,26 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (selectedWorkspace === 'Everything') {
       result = allMappedTasks;
     } else if (selectedWorkspace === 'Shared') {
-      result = allMappedTasks.filter((t) => {
-        const numId = Number(t.id);
-        return sharedTaskIds.has(numId) || sharedTaskIds.has(t.id ?? '');
-      });
+      result = allMappedTasks
+        .filter((t) => {
+          const numId = Number(t.id);
+          return sharedTaskIds.has(numId) || sharedTaskIds.has(t.id ?? '');
+        })
+        .map((t) => {
+          const enrichment = sharedEnrichmentMap.get(String(t.id));
+          if (!enrichment) return t;
+          return {
+            ...t,
+            approvalStatus: enrichment.approvalStatus,
+            shareId: enrichment.shareId,
+            shareStatus: enrichment.shareStatus,
+            ackTotal: enrichment.ackTotal,
+            ackDone: enrichment.ackDone,
+            sharePermission: enrichment.permission,
+            approvalId: enrichment.approvalId,
+            taskConvexId: enrichment.taskConvexId,
+          };
+        });
     } else {
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
@@ -665,7 +754,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return result;
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters, sharedTaskIds]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap]);
 
   const wsFilteredTasks = useMemo(() => {
     if (selectedWorkspace === 'Everything') return allMappedTasks;
@@ -865,6 +954,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (args.priorityConvexId) mutationArgs.priorityId = args.priorityConvexId;
     if (args.dueDate) mutationArgs.dueDate = args.dueDate;
     if (args.startDate) mutationArgs.startDate = args.startDate;
+    if (args.attachments?.length) mutationArgs.attachments = args.attachments;
+    if (args.latitude != null) mutationArgs.latitude = args.latitude;
+    if (args.longitude != null) mutationArgs.longitude = args.longitude;
 
     const taskId = await createTaskMutation(mutationArgs as any);
     return String(taskId);

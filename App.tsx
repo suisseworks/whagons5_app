@@ -12,6 +12,8 @@ import { DataProvider } from './src/context/DataContext';
 import { TaskProvider } from './src/context/TaskContext';
 import { NotificationProvider } from './src/context/NotificationContext';
 import { GamificationProvider } from './src/context/GamificationContext';
+import { NetworkProvider } from './src/context/NetworkContext';
+import { MutationQueueProvider } from './src/context/MutationQueueContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 
 export default function App() {
@@ -35,6 +37,8 @@ export default function App() {
       <SafeAreaProvider>
         <KeyboardProvider>
           <ConvexClientProvider>
+            <NetworkProvider>
+            <MutationQueueProvider>
             <AuthProvider>
               <DataProvider>
                 <NotificationProvider>
@@ -48,6 +52,8 @@ export default function App() {
                 </NotificationProvider>
               </DataProvider>
             </AuthProvider>
+            </MutationQueueProvider>
+            </NetworkProvider>
           </ConvexClientProvider>
         </KeyboardProvider>
       </SafeAreaProvider>

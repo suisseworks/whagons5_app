@@ -220,8 +220,12 @@ export const StatsScreen: React.FC = () => {
 
   const statusBars = useMemo(() => {
     const bars: { name: string; color: string; count: number }[] = [];
+    const seen = new Set<string>();
     for (const s of availableStatuses) {
-      const count = statusCounts.get(s.name.toLowerCase()) ?? 0;
+      const key = s.name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const count = statusCounts.get(key) ?? 0;
       bars.push({ name: s.name, color: s.color || '#9CA3AF', count });
     }
     bars.sort((a, b) => b.count - a.count);

@@ -40,6 +40,29 @@ export interface TaskItem {
   formName?: string | null;
   /** Per-user flag color (null = not flagged) */
   flagColor?: string | null;
+  /** pgId of the user who created the task */
+  createdBy?: number | string | null;
+  /** Epoch ms when the first non-creator user viewed the task (null = unseen) */
+  firstViewedAt?: number | null;
+  /** Derived approval status for shared tasks */
+  approvalStatus?: 'pending' | 'approved' | 'rejected' | null;
+  /** Share document _id (for acknowledge mutation) */
+  shareId?: string | null;
+  /** Share acknowledgment status */
+  shareStatus?: 'pending' | 'acknowledged' | null;
+  /** Total shares with ack tracking for this task */
+  ackTotal?: number;
+  /** Number of acknowledged shares for this task */
+  ackDone?: number;
+  /** Share permission type */
+  sharePermission?: string | null;
+  /** Approval config _id (Convex) for this task */
+  approvalId?: string | number | null;
+  /** Task Convex _id for the shared task */
+  taskConvexId?: string | null;
+  /** GPS coordinates captured at creation */
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 // Notification item model
@@ -239,6 +262,7 @@ export type RootStackParamList = {
   TenantSelect: { tenants: string[]; firebaseIdToken: string };
   Main: undefined;
   TaskDetail: { task: TaskItem };
+  SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;
   Notifications: undefined;
   Settings: undefined;

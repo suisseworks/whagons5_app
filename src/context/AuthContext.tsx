@@ -15,10 +15,12 @@ import React, {
   useState,
   useEffect,
   useCallback,
+  useMemo,
+  useRef,
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useConvexAuth, useQuery, useMutation } from 'convex/react';
+import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import {
   signInWithGoogle as fbSignInWithGoogle,
@@ -26,6 +28,7 @@ import {
   firebaseSignOut,
   getCurrentUser,
 } from '../firebase/authService';
+import { useNetwork } from './NetworkContext';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,6 +81,7 @@ interface AuthContextType extends AuthState {
 // ---------------------------------------------------------------------------
 
 const STORAGE_KEY_SUBDOMAIN = 'wh_auth_subdomain';
+const STORAGE_KEY_CACHED_USER = 'wh_auth_cached_user';
 
 // ---------------------------------------------------------------------------
 // Context
@@ -87,10 +91,13 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
+  const { isOnline } = useNetwork();
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [isRestoringTenant, setIsRestoringTenant] = useState(true);
   const [pendingTenants, setPendingTenants] = useState<string[] | null>(null);
   const [tenantResolved, setTenantResolved] = useState(false);
+  const [cachedUser, setCachedUser] = useState<UserInfo | null>(null);
+  const offlineResolvedRef = useRef(false);
 
   // Query tenants for the authenticated user
   const myTenants = useQuery(
@@ -105,79 +112,114 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   );
 
   // ------------------------------------------------------------------
-  // Restore persisted tenant on mount
+  // Restore persisted tenant + cached user on mount
   // ------------------------------------------------------------------
   useEffect(() => {
     (async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEY_SUBDOMAIN);
+      const [stored, cachedJson] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEY_SUBDOMAIN),
+        AsyncStorage.getItem(STORAGE_KEY_CACHED_USER),
+      ]);
       if (stored) setTenantId(stored);
+      if (cachedJson) {
+        try { setCachedUser(JSON.parse(cachedJson)); } catch {}
+      }
       setIsRestoringTenant(false);
     })();
   }, []);
 
   // ------------------------------------------------------------------
+  // Offline bypass: if we have a cached tenant + cached user + Firebase
+  // session but Convex can't connect, resolve immediately so the app
+  // doesn't hang on the splash screen.
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    if (offlineResolvedRef.current) return;
+    if (isOnline) return;
+    if (isRestoringTenant) return;
+
+    const hasFbSession = !!getCurrentUser();
+    if (hasFbSession && tenantId && cachedUser && !tenantResolved) {
+      console.log('[AUTH] Offline bypass: using cached auth for tenant', tenantId);
+      setTenantResolved(true);
+      offlineResolvedRef.current = true;
+    }
+  }, [isOnline, isRestoringTenant, tenantId, cachedUser, tenantResolved]);
+
+  // ------------------------------------------------------------------
   // Auto-select tenant when myTenants loads (if no tenant selected)
   // ------------------------------------------------------------------
   useEffect(() => {
-    console.log('[AUTH] State:', { isAuthenticated, myTenants, tenantId, tenantResolved, isRestoringTenant, convexAuthLoading });
     if (tenantResolved) return;
     if (!isAuthenticated || !myTenants) return;
 
     if (tenantId && myTenants.includes(tenantId)) {
-      // Already have a valid tenant
       setTenantResolved(true);
       return;
     }
 
     if (myTenants.length === 0) {
-      // No tenants — user not associated with any company
       console.log('[AUTH] No tenants found for user');
       setTenantResolved(true);
     } else if (myTenants.length === 1) {
-      // Single tenant — auto-select
       const t = myTenants[0];
       setTenantId(t);
       AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
       setTenantResolved(true);
     } else {
-      // Multiple tenants, none selected
       setPendingTenants(myTenants);
       setTenantResolved(true);
     }
   }, [isAuthenticated, myTenants, tenantId, tenantResolved]);
 
   // ------------------------------------------------------------------
-  // Map Convex user → UserInfo
+  // Map Convex user → UserInfo + cache to AsyncStorage
   // ------------------------------------------------------------------
-  const user: UserInfo | null = convexUser
-    ? {
-        id: (convexUser as any).pgId ?? (convexUser as any)._id ?? 0,
-        name: (convexUser as any).name ?? '',
-        email: (convexUser as any).email ?? '',
-        photo_url: (convexUser as any).urlPicture ?? getCurrentUser()?.photoURL ?? null,
-        tenant_domain_prefix: tenantId,
-      }
-    : null;
+  const user: UserInfo | null = useMemo(() => {
+    if (!convexUser) return null;
+    return {
+      id: (convexUser as any).pgId ?? (convexUser as any)._id ?? 0,
+      name: (convexUser as any).name ?? '',
+      email: (convexUser as any).email ?? '',
+      photo_url: (convexUser as any).urlPicture ?? getCurrentUser()?.photoURL ?? null,
+      tenant_domain_prefix: tenantId,
+    };
+  }, [convexUser, tenantId]);
+
+  // Persist user to AsyncStorage whenever Convex returns fresh data
+  useEffect(() => {
+    if (user) {
+      AsyncStorage.setItem(STORAGE_KEY_CACHED_USER, JSON.stringify(user)).catch(() => {});
+      setCachedUser(user);
+    }
+  }, [user]);
+
+  // Use the live Convex user when available, otherwise the cached version
+  const effectiveUser = user ?? cachedUser;
 
   // ------------------------------------------------------------------
-  // Derived auth state
+  // Derived auth state — offline-aware
   // ------------------------------------------------------------------
-  // Stay loading until:
-  // 1. Convex auth is resolved
-  // 2. AsyncStorage tenant is restored
-  // 3. Tenant list is fetched (if authenticated)
-  // 4. Tenant is auto-selected or pendingTenants is set
-  const isLoading =
-    convexAuthLoading ||
-    isRestoringTenant ||
-    (isAuthenticated && !myTenants) ||
-    (isAuthenticated && myTenants && !tenantResolved);
+  const offlineWithCache = !isOnline && !!tenantId && !!cachedUser && !!getCurrentUser();
+
+  const isLoading = offlineWithCache
+    ? (isRestoringTenant)
+    : (
+        convexAuthLoading ||
+        isRestoringTenant ||
+        (isAuthenticated && !myTenants) ||
+        (isAuthenticated && myTenants && !tenantResolved)
+      );
+
+  const token = offlineWithCache
+    ? 'offline-cached'
+    : (isAuthenticated && tenantId ? 'convex-authenticated' : null);
 
   const state: AuthState = {
     isLoading,
-    token: isAuthenticated && tenantId ? 'convex-authenticated' : null,
+    token,
     subdomain: tenantId,
-    user,
+    user: effectiveUser,
   };
 
   // ------------------------------------------------------------------
@@ -207,10 +249,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await firebaseSignOut();
     } catch {}
 
-    await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
+    await Promise.all([
+      AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN),
+      AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER),
+    ]);
     setTenantId(null);
     setTenantResolved(false);
     setPendingTenants(null);
+    setCachedUser(null);
+    offlineResolvedRef.current = false;
   }, []);
 
   // ------------------------------------------------------------------
@@ -248,18 +295,18 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return { tenants: myTenants, firebaseIdToken };
   }, [myTenants]);
 
+  const contextValue = useMemo(() => ({
+    ...state,
+    signInWithGoogle,
+    signInWithEmail,
+    selectTenant,
+    switchTenant,
+    logout,
+    pendingTenants,
+  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithEmail, selectTenant, switchTenant, logout, pendingTenants]);
+
   return (
-    <AuthContext.Provider
-      value={{
-        ...state,
-        signInWithGoogle,
-        signInWithEmail,
-        selectTenant,
-        switchTenant,
-        logout,
-        pendingTenants,
-      }}
-    >
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

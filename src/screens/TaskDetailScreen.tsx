@@ -18,6 +18,7 @@ import {
   Platform,
   Linking,
 } from 'react-native';
+import MapView, { Marker } from 'react-native-maps';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import RenderHtml from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -36,8 +37,6 @@ import { CustomChip } from '../components/CustomChip';
 import { FormFiller } from '../components/FormFiller';
 import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
-import { apiClient } from '../services/apiClient';
-import { getCurrentUser } from '../firebase/authService';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { Toast, ToastRef } from '../components/Toast';
 
@@ -265,7 +264,7 @@ export const TaskDetailScreen: React.FC = () => {
   const { colors, primaryColor, isDarkMode } = useTheme();
   const toastRef = useRef<ToastRef>(null);
   const { getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
-  const { subdomain, token, user: authUser } = useAuth();
+  const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
@@ -343,28 +342,52 @@ export const TaskDetailScreen: React.FC = () => {
   const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
 
-  const restSeenForTaskRef = useRef<string | undefined>(undefined);
+  // ─── Task views ("Seen by") — Convex taskViews table ───────────────────────
+  const recordTaskView = useMutation(api.taskResources.recordTaskViewByTaskPgId);
+  const taskPgId = Number(task.id);
+  const viewsQueryArgs =
+    tenantId && Number.isFinite(taskPgId) && taskPgId > 0
+      ? { tenantId, taskPgId }
+      : ('skip' as const);
+  const taskViewsRaw = useQuery(
+    api.taskResources.listTaskViewsByTaskPgId,
+    viewsQueryArgs,
+  );
+  const taskViewsLoading = viewsQueryArgs !== 'skip' && taskViewsRaw === undefined;
+  const taskViews = viewsQueryArgs === 'skip' ? [] : (taskViewsRaw ?? []);
+
+  const currentUserId = authUser?.id != null ? Number(authUser.id) : null;
+
+  const viewersForDisplay = useMemo(() => {
+    if (!taskViews.length) return [];
+    return taskViews
+      .map((v) => {
+        const id = Number(v.user_id);
+        const name = userMap.get(id) || userMap.get(String(id)) || `User #${id}`;
+        const pic = data.users.find((u) => Number(u.id) === id)?.url_picture ?? null;
+        return {
+          id,
+          name: String(name),
+          picture: pic,
+          viewedAt: v.viewed_at,
+          isSelf: currentUserId !== null && id === currentUserId,
+        };
+      })
+      .filter((row) => !Number.isNaN(row.id))
+      .sort((a, b) => {
+        if (a.isSelf && !b.isSelf) return -1;
+        if (!a.isSelf && b.isSelf) return 1;
+        return new Date(a.viewedAt).getTime() - new Date(b.viewedAt).getTime();
+      });
+  }, [taskViews, userMap, currentUserId, data.users]);
+
+  const seenTaskIdRef = useRef<number | null>(null);
   useEffect(() => {
-    const taskIdStr = task.id;
-    if (!taskIdStr || !subdomain) return;
-    const pgId = Number(taskIdStr);
-    if (!Number.isFinite(pgId) || pgId <= 0) return;
-    if (restSeenForTaskRef.current === taskIdStr) return;
-    restSeenForTaskRef.current = taskIdStr;
-
-    const fbUser = getCurrentUser();
-    if (!fbUser) return;
-
-    void (async () => {
-      try {
-        const idToken = await fbUser.getIdToken();
-        apiClient.configure(subdomain, idToken);
-        await apiClient.markTaskAsSeen(taskIdStr);
-      } catch {
-        // Fire-and-forget; backend may use Sanctum instead of Firebase JWT
-      }
-    })();
-  }, [task.id, subdomain]);
+    if (!tenantId || !Number.isFinite(taskPgId) || taskPgId <= 0) return;
+    if (seenTaskIdRef.current === taskPgId) return;
+    seenTaskIdRef.current = taskPgId;
+    recordTaskView({ tenantId, taskPgId }).catch(() => {});
+  }, [tenantId, taskPgId, recordTaskView]);
 
   const handleStatusChange = (status: StatusOption) => {
     changeTaskStatus(task.id || '', status);
@@ -674,6 +697,51 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       </View>
 
+      {/* GPS Map */}
+      {task.latitude != null && task.longitude != null && (
+        <>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>GPS LOCATION</Text>
+          <View style={[styles.mapContainer, { backgroundColor: secondarySurface }]}>
+            <MapView
+              style={styles.miniMap}
+              initialRegion={{
+                latitude: task.latitude,
+                longitude: task.longitude,
+                latitudeDelta: 0.005,
+                longitudeDelta: 0.005,
+              }}
+              scrollEnabled={false}
+              zoomEnabled={false}
+              rotateEnabled={false}
+              pitchEnabled={false}
+              toolbarEnabled={false}
+              liteMode={Platform.OS === 'android'}
+            >
+              <Marker
+                coordinate={{ latitude: task.latitude, longitude: task.longitude }}
+                title={task.title}
+                description={task.spot || undefined}
+              />
+            </MapView>
+            <TouchableOpacity
+              style={styles.mapOpenButton}
+              activeOpacity={0.7}
+              onPress={() => {
+                const scheme = Platform.select({ ios: 'maps:', android: 'geo:' });
+                const url = Platform.select({
+                  ios: `${scheme}${task.latitude},${task.longitude}?q=${task.latitude},${task.longitude}`,
+                  android: `${scheme}${task.latitude},${task.longitude}?q=${task.latitude},${task.longitude}`,
+                });
+                if (url) Linking.openURL(url).catch(() => {});
+              }}
+            >
+              <MaterialIcons name="open-in-new" size={14} color={primaryColor} />
+              <Text style={[styles.mapOpenText, { color: primaryColor }]}>Open in Maps</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      )}
+
       {/* Assignees section */}
       <Text style={[styles.sectionLabel, { color: tertiaryText }]}>ASSIGNEES</Text>
       {task.assignees.length > 0 ? (
@@ -721,6 +789,45 @@ export const TaskDetailScreen: React.FC = () => {
             })}
           </View>
         </>
+      )}
+
+      {/* Seen by */}
+      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>SEEN BY</Text>
+      {taskViewsLoading ? (
+        <View style={styles.seenLoadingRow}>
+          <ActivityIndicator size="small" color={tertiaryText} />
+          <Text style={[styles.seenLoadingText, { color: tertiaryText }]}>Loading…</Text>
+        </View>
+      ) : viewersForDisplay.length > 0 ? (
+        <View style={styles.seenList}>
+          {viewersForDisplay.map((viewer) => (
+            <View key={`${viewer.id}-${viewer.viewedAt}`} style={[styles.seenRow, { backgroundColor: secondarySurface }]}>
+              {viewer.picture ? (
+                <Image source={{ uri: viewer.picture }} style={styles.seenAvatarImg} />
+              ) : (
+                <View style={[styles.seenAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}>
+                  <Text style={[styles.seenAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}>
+                    {getInitials(viewer.isSelf ? 'You' : viewer.name)}
+                  </Text>
+                </View>
+              )}
+              <View style={styles.seenInfo}>
+                <Text style={[styles.seenName, { color: colors.text }]}>
+                  {viewer.isSelf ? 'You' : viewer.name}
+                </Text>
+                <Text style={[styles.seenTime, { color: tertiaryText }]}>
+                  {timeAgo(viewer.viewedAt)}
+                </Text>
+              </View>
+              <MaterialIcons name="visibility" size={14} color={isDarkMode ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'} />
+            </View>
+          ))}
+        </View>
+      ) : (
+        <View style={[styles.seenEmptyRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+          <MaterialIcons name="visibility-off" size={16} color={tertiaryText} />
+          <Text style={[styles.seenEmptyText, { color: tertiaryText }]}>No one has viewed this task yet</Text>
+        </View>
       )}
     </ScrollView>
   );
@@ -1227,6 +1334,28 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodySemibold,
   },
 
+  /* ── GPS Map ── */
+  mapContainer: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginBottom: 4,
+  },
+  miniMap: {
+    width: '100%',
+    height: 160,
+  },
+  mapOpenButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 4,
+  },
+  mapOpenText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+
   /* ── Section label ── */
   sectionLabel: {
     fontSize: 11,
@@ -1299,6 +1428,72 @@ const styles = StyleSheet.create({
   tagPillText: {
     fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
+  },
+
+  /* ── Seen by ── */
+  seenLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+  },
+  seenLoadingText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  seenList: {
+    gap: 6,
+  },
+  seenRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  seenAvatarImg: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
+  seenAvatarCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  seenAvatarInitial: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  seenInfo: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  seenName: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  seenTime: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 1,
+  },
+  seenEmptyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 0.5,
+    borderStyle: 'dashed',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  seenEmptyText: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyRegular,
+    fontStyle: 'italic',
   },
 
   /* ── Action bar ── */
