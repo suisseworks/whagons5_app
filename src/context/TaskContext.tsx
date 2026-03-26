@@ -257,6 +257,7 @@ interface TaskContextType {
   filters: TaskFilters;
   setFilters: (filters: TaskFilters) => void;
   hasActiveFilters: boolean;
+  unfilteredTasks: TaskItem[];
   availableAssignees: string[];
   availableStatuses: StatusOption[];
   availableTags: string[];
@@ -1194,6 +1195,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       filters,
       setFilters,
       hasActiveFilters,
+      unfilteredTasks: wsFilteredTasks,
       availableAssignees,
       availableStatuses,
       availableTags,
@@ -1232,6 +1234,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       isTaskWorking,
       filters,
       hasActiveFilters,
+      wsFilteredTasks,
       availableAssignees,
       availableStatuses,
       availableTags,

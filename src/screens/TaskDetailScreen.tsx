@@ -18,6 +18,11 @@ import {
   Platform,
   Linking,
 } from 'react-native';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from 'react-native-reanimated';
 import MapView, { Marker } from 'react-native-maps';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import RenderHtml from 'react-native-render-html';
@@ -283,6 +288,14 @@ export const TaskDetailScreen: React.FC = () => {
     return map;
   }, [data.users]);
 
+  // Resolve workspace for this task
+  const taskWorkspace = useMemo(() => {
+    if (!task.workspaceId) return null;
+    return data.workspaces.find(
+      (w: any) => String(w.id) === String(task.workspaceId),
+    ) ?? null;
+  }, [task.workspaceId, data.workspaces]);
+
   const formSchema = useMemo(() => getFormSchema(task), [task, getFormSchema]);
   const existingSubmission = useMemo(() => getTaskFormSubmission(task.id || ''), [task.id, getTaskFormSubmission]);
   const hasForm = !!formSchema && formSchema.fields.length > 0;
@@ -440,24 +453,64 @@ export const TaskDetailScreen: React.FC = () => {
     }
   };
 
-  // Tab swipe
+  // Tab swipe – smooth spring animation (matches ColabScreen)
   const tabs: TabKey[] = hasForm ? ['details', 'form', 'comments'] : ['details', 'comments'];
+  const { width: screenWidth } = useWindowDimensions();
+  const tabTranslateX = useSharedValue(0);
+  const dragStartX = useRef(0);
+
+  useEffect(() => {
+    const idx = tabs.indexOf(activeTab);
+    tabTranslateX.value = withSpring(-idx * screenWidth, {
+      damping: 100,
+      stiffness: 800,
+    });
+  }, [activeTab, screenWidth, tabs.length]);
+
+  const tabSlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tabTranslateX.value }],
+  }));
+
   const tabPanResponder = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
-          Math.abs(gs.dx) > 30 && Math.abs(gs.dy) < 20,
-        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const THRESHOLD = Dimensions.get('window').width * 0.2;
+          Math.abs(gs.dx) > 15 && Math.abs(gs.dy) < 20,
+        onPanResponderGrant: () => {
           const idx = tabs.indexOf(activeTab);
-          if (gs.dx < -THRESHOLD && idx < tabs.length - 1) {
-            setActiveTab(tabs[idx + 1]);
-          } else if (gs.dx > THRESHOLD && idx > 0) {
-            setActiveTab(tabs[idx - 1]);
+          dragStartX.current = -idx * screenWidth;
+        },
+        onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const maxX = 0;
+          const minX = -(tabs.length - 1) * screenWidth;
+          const newX = Math.min(maxX, Math.max(minX, dragStartX.current + gs.dx));
+          tabTranslateX.value = newX;
+        },
+        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const currentX = dragStartX.current + gs.dx;
+          const velocityThreshold = 0.5;
+          const idx = tabs.indexOf(activeTab);
+          let newIdx = idx;
+
+          if (gs.vx < -velocityThreshold && idx < tabs.length - 1) {
+            newIdx = idx + 1;
+          } else if (gs.vx > velocityThreshold && idx > 0) {
+            newIdx = idx - 1;
+          } else {
+            // Snap to nearest tab
+            newIdx = Math.round(-currentX / screenWidth);
+            newIdx = Math.max(0, Math.min(tabs.length - 1, newIdx));
+          }
+
+          const target = -newIdx * screenWidth;
+          tabTranslateX.value = withSpring(target, { damping: 100, stiffness: 800 });
+
+          if (tabs[newIdx] !== activeTab) {
+            setActiveTab(tabs[newIdx]);
           }
         },
       }),
-    [activeTab, tabs],
+    [activeTab, tabs, screenWidth],
   );
 
   const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
@@ -589,6 +642,18 @@ export const TaskDetailScreen: React.FC = () => {
           <Text style={[styles.taskIdInline, { color: tertiaryText }]}>#{task.id}</Text>
         )}
       </View>
+
+      {/* Workspace badge */}
+      {taskWorkspace && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          {taskWorkspace.color && (
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: taskWorkspace.color }} />
+          )}
+          <Text style={{ fontSize: 12, color: tertiaryText, fontFamily: fontFamilies.medium }}>
+            {taskWorkspace.name}
+          </Text>
+        </View>
+      )}
 
       {/* Description / Checklist */}
       {!!localDescription && (() => {
@@ -1071,11 +1136,22 @@ export const TaskDetailScreen: React.FC = () => {
           ))}
         </View>
 
-        <View style={styles.flex} {...tabPanResponder.panHandlers}>
-          {activeTab === 'details' && renderDetailsTab()}
-          {activeTab === 'form' && hasForm && renderFormTab()}
-          {activeTab === 'comments' && renderCommentsTab()}
-        </View>
+        <Animated.View
+          {...tabPanResponder.panHandlers}
+          style={[{ flexDirection: 'row', flex: 1, width: screenWidth * tabs.length }, tabSlideStyle]}
+        >
+          <View style={{ width: screenWidth, flex: 1 }}>
+            {renderDetailsTab()}
+          </View>
+          {hasForm && (
+            <View style={{ width: screenWidth, flex: 1 }}>
+              {renderFormTab()}
+            </View>
+          )}
+          <View style={{ width: screenWidth, flex: 1 }}>
+            {renderCommentsTab()}
+          </View>
+        </Animated.View>
 
         {activeTab === 'details' && getAllowedStatuses(currentTask).length > 0 && (
           <View style={styles.actionButtonsContainer}>

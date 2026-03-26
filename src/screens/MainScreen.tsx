@@ -15,6 +15,8 @@ import {
   TextInput,
   ActivityIndicator,
   Image,
+  BackHandler,
+  Platform,
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -180,6 +182,8 @@ export const MainScreen: React.FC = () => {
     setSelectedWorkspace,
     hasActiveFilters,
     filters,
+    setFilters,
+    unfilteredTasks,
     availableStatuses,
   } = useTasks();
 
@@ -283,7 +287,6 @@ export const MainScreen: React.FC = () => {
   const [selectedNav, setSelectedNav] = useState(0);
   const drawerRef = useRef<AnimatedDrawerRef>(null);
   const [filterSheetVisible, setFilterSheetVisible] = useState(false);
-  const [workspaceMenuVisible, setWorkspaceMenuVisible] = useState(false);
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
   const [statusPickerTask, setStatusPickerTask] = useState<TaskItem | null>(null);
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
@@ -291,7 +294,26 @@ export const MainScreen: React.FC = () => {
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [colabInChat, setColabInChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeStatusChip, setActiveStatusChip] = useState<string | null>(null);
+  // Status chip selection is now driven by filters.statuses from context
+  // so it stays in sync with the filter sheet
+  const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
+
+  // Handle hardware back button when inside a workspace or workspaces list
+  useEffect(() => {
+    if (tasksTab === 'everything') return;
+    const handler = () => {
+      if (tasksTab === 'workspace') {
+        setTasksTab('workspaces');
+        setSelectedWorkspace('Everything');
+      } else if (tasksTab === 'workspaces') {
+        setTasksTab('everything');
+        setSelectedWorkspace('Everything');
+      }
+      return true; // prevent default back behaviour
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', handler);
+    return () => sub.remove();
+  }, [tasksTab, setSelectedWorkspace]);
 
   useEffect(() => {
     if (selectedNav >= navItems.length) {
@@ -310,8 +332,11 @@ export const MainScreen: React.FC = () => {
   }, [refresh]);
 
   const statusChips = useMemo(() => {
+    // Use unfilteredTasks (workspace-filtered, before status/priority/etc filters)
+    // so counts are always correct regardless of active filters
+    const source = unfilteredTasks;
     const counts = new Map<string, { count: number; color: string }>();
-    for (const t of tasks) {
+    for (const t of source) {
       const key = t.status.toLowerCase();
       const existing = counts.get(key);
       if (existing) {
@@ -321,7 +346,7 @@ export const MainScreen: React.FC = () => {
       }
     }
     const chips: { label: string; statusKey: string; color: string; count: number }[] = [
-      { label: 'All', statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: tasks.length },
+      { label: 'All', statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: source.length },
     ];
     const seen = new Set<string>();
     for (const s of availableStatuses) {
@@ -337,25 +362,25 @@ export const MainScreen: React.FC = () => {
       });
     }
     return chips;
-  }, [tasks, availableStatuses, isDarkMode]);
+  }, [unfilteredTasks, availableStatuses, isDarkMode]);
 
-  // Client-side search + status chip filter
+  // Client-side search filter (status filtering is already handled by context filters)
   const displayedTasks = useMemo(() => {
-    let filtered = tasks;
-    if (activeStatusChip) {
-      filtered = filtered.filter((t) => t.status.toLowerCase() === activeStatusChip);
-    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return filtered;
-    return filtered.filter(
+    if (!q) return tasks;
+    // Support searching by task ID (e.g. "123" or "#123")
+    const idTerm = q.startsWith('#') ? q.slice(1) : q;
+    const isIdSearch = /^\d+$/.test(idTerm);
+    return tasks.filter(
       (t) =>
         t.title.toLowerCase().includes(q) ||
         t.spot.toLowerCase().includes(q) ||
         t.status.toLowerCase().includes(q) ||
         t.assignees.some((a) => a.name.toLowerCase().includes(q)) ||
-        t.tags.some((tag) => tag.toLowerCase().includes(q)),
+        t.tags.some((tag) => tag.toLowerCase().includes(q)) ||
+        (isIdSearch && t.id != null && String(t.id) === idTerm),
     );
-  }, [tasks, searchQuery, activeStatusChip]);
+  }, [tasks, searchQuery]);
 
 
   const handleTaskPress = useCallback(
@@ -483,11 +508,26 @@ export const MainScreen: React.FC = () => {
   );
 
   const handleChipPress = useCallback((statusKey: string) => {
-    setActiveStatusChip((prev) => (prev === statusKey ? null : statusKey || null));
-  }, []);
+    if (!statusKey) {
+      // "All" chip pressed — clear status filter
+      setFilters({ ...filters, statuses: [] });
+      return;
+    }
+    // Find the original-case status name from availableStatuses
+    const statusName = availableStatuses.find(
+      (s) => s.name.toLowerCase() === statusKey,
+    )?.name ?? statusKey;
+    // Toggle: if already the only selected status, clear; otherwise select it
+    const isAlreadySelected =
+      filters.statuses.length === 1 && filters.statuses[0].toLowerCase() === statusKey;
+    setFilters({
+      ...filters,
+      statuses: isAlreadySelected ? [] : [statusName],
+    });
+  }, [filters, setFilters, availableStatuses]);
 
   const renderListHeader = () => {
-    const showChips = tasks.length > 0 && statusChips.length > 1;
+    const showChips = unfilteredTasks.length > 0 && statusChips.length > 1;
     if (!showSyncPill && !showChips) return null;
 
     const baseSyncLabel = syncError
@@ -505,7 +545,7 @@ export const MainScreen: React.FC = () => {
         : isSyncing ? primaryColor : colors.textSecondary;
 
     return (
-      <View>
+      <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.sm }}>
         {/* Status filter chips */}
         {showChips && (
           <ScrollView
@@ -515,7 +555,9 @@ export const MainScreen: React.FC = () => {
             contentContainerStyle={styles.chipStripContent}
           >
             {statusChips.map((chip) => {
-              const isActive = activeStatusChip === chip.statusKey || (!activeStatusChip && chip.statusKey === '');
+              const isActive = chip.statusKey === ''
+                ? filters.statuses.length === 0
+                : filters.statuses.some((s) => s.toLowerCase() === chip.statusKey);
               return (
                 <TouchableOpacity
                   key={chip.statusKey || '_all'}
@@ -700,8 +742,8 @@ export const MainScreen: React.FC = () => {
       );
     }
 
-    // Status chip filter hiding all tasks
-    if (activeStatusChip && tasks.length > 0) {
+    // Filters hiding all tasks
+    if (hasActiveFilters && unfilteredTasks.length > 0) {
       return (
         <View style={styles.emptyContainer}>
           <View
@@ -716,6 +758,20 @@ export const MainScreen: React.FC = () => {
           <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
             Try selecting a different status or tap "All"
           </Text>
+          <TouchableOpacity
+            style={[
+              styles.clearFiltersButton,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F0F0F2',
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+              },
+            ]}
+            activeOpacity={0.7}
+            onPress={() => setFilters({ ...filters, statuses: [] })}
+          >
+            <MaterialIcons name="filter-list-off" size={16} color={colors.textSecondary} />
+            <Text style={[styles.clearFiltersText, { color: colors.text }]}>Clear filters</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -739,36 +795,144 @@ export const MainScreen: React.FC = () => {
     );
   };
 
+  const renderWorkspacesList = () => {
+    const wsItems = workspaceObjects;
+    return (
+      <FlatList
+        data={wsItems}
+        keyExtractor={(item) => String(item.id)}
+        contentContainerStyle={styles.listContent}
+        ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+        ListHeaderComponent={
+          /* Shared with me — permanent item at top */
+          <TouchableOpacity
+            style={[
+              styles.workspaceListItem,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#FFFFFF',
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                marginBottom: wsItems.length > 0 ? 8 : 0,
+              },
+            ]}
+            activeOpacity={0.7}
+            onPress={() => {
+              setSelectedWorkspace('Shared');
+              setTasksTab('workspace');
+            }}
+          >
+            <View style={[styles.workspaceListIcon, { backgroundColor: '#8B5CF6' }]}>
+              <MaterialIcons name="inbox" size={16} color="#FFFFFF" />
+            </View>
+            <View style={{ flex: 1, marginLeft: 12 }}>
+              <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
+                Shared with me
+              </Text>
+              {sharedCount > 0 && (
+                <Text style={[styles.workspaceListType, { color: colors.textSecondary }]}>
+                  {sharedCount} {sharedCount === 1 ? 'task' : 'tasks'}
+                </Text>
+              )}
+            </View>
+            {sharedCount > 0 && (
+              <View style={[styles.sharedCountBadge, { backgroundColor: '#8B5CF6' }]}>
+                <Text style={styles.sharedCountBadgeText}>{sharedCount > 99 ? '99+' : sharedCount}</Text>
+              </View>
+            )}
+            <MaterialIcons name="chevron-right" size={20} color={colors.textSecondary} />
+          </TouchableOpacity>
+        }
+        ListEmptyComponent={
+          <View style={[styles.placeholderContainer, { paddingTop: 40 }]}>
+            <MaterialIcons name="workspaces" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
+            <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>No workspaces</Text>
+            <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>You don't have any workspaces yet</Text>
+          </View>
+        }
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncing}
+            onRefresh={onRefresh}
+            tintColor={primaryColor}
+            colors={[primaryColor]}
+          />
+        }
+        renderItem={({ item: ws }) => {
+          const wsColor = ws.color || primaryColor;
+          const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(ws.icon);
+          return (
+            <TouchableOpacity
+              style={[
+                styles.workspaceListItem,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#FFFFFF',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+                },
+              ]}
+              activeOpacity={0.7}
+              onPress={() => {
+                setSelectedWorkspace(ws.name);
+                setTasksTab('workspace');
+              }}
+            >
+              <View style={[styles.workspaceListIcon, { backgroundColor: wsColor }]}>
+                <FaIcon name={iconName} size={14} color="#FFFFFF" solid={solid} brand={wsBrand} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
+                  {ws.name}
+                </Text>
+                {ws.type ? (
+                  <Text style={[styles.workspaceListType, { color: colors.textSecondary }]}>
+                    {String(ws.type) === 'PROJECT' ? 'Project' : 'Workspace'}
+                  </Text>
+                ) : null}
+              </View>
+              <MaterialIcons name="chevron-right" size={20} color={colors.textSecondary} />
+            </TouchableOpacity>
+          );
+        }}
+      />
+    );
+  };
+
   const renderContent = () => {
     if (selectedNav === 0) {
+      // Workspaces list tab
+      if (tasksTab === 'workspaces') {
+        return renderWorkspacesList();
+      }
+      // Everything tab or specific workspace — shows task list
       return (
-        <FlatList
-          data={displayedTasks}
-          renderItem={renderTaskItem}
-          keyExtractor={keyExtractor}
-          extraData={cardDensity}
-          contentContainerStyle={[
-            styles.listContent,
-            displayedTasks.length === 0 && styles.listContentEmpty,
-          ]}
-          ListHeaderComponent={renderListHeader}
-          ListEmptyComponent={renderTasksEmpty}
-          ItemSeparatorComponent={ItemSeparator}
-          windowSize={7}
-          maxToRenderPerBatch={10}
-          updateCellsBatchingPeriod={50}
-          removeClippedSubviews={true}
-          onEndReached={loadMoreTasks}
-          onEndReachedThreshold={0.5}
-          refreshControl={
-            <RefreshControl
-              refreshing={isSyncing}
-              onRefresh={onRefresh}
-              tintColor={primaryColor}
-              colors={[primaryColor]}
-            />
-          }
-        />
+        <View style={{ flex: 1 }}>
+          {/* Status chips + sync pill pinned above the list */}
+          {renderListHeader()}
+          <FlatList
+            data={displayedTasks}
+            renderItem={renderTaskItem}
+            keyExtractor={keyExtractor}
+            extraData={cardDensity}
+            contentContainerStyle={[
+              styles.listContent,
+              displayedTasks.length === 0 && styles.listContentEmpty,
+            ]}
+            ListEmptyComponent={renderTasksEmpty}
+            ItemSeparatorComponent={ItemSeparator}
+            windowSize={7}
+            maxToRenderPerBatch={10}
+            updateCellsBatchingPeriod={50}
+            removeClippedSubviews={true}
+            onEndReached={loadMoreTasks}
+            onEndReachedThreshold={0.5}
+            refreshControl={
+              <RefreshControl
+                refreshing={isSyncing}
+                onRefresh={onRefresh}
+                tintColor={primaryColor}
+                colors={[primaryColor]}
+              />
+            }
+          />
+        </View>
       );
     }
 
@@ -802,7 +966,7 @@ export const MainScreen: React.FC = () => {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background, paddingTop: insets.top }}>
-      {/* App Bar — 3 zones: menu / workspace / actions */}
+      {/* App Bar — 3 zones: menu / search / actions */}
       <View style={[styles.appBar, { backgroundColor: colors.background }]}>
         <TouchableOpacity
           style={styles.menuButton}
@@ -811,15 +975,45 @@ export const MainScreen: React.FC = () => {
           <MaterialIcons name="menu" size={22} color={colors.text} />
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.workspaceSelector}
-          onPress={() => setWorkspaceMenuVisible(true)}
-        >
-          <Text numberOfLines={1} style={[styles.workspaceText, { color: colors.text }]}>
-            {selectedWorkspace}
-          </Text>
-          <MaterialIcons name="expand-more" size={18} color={colors.textSecondary} />
-        </TouchableOpacity>
+        {/* Search bar in the center (replaces workspace dropdown) */}
+        {selectedNav === 0 ? (
+          <View style={styles.appBarSearchContainer}>
+            <View
+              style={[
+                styles.appBarSearchBar,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                },
+              ]}
+            >
+              <MaterialIcons
+                name="search"
+                size={16}
+                color="#999999"
+                style={{ marginRight: 6 }}
+              />
+              <TextInput
+                style={[styles.searchInput, { color: colors.text }]}
+                placeholder="Search tasks..."
+                placeholderTextColor="#999999"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                returnKeyType="search"
+                autoCorrect={false}
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setSearchQuery('')}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <MaterialIcons name="close" size={16} color="#999999" />
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.appBarSearchContainer} />
+        )}
 
         <View style={styles.appBarActions}>
           <TouchableOpacity
@@ -873,43 +1067,109 @@ export const MainScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* Search bar – Tasks tab only */}
-      {selectedNav === 0 && (
-        <View style={styles.searchBarContainer}>
+      {/* Everything / Workspaces tabs — Tasks tab only, hidden when inside a specific workspace */}
+      {selectedNav === 0 && tasksTab !== 'workspace' && (
+        <View
+          style={[
+            styles.tasksTabBar,
+            {
+              borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)',
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={[
+              styles.tasksTabItem,
+              tasksTab === 'everything' && { borderBottomColor: primaryColor, borderBottomWidth: 2 },
+            ]}
+            onPress={() => {
+              setTasksTab('everything');
+              setSelectedWorkspace('Everything');
+            }}
+          >
+            <MaterialIcons
+              name="layers"
+              size={18}
+              color={tasksTab === 'everything' ? primaryColor : colors.textSecondary}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[
+                styles.tasksTabLabel,
+                {
+                  color: tasksTab === 'everything' ? primaryColor : colors.textSecondary,
+                  fontFamily: tasksTab === 'everything' ? fontFamilies.bodySemibold : fontFamilies.bodyMedium,
+                },
+              ]}
+            >
+              Everything
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.tasksTabItem,
+              tasksTab === 'workspaces' && { borderBottomColor: primaryColor, borderBottomWidth: 2 },
+            ]}
+            onPress={() => setTasksTab('workspaces')}
+          >
+            <MaterialIcons
+              name="workspaces"
+              size={18}
+              color={tasksTab === 'workspaces' ? primaryColor : colors.textSecondary}
+              style={{ marginRight: 6 }}
+            />
+            <Text
+              style={[
+                styles.tasksTabLabel,
+                {
+                  color: tasksTab === 'workspaces' ? primaryColor : colors.textSecondary,
+                  fontFamily: tasksTab === 'workspaces' ? fontFamilies.bodySemibold : fontFamilies.bodyMedium,
+                },
+              ]}
+            >
+              Workspaces
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {/* Workspace title bar — shown when viewing a specific workspace */}
+      {selectedNav === 0 && tasksTab === 'workspace' && (() => {
+        const currentWs = workspaceObjects.find((w) => w.name === selectedWorkspace);
+        const wsColor = currentWs?.color || primaryColor;
+        const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(currentWs?.icon);
+        return (
           <View
             style={[
-              styles.searchBar,
+              styles.workspaceTitleBar,
               {
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0, 0, 0, 0.06)',
               },
             ]}
           >
-            <MaterialIcons
-              name="search"
-              size={16}
-              color="#999999"
-              style={{ marginRight: 8 }}
-            />
-            <TextInput
-              style={[styles.searchInput, { color: colors.text }]}
-              placeholder="Search tasks..."
-              placeholderTextColor="#999999"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              returnKeyType="search"
-              autoCorrect={false}
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity
-                onPress={() => setSearchQuery('')}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <MaterialIcons name="close" size={16} color="#999999" />
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.workspaceBackButton}
+              onPress={() => {
+                setTasksTab('workspaces');
+                setSelectedWorkspace('Everything');
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialIcons name="arrow-back" size={20} color={colors.text} />
+            </TouchableOpacity>
+            <View style={[styles.workspaceTitleIcon, { backgroundColor: wsColor }]}>
+              <FaIcon name={iconName} size={12} color="#FFFFFF" solid={solid} brand={wsBrand} />
+            </View>
+            <Text
+              style={[styles.workspaceTitleText, { color: colors.text }]}
+              numberOfLines={1}
+            >
+              {selectedWorkspace}
+            </Text>
           </View>
-        </View>
-      )}
+        );
+      })()}
 
       {/* Content */}
       <View style={styles.content}>
@@ -1000,68 +1260,7 @@ export const MainScreen: React.FC = () => {
         onClose={() => setFilterSheetVisible(false)}
       />
 
-      {/* Workspace Menu Modal */}
-      <Modal
-        visible={workspaceMenuVisible}
-        animationType="fade"
-        transparent={true}
-        onRequestClose={() => setWorkspaceMenuVisible(false)}
-      >
-        <TouchableOpacity
-          style={styles.menuModalOverlay}
-          activeOpacity={1}
-          onPress={() => setWorkspaceMenuVisible(false)}
-        >
-          <View style={[styles.workspaceMenu, { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)' }]}
-          >
-            {workspaces.map((workspace, index) => {
-              const wsData = workspaceLookup.get(workspace);
-              const wsColor = wsData?.color || DEFAULT_WORKSPACE_COLOR;
-              const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(wsData?.icon);
-              const isEverything = workspace === 'Everything';
-              const isShared = workspace === 'Shared';
-              const isSelected = workspace === selectedWorkspace;
-
-              return (
-                <TouchableOpacity
-                  key={index}
-                  style={styles.workspaceMenuItem}
-                  onPress={() => {
-                    setSelectedWorkspace(workspace);
-                    setWorkspaceMenuVisible(false);
-                  }}
-                >
-                  <View style={styles.workspaceMenuItemRow}>
-                    <View style={[styles.workspaceIconBadge, { backgroundColor: isEverything ? (isDarkMode ? '#374151' : '#6B7280') : isShared ? '#8B5CF6' : wsColor }]}>
-                      {isEverything ? (
-                        <MaterialIcons name="layers" size={12} color="#FFFFFF" />
-                      ) : isShared ? (
-                        <MaterialIcons name="inbox" size={12} color="#FFFFFF" />
-                      ) : (
-                        <FaIcon name={iconName} size={11} color="#FFFFFF" solid={solid} brand={wsBrand} />
-                      )}
-                    </View>
-                    <Text
-                      style={[
-                        styles.workspaceMenuText,
-                        { color: colors.text },
-                        isSelected && { color: primaryColor, fontFamily: fontFamilies.bodySemibold },
-                      ]}
-                    >
-                      {workspace}
-                    </Text>
-                    {isShared && sharedCount > 0 && (
-                      <View style={[styles.sharedBadge, { backgroundColor: '#8B5CF6' }]}>
-                        <Text style={styles.sharedBadgeText}>{sharedCount > 99 ? '99+' : sharedCount}</Text>
-                      </View>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {/* Workspace Menu Modal removed — replaced by tabs */}
 
       {/* Status Picker Modal */}
       <Modal
@@ -1285,16 +1484,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  workspaceSelector: {
+  appBarSearchContainer: {
     flex: 1,
+    marginHorizontal: 4,
+  },
+  appBarSearchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  workspaceText: {
-    fontSize: 14,
-    fontFamily: fontFamilies.bodySemibold,
+    height: 36,
+    borderRadius: 10,
+    paddingHorizontal: 10,
   },
   appBarActions: {
     flexDirection: 'row',
@@ -1376,6 +1575,94 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
     paddingVertical: 0,
   },
+  // Tasks tab bar (Everything / Workspaces)
+  tasksTabBar: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    paddingHorizontal: spacing.md,
+  },
+  tasksTabItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tasksTabLabel: {
+    fontSize: fontSizes.sm,
+  },
+  // Workspace title bar (when inside a specific workspace)
+  workspaceTitleBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+  },
+  workspaceBackButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 18,
+    marginRight: 8,
+  },
+  workspaceTitleIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  workspaceTitleText: {
+    flex: 1,
+    fontSize: 16,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  // Workspace list items
+  workspaceListItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginHorizontal: 16,
+  },
+  workspaceListIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  workspaceListName: {
+    fontSize: 15,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  workspaceListType: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 1,
+  },
+  sharedCountBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    paddingHorizontal: 6,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginRight: 4,
+  },
+  sharedCountBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
+    fontWeight: '600' as const,
+  },
   // Status filter chips
   chipStrip: {
     flexGrow: 0,
@@ -1443,6 +1730,20 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
     textAlign: 'center' as const,
     lineHeight: 20,
+  },
+  clearFiltersButton: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    marginTop: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+  },
+  clearFiltersText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
   },
   listHeader: {
     flexDirection: 'row',

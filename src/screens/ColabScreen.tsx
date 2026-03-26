@@ -26,7 +26,7 @@ import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context'
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
@@ -434,11 +434,15 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
 
-  // Swipe between tabs using PanResponder (doesn't steal focus from TextInput)
+  // Continuous drag between tabs using PanResponder (doesn't steal focus from TextInput)
   const tabTranslateX = useSharedValue(0);
+  const dragStartX = useRef(0);
 
   useEffect(() => {
-    tabTranslateX.value = withTiming(activeTab === 'workspaces' ? 0 : -screenWidth, { duration: 250 });
+    tabTranslateX.value = withSpring(activeTab === 'workspaces' ? 0 : -screenWidth, {
+      damping: 100,
+      stiffness: 800,
+    });
   }, [activeTab, screenWidth]);
 
   const tabSlideStyle = useAnimatedStyle(() => ({
@@ -449,13 +453,39 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
-          Math.abs(gs.dx) > 25 && Math.abs(gs.dy) < 20,
+          Math.abs(gs.dx) > 15 && Math.abs(gs.dy) < 20,
+        onPanResponderGrant: () => {
+          // Capture current position at drag start
+          dragStartX.current = activeTab === 'workspaces' ? 0 : -screenWidth;
+        },
+        onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          // Follow finger continuously, clamped to [−screenWidth, 0]
+          const newX = Math.min(0, Math.max(-screenWidth, dragStartX.current + gs.dx));
+          tabTranslateX.value = newX;
+        },
         onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const THRESHOLD = screenWidth * 0.2;
-          if (gs.dx < -THRESHOLD && activeTab === 'workspaces') {
-            setActiveTab('chats');
-          } else if (gs.dx > THRESHOLD && activeTab === 'chats') {
-            setActiveTab('workspaces');
+          // Snap to nearest tab, factoring in velocity for a natural feel
+          const currentX = dragStartX.current + gs.dx;
+          const velocityThreshold = 0.5;
+          let snapToChats: boolean;
+
+          if (gs.vx < -velocityThreshold) {
+            // Fast swipe left → chats
+            snapToChats = true;
+          } else if (gs.vx > velocityThreshold) {
+            // Fast swipe right → workspaces
+            snapToChats = false;
+          } else {
+            // Snap to whichever tab is closer
+            snapToChats = currentX < -screenWidth / 2;
+          }
+
+          const target = snapToChats ? -screenWidth : 0;
+          tabTranslateX.value = withSpring(target, { damping: 100, stiffness: 800 });
+
+          const newTab = snapToChats ? 'chats' : 'workspaces';
+          if (newTab !== activeTab) {
+            setActiveTab(newTab);
           }
         },
       }),

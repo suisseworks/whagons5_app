@@ -49,19 +49,12 @@ interface AttachmentItem {
   status: 'uploading' | 'done' | 'error';
 }
 
-// Fallback colors only used when backend priority has no color
-const PRIORITY_FALLBACK_COLORS: Record<string, string> = {
-  urgent: '#EF4444',
-  high: '#F59E0B',
-  normal: '#3B82F6',
-  low: '#9CA3AF',
-};
-
-const PRIORITY_MATCHERS: { key: string; label: string; match: (name: string) => boolean }[] = [
-  { key: 'urgent', label: 'Urgent', match: (n) => n.includes('urgent') || n.includes('urgente') },
-  { key: 'high', label: 'High', match: (n) => n.includes('high') || n.includes('alta') },
-  { key: 'normal', label: 'Normal', match: (n) => n.includes('medium') || n.includes('normal') || n.includes('media') },
-  { key: 'low', label: 'Low', match: (n) => n.includes('low') || n.includes('baja') },
+// Priority config with colors matching spec
+const PRIORITY_OPTIONS = [
+  { key: 'urgent', label: 'Urgent', color: '#EF4444', icon: 'flag' as const },
+  { key: 'high', label: 'High', color: '#F59E0B', icon: 'flag' as const },
+  { key: 'normal', label: 'Normal', color: '#3B82F6', icon: 'flag' as const },
+  { key: 'low', label: 'Low', color: '#9CA3AF', icon: 'flag' as const },
 ];
 
 const MAX_ATTACHMENTS = 10;
@@ -77,9 +70,6 @@ interface SelectorModalProps {
   selectedId?: string | null;
   onSelect: (item: { _id: string; name: string; color?: string | null }) => void;
   onClose: () => void;
-  searchable?: boolean;
-  multiSelect?: boolean;
-  selectedIds?: Set<string>;
   colors: any;
   isDarkMode: boolean;
   primaryColor: string;
@@ -87,17 +77,8 @@ interface SelectorModalProps {
 
 const SelectorModal: React.FC<SelectorModalProps> = ({
   visible, title, items, selectedId, onSelect, onClose,
-  searchable = false, multiSelect = false, selectedIds,
   colors, isDarkMode, primaryColor,
 }) => {
-  const [search, setSearch] = useState('');
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return items;
-    const q = search.toLowerCase();
-    return items.filter((i) => i.name.toLowerCase().includes(q));
-  }, [items, search]);
-
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <TouchableOpacity style={modalStyles.overlay} activeOpacity={1} onPress={onClose}>
@@ -111,29 +92,13 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
           <View style={modalStyles.handle} />
           <Text style={[modalStyles.title, { color: colors.text }]}>{title}</Text>
 
-          {searchable && (
-            <TextInput
-              style={[
-                modalStyles.searchInput,
-                { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F7F4EF', color: colors.text, borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7' },
-              ]}
-              placeholder="Search..."
-              placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
-              value={search}
-              onChangeText={setSearch}
-              autoFocus
-            />
-          )}
-
           <FlatList
-            data={filtered}
+            data={items}
             keyExtractor={(item) => String(item._id)}
             style={{ maxHeight: 350 }}
             keyboardShouldPersistTaps="handled"
             renderItem={({ item }) => {
-              const isSelected = multiSelect
-                ? selectedIds?.has(item._id)
-                : item._id === selectedId;
+              const isSelected = item._id === selectedId;
               return (
                 <TouchableOpacity
                   style={[
@@ -193,7 +158,7 @@ export const CreateTaskScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { createTask, selectedWorkspace, workspaceObjects, statuses } = useTasks();
-  const { data, userTeams } = useData();
+  const { data } = useData();
   const { user } = useAuth();
   const { tenantId } = useTenant();
   const { pickImages, takePhoto, pickDocuments, uploadFile } = useConvexUpload();
@@ -209,18 +174,6 @@ export const CreateTaskScreen: React.FC = () => {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Template state
-  const [selectedTemplate, setSelectedTemplate] = useState<{ _id: string; name: string } | null>(null);
-  const [templateModalVisible, setTemplateModalVisible] = useState(false);
-
-  // Assignee, spot, tag state
-  const [selectedAssignees, setSelectedAssignees] = useState<SelectedEntity[]>([]);
-  const [selectedSpot, setSelectedSpot] = useState<SelectedEntity | null>(null);
-  const [selectedTags, setSelectedTags] = useState<SelectedEntity[]>([]);
-  const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
-  const [spotModalVisible, setSpotModalVisible] = useState(false);
-  const [tagModalVisible, setTagModalVisible] = useState(false);
-
   // GPS capture
   const [capturedLocation, setCapturedLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'done' | 'off' | 'denied'>('idle');
@@ -230,12 +183,11 @@ export const CreateTaskScreen: React.FC = () => {
     selectedWorkspace === 'Everything'
   );
 
-  // Auto-focus title on mount (only when no templates)
+  // Auto-focus title on mount
   useEffect(() => {
-    if (hasTemplates) return;
     const timer = setTimeout(() => titleInputRef.current?.focus(), 400);
     return () => clearTimeout(timer);
-  }, [hasTemplates]);
+  }, []);
 
   // Capture GPS on mount (if setting is enabled)
   useEffect(() => {
@@ -318,15 +270,15 @@ export const CreateTaskScreen: React.FC = () => {
   // User team IDs for reporting-team checks
   // ---------------------------------------------------------------------------
   const userTeamIds = useMemo(() => {
-    if (!user?.id || !userTeams) return [];
-    return (userTeams as any[])
+    if (!user?.id) return [];
+    return (data.userTeams as any[] ?? [])
       .filter((ut: any) => {
         const utUserId = ut.user_id ?? ut.userId;
         return utUserId != null && String(utUserId) === String(user.id);
       })
       .map((ut: any) => String(ut.team_id ?? ut.teamId))
       .filter(Boolean);
-  }, [user, userTeams]);
+  }, [user, data.userTeams]);
 
   // ---------------------------------------------------------------------------
   // Resolve categories & initial status
@@ -353,21 +305,6 @@ export const CreateTaskScreen: React.FC = () => {
     return new Set(workspaceCategories.map((c: any) => c._id));
   }, [workspaceCategories]);
 
-  // Templates for the current workspace's category
-  const categoryTemplates = useMemo(() => {
-    if (workspaceCategoryIds.size === 0) return [];
-    return data.templates.filter((t: any) =>
-      t.categoryId && workspaceCategoryIds.has(t.categoryId) && !t.deletedAt && t.enabled !== false
-    );
-  }, [data.templates, workspaceCategoryIds]);
-
-  const hasTemplates = categoryTemplates.length > 0;
-
-  // Reset selected template when workspace/category changes
-  useEffect(() => {
-    setSelectedTemplate(null);
-  }, [workspaceConvexId]);
-
   const initialStatusConvexId = useMemo(() => {
     if (workspaceCategoryIds.size > 0) {
       const s = data.statuses.find((s: any) => s.initial && workspaceCategoryIds.has(s.categoryId));
@@ -378,24 +315,18 @@ export const CreateTaskScreen: React.FC = () => {
   }, [data.statuses, workspaceCategoryIds]);
 
   // ---------------------------------------------------------------------------
-  // Build priority options from backend data (using real colors)
+  // Match priority pill to backend priority entity
   // ---------------------------------------------------------------------------
-  const priorityOptions = useMemo(() => {
-    return PRIORITY_MATCHERS.map((matcher) => {
-      const backendPriority = data.priorities.find((p: any) => matcher.match(p.name.toLowerCase()));
-      return {
-        key: matcher.key,
-        label: backendPriority?.name ?? matcher.label,
-        color: backendPriority?.color ?? PRIORITY_FALLBACK_COLORS[matcher.key],
-      };
-    });
-  }, [data.priorities]);
-
   const matchedPriorityId = useMemo(() => {
     const key = selectedPriorityKey.toLowerCase();
-    const matcher = PRIORITY_MATCHERS.find((m) => m.key === key);
-    if (!matcher) return undefined;
-    const match = data.priorities.find((p: any) => matcher.match(p.name.toLowerCase()));
+    const match = data.priorities.find((p: any) => {
+      const name = p.name.toLowerCase();
+      if (key === 'urgent') return name.includes('urgent') || name.includes('urgente');
+      if (key === 'high') return name.includes('high') || name.includes('alta');
+      if (key === 'low') return name.includes('low') || name.includes('baja');
+      // normal = medium or normal
+      return name.includes('medium') || name.includes('normal') || name.includes('media');
+    });
     return match ? (match as any)._id : undefined;
   }, [data.priorities, selectedPriorityKey]);
 
@@ -407,46 +338,12 @@ export const CreateTaskScreen: React.FC = () => {
     }));
   }, [data.workspaces]);
 
-  const userItems = useMemo(() => {
-    return data.users.map((u: any) => ({ _id: u._id, name: u.name }));
-  }, [data.users]);
-
-  const spotItems = useMemo(() => {
-    return data.spots.map((s: any) => ({ _id: s._id, name: s.name }));
-  }, [data.spots]);
-
-  const tagItems = useMemo(() => {
-    return data.tags.map((t: any) => ({ _id: t._id, name: t.name, color: t.color ?? null }));
-  }, [data.tags]);
-
-  const selectedAssigneeIds = useMemo(() => new Set(selectedAssignees.map(a => a._id)), [selectedAssignees]);
-  const selectedTagIds = useMemo(() => new Set(selectedTags.map(t => t._id)), [selectedTags]);
-
   // ---------------------------------------------------------------------------
   // Workspace selection
   // ---------------------------------------------------------------------------
   const handleWorkspaceSelect = useCallback((ws: { _id: string; name: string }) => {
     setChosenWorkspaceId(ws._id);
     setWorkspaceModalVisible(false);
-  }, []);
-
-  // ---------------------------------------------------------------------------
-  // Toggle helpers for multi-select
-  // ---------------------------------------------------------------------------
-  const handleToggleAssignee = useCallback((item: { _id: string; name: string }) => {
-    setSelectedAssignees((prev) => {
-      const exists = prev.find((a) => a._id === item._id);
-      if (exists) return prev.filter((a) => a._id !== item._id);
-      return [...prev, { _id: item._id, name: item.name }];
-    });
-  }, []);
-
-  const handleToggleTag = useCallback((item: { _id: string; name: string; color?: string | null }) => {
-    setSelectedTags((prev) => {
-      const exists = prev.find((t) => t._id === item._id);
-      if (exists) return prev.filter((t) => t._id !== item._id);
-      return [...prev, { _id: item._id, name: item.name, color: item.color }];
-    });
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -560,13 +457,13 @@ export const CreateTaskScreen: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Create task
   // ---------------------------------------------------------------------------
-  const canCreate = hasTemplates ? !!selectedTemplate : taskName.trim().length > 0;
+  const canCreate = taskName.trim().length > 0;
   const hasUploadingFiles = attachments.some(a => a.status === 'uploading');
 
   const handleCreateTask = useCallback(async () => {
-    const finalName = hasTemplates ? (selectedTemplate?.name ?? '') : taskName.trim();
+    const finalName = taskName.trim();
     if (!finalName) {
-      Alert.alert('Error', hasTemplates ? 'Please select a template' : 'Please enter a task name');
+      Alert.alert('Error', 'Please enter a task name');
       return;
     }
     if (!workspaceConvexId) {
@@ -580,6 +477,7 @@ export const CreateTaskScreen: React.FC = () => {
 
     setIsSubmitting(true);
     try {
+      // Gather successful attachment storageIds
       const uploadedAttachments = attachments
         .filter(a => a.status === 'done' && a.storageId)
         .map(a => ({
@@ -594,11 +492,8 @@ export const CreateTaskScreen: React.FC = () => {
         description: description.trim() || undefined,
         workspaceConvexId,
         categoryConvexId: workspaceCategories.length === 1 ? (workspaceCategories[0] as any)._id : currentWorkspace?.categoryId ?? undefined,
-        templateConvexId: selectedTemplate?._id,
         statusConvexId: initialStatusConvexId ?? undefined,
         priorityConvexId: matchedPriorityId,
-        spotConvexId: selectedSpot?._id,
-        userConvexIds: selectedAssignees.length > 0 ? selectedAssignees.map(a => a._id) : undefined,
         attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         latitude: capturedLocation?.latitude,
         longitude: capturedLocation?.longitude,
@@ -616,7 +511,6 @@ export const CreateTaskScreen: React.FC = () => {
     taskName, description, workspaceConvexId, createTask, navigation,
     initialStatusConvexId, matchedPriorityId, attachments, hasUploadingFiles,
     workspaceCategories, currentWorkspace, capturedLocation,
-    hasTemplates, selectedTemplate, selectedSpot, selectedAssignees,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -686,50 +580,16 @@ export const CreateTaskScreen: React.FC = () => {
             <MaterialIcons name="keyboard-arrow-down" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
 
-          {/* Task Title or Template Selector */}
-          {hasTemplates ? (
-            <TouchableOpacity
-              style={[
-                styles.templateSelector,
-                {
-                  borderColor: selectedTemplate ? primaryColor : borderColor,
-                  backgroundColor: selectedTemplate
-                    ? `${primaryColor}08`
-                    : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-                },
-              ]}
-              onPress={() => setTemplateModalVisible(true)}
-              activeOpacity={0.7}
-            >
-              <MaterialIcons
-                name="description"
-                size={20}
-                color={selectedTemplate ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
-              />
-              <Text
-                style={[
-                  styles.templateSelectorText,
-                  selectedTemplate
-                    ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                    : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-                ]}
-                numberOfLines={1}
-              >
-                {selectedTemplate?.name ?? 'Select template'}
-              </Text>
-              <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-            </TouchableOpacity>
-          ) : (
-            <TextInput
-              ref={titleInputRef}
-              style={[styles.titleInput, { color: colors.text }]}
-              placeholder="Task name"
-              placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
-              value={taskName}
-              onChangeText={setTaskName}
-              returnKeyType="done"
-            />
-          )}
+          {/* Task Title */}
+          <TextInput
+            ref={titleInputRef}
+            style={[styles.titleInput, { color: colors.text }]}
+            placeholder="Task name"
+            placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
+            value={taskName}
+            onChangeText={setTaskName}
+            returnKeyType="done"
+          />
 
           {/* Description (collapsed by default) */}
           {showDescription ? (
@@ -761,7 +621,7 @@ export const CreateTaskScreen: React.FC = () => {
           {/* Priority Selector */}
           <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>PRIORITY</Text>
           <View style={styles.priorityRow}>
-            {priorityOptions.map((opt) => {
+            {PRIORITY_OPTIONS.map((opt) => {
               const isActive = selectedPriorityKey === opt.key;
               return (
                 <TouchableOpacity
@@ -776,11 +636,10 @@ export const CreateTaskScreen: React.FC = () => {
                   onPress={() => setSelectedPriorityKey(opt.key)}
                   activeOpacity={0.7}
                 >
-                  <View
-                    style={[
-                      styles.priorityDot,
-                      { backgroundColor: opt.color },
-                    ]}
+                  <MaterialIcons
+                    name="flag"
+                    size={14}
+                    color={isActive ? opt.color : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
                   />
                   <Text
                     style={[
@@ -797,141 +656,6 @@ export const CreateTaskScreen: React.FC = () => {
               );
             })}
           </View>
-
-          {/* Assign To */}
-          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>ASSIGN TO</Text>
-          <TouchableOpacity
-            style={[
-              styles.fieldSelector,
-              {
-                borderColor: selectedAssignees.length > 0 ? primaryColor : borderColor,
-                backgroundColor: selectedAssignees.length > 0
-                  ? `${primaryColor}08`
-                  : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-              },
-            ]}
-            onPress={() => setAssigneeModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <MaterialIcons
-              name="person-add"
-              size={18}
-              color={selectedAssignees.length > 0 ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
-            />
-            <Text
-              style={[
-                styles.fieldSelectorText,
-                selectedAssignees.length > 0
-                  ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                  : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-              ]}
-              numberOfLines={1}
-            >
-              {selectedAssignees.length > 0 ? selectedAssignees.map(a => a.name).join(', ') : 'Select assignees'}
-            </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-          </TouchableOpacity>
-          {selectedAssignees.length > 0 && (
-            <View style={styles.chipsRow}>
-              {selectedAssignees.map((a) => (
-                <View key={a._id} style={[styles.chip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3EEE4' }]}>
-                  <Text style={[styles.chipText, { color: colors.text }]}>{a.name}</Text>
-                  <TouchableOpacity onPress={() => setSelectedAssignees((prev) => prev.filter((x) => x._id !== a._id))} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                    <MaterialIcons name="close" size={14} color={isDarkMode ? 'rgba(255,255,255,0.4)' : '#A8A299'} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-
-          {/* Spot / Location */}
-          {spotItems.length > 0 && (
-            <>
-              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>LOCATION</Text>
-              <TouchableOpacity
-                style={[
-                  styles.fieldSelector,
-                  {
-                    borderColor: selectedSpot ? primaryColor : borderColor,
-                    backgroundColor: selectedSpot
-                      ? `${primaryColor}08`
-                      : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-                  },
-                ]}
-                onPress={() => setSpotModalVisible(true)}
-                activeOpacity={0.7}
-              >
-                <MaterialIcons
-                  name="place"
-                  size={18}
-                  color={selectedSpot ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
-                />
-                <Text
-                  style={[
-                    styles.fieldSelectorText,
-                    selectedSpot
-                      ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                      : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {selectedSpot?.name ?? 'Select location'}
-                </Text>
-                <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-              </TouchableOpacity>
-            </>
-          )}
-
-          {/* Tags */}
-          {tagItems.length > 0 && (
-            <>
-              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>TAGS</Text>
-              <TouchableOpacity
-                style={[
-                  styles.fieldSelector,
-                  {
-                    borderColor: selectedTags.length > 0 ? primaryColor : borderColor,
-                    backgroundColor: selectedTags.length > 0
-                      ? `${primaryColor}08`
-                      : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-                  },
-                ]}
-                onPress={() => setTagModalVisible(true)}
-                activeOpacity={0.7}
-              >
-                <MaterialIcons
-                  name="label"
-                  size={18}
-                  color={selectedTags.length > 0 ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
-                />
-                <Text
-                  style={[
-                    styles.fieldSelectorText,
-                    selectedTags.length > 0
-                      ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                      : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {selectedTags.length > 0 ? selectedTags.map(t => t.name).join(', ') : 'Select tags'}
-                </Text>
-                <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-              </TouchableOpacity>
-              {selectedTags.length > 0 && (
-                <View style={styles.chipsRow}>
-                  {selectedTags.map((tag) => (
-                    <View key={tag._id} style={[styles.chip, { backgroundColor: tag.color ? `${tag.color}20` : (isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3EEE4') }]}>
-                      {tag.color && <View style={[styles.tagDot, { backgroundColor: tag.color }]} />}
-                      <Text style={[styles.chipText, { color: colors.text }]}>{tag.name}</Text>
-                      <TouchableOpacity onPress={() => setSelectedTags((prev) => prev.filter((x) => x._id !== tag._id))} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                        <MaterialIcons name="close" size={14} color={isDarkMode ? 'rgba(255,255,255,0.4)' : '#A8A299'} />
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </>
-          )}
 
           {/* Attachments */}
           <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>ATTACHMENTS</Text>
@@ -1058,67 +782,6 @@ export const CreateTaskScreen: React.FC = () => {
         isDarkMode={isDarkMode}
         primaryColor={primaryColor}
       />
-
-      {/* Template Modal */}
-      <SelectorModal
-        visible={templateModalVisible}
-        title="Select Template"
-        items={categoryTemplates.map((t: any) => ({ _id: t._id, name: t.name, color: null }))}
-        selectedId={selectedTemplate?._id}
-        onSelect={(item) => {
-          setSelectedTemplate(item);
-          setTemplateModalVisible(false);
-        }}
-        onClose={() => setTemplateModalVisible(false)}
-        searchable
-        colors={colors}
-        isDarkMode={isDarkMode}
-        primaryColor={primaryColor}
-      />
-
-      {/* Assignee Modal (multi-select) */}
-      <SelectorModal
-        visible={assigneeModalVisible}
-        title="Select Assignees"
-        items={userItems}
-        onSelect={handleToggleAssignee}
-        onClose={() => setAssigneeModalVisible(false)}
-        searchable
-        multiSelect
-        selectedIds={selectedAssigneeIds}
-        colors={colors}
-        isDarkMode={isDarkMode}
-        primaryColor={primaryColor}
-      />
-
-      {/* Spot Modal */}
-      <SelectorModal
-        visible={spotModalVisible}
-        title="Select Location"
-        items={spotItems}
-        selectedId={selectedSpot?._id}
-        onSelect={(item) => { setSelectedSpot(item); setSpotModalVisible(false); }}
-        onClose={() => setSpotModalVisible(false)}
-        searchable
-        colors={colors}
-        isDarkMode={isDarkMode}
-        primaryColor={primaryColor}
-      />
-
-      {/* Tag Modal (multi-select) */}
-      <SelectorModal
-        visible={tagModalVisible}
-        title="Select Tags"
-        items={tagItems}
-        onSelect={handleToggleTag}
-        onClose={() => setTagModalVisible(false)}
-        searchable
-        multiSelect
-        selectedIds={selectedTagIds}
-        colors={colors}
-        isDarkMode={isDarkMode}
-        primaryColor={primaryColor}
-      />
     </SafeAreaView>
   );
 };
@@ -1195,56 +858,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginBottom: 8,
   },
-  templateSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginBottom: 8,
-    gap: 10,
-  },
-  templateSelectorText: {
-    flex: 1,
-    fontSize: fontSizes.md,
-  },
-  fieldSelector: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    gap: 10,
-  },
-  fieldSelectorText: {
-    flex: 1,
-    fontSize: fontSizes.sm,
-  },
-  chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: 8,
-    gap: 6,
-  },
-  chip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 16,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    gap: 4,
-  },
-  chipText: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
-  },
-  tagDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
   addDescriptionButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1286,11 +899,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     gap: 4,
-  },
-  priorityDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
   },
   priorityPillText: {
     fontSize: fontSizes.xs,
@@ -1381,15 +989,6 @@ const modalStyles = StyleSheet.create({
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
     marginBottom: 12,
-  },
-  searchInput: {
-    borderRadius: radius.md,
-    borderWidth: 1,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: fontSizes.md,
-    fontFamily: fontFamilies.bodyMedium,
-    marginBottom: 8,
   },
   item: {
     flexDirection: 'row',
