@@ -519,6 +519,7 @@ export const TaskDetailScreen: React.FC = () => {
     if (formSaveTimerRef.current) clearTimeout(formSaveTimerRef.current);
     setFormSaveStatus('saving');
     formSaveTimerRef.current = setTimeout(() => {
+      formSaveTimerRef.current = null;
       doFormSave(formLatestValuesRef.current);
     }, 800);
   }, [doFormSave]);
