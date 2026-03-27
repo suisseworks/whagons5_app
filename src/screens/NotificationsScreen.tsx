@@ -3,25 +3,53 @@ import {
   View,
   Text,
   StyleSheet,
-  FlatList,
+  SectionList,
   TouchableOpacity,
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQuery, useMutation, useConvexAuth } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
-import { useNotifications, AppNotification } from '../context/NotificationContext';
+import { useNotifications, AppNotification, getNotificationMeta } from '../context/NotificationContext';
+import { useTasks } from '../context/TaskContext';
 import { useTenant } from '../hooks/useTenant';
 import { formatTimestamp } from '../utils/helpers';
-import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+import { RootStackParamList } from '../models/types';
+import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function getDateGroup(date: Date): string {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfYesterday = new Date(startOfToday.getTime() - 86400000);
+  const startOfWeek = new Date(startOfToday.getTime() - startOfToday.getDay() * 86400000);
+
+  if (date >= startOfToday) return 'Today';
+  if (date >= startOfYesterday) return 'Yesterday';
+  if (date >= startOfWeek) return 'This Week';
+  return 'Earlier';
+}
+
+const DATE_GROUP_ORDER = ['Today', 'Yesterday', 'This Week', 'Earlier'];
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+type NavProp = NativeStackNavigationProp<RootStackParamList>;
 
 export const NotificationsScreen: React.FC = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavProp>();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { tenantId } = useTenant();
+  const { tasks } = useTasks();
   const { isAuthenticated } = useConvexAuth();
   const {
     notifications: localNotifications,
@@ -43,17 +71,20 @@ export const NotificationsScreen: React.FC = () => {
 
   // Merge: Convex notifications take priority, local ones as fallback
   const notifications: AppNotification[] = useMemo(() => {
-    const fromConvex: AppNotification[] = (convexNotifications ?? []).map((n: any) => ({
-      id: n._id,
-      title: n.title ?? '',
-      message: n.message ?? '',
-      timestamp: new Date(n._creationTime),
-      isRead: !!n.readAt,
-      icon: 'notifications',
-      color: '#607D8B',
-      type: n.type,
-      data: n.data,
-    }));
+    const fromConvex: AppNotification[] = (convexNotifications ?? []).map((n: any) => {
+      const meta = getNotificationMeta(n.type);
+      return {
+        id: n._id,
+        title: n.title ?? '',
+        message: n.message ?? '',
+        timestamp: new Date(n._creationTime),
+        isRead: !!n.readAt,
+        icon: meta.icon,
+        color: meta.color,
+        type: n.type,
+        data: n.data,
+      };
+    });
     if (fromConvex.length > 0) return fromConvex;
     return localNotifications;
   }, [convexNotifications, localNotifications]);
@@ -62,6 +93,23 @@ export const NotificationsScreen: React.FC = () => {
     () => notifications.filter(n => !n.isRead).length,
     [notifications]
   );
+
+  // Group notifications by date
+  const sections = useMemo(() => {
+    const groups: Record<string, AppNotification[]> = {};
+
+    // Sort newest first, then group by date
+    const sorted = [...notifications].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    for (const n of sorted) {
+      const group = getDateGroup(n.timestamp);
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(n);
+    }
+
+    return DATE_GROUP_ORDER
+      .filter(key => groups[key]?.length > 0)
+      .map(key => ({ title: key, data: groups[key] }));
+  }, [notifications]);
 
   const markAsRead = (id: string) => {
     localMarkAsRead(id);
@@ -90,13 +138,45 @@ export const NotificationsScreen: React.FC = () => {
   const handleNotificationPress = (notification: AppNotification) => {
     markAsRead(notification.id);
 
-    // Navigate based on notification type
-    const type = notification.type || notification.data?.type;
-    if (type === 'task' || type === 'assignment' || type === 'sla' || type === 'approval') {
-      // Could navigate to task detail if taskId is in data
+    const data = notification.data ?? {};
+    const type = notification.type || data.type;
+
+    // Task-related notification types (backend sends "task_updated", "task_shared", etc.)
+    const isTaskType = [
+      'task', 'task_updated', 'task_shared', 'task_completed',
+      'assignment', 'sla', 'approval', 'done',
+    ].includes(type ?? '');
+
+    if (isTaskType) {
+      // Backend uses snake_case (task_id), Convex uses camelCase (taskId)
+      const taskId = data.taskId || data.task_id;
+      if (taskId) {
+        const task = tasks.find(t => t.convexId === taskId || String(t.id) === String(taskId));
+        if (task) {
+          navigation.navigate('TaskDetail', { task });
+          return;
+        }
+      }
+
+      // Fallback: try to find task by name from the notification message
+      // Messages often end with "on: Task Name" or "created: Task Name"
+      const msgMatch = notification.message?.match(/(?:on:|created:)\s*(.+)$/i);
+      if (msgMatch) {
+        const taskName = msgMatch[1].trim();
+        const task = tasks.find(t => t.title === taskName);
+        if (task) {
+          navigation.navigate('TaskDetail', { task });
+          return;
+        }
+      }
+
       Alert.alert(notification.title, notification.message);
-    } else if (type === 'message' || type === 'chat') {
-      // Could navigate to the relevant chat
+    } else if (type === 'message' || type === 'chat' || type === 'comment') {
+      const conversationId = data.chatId || data.chat_id;
+      if (conversationId) {
+        navigation.navigate('Main', { tab: 1, conversationId });
+        return;
+      }
       Alert.alert(notification.title, notification.message);
     } else {
       Alert.alert(notification.title, notification.message);
@@ -123,6 +203,18 @@ export const NotificationsScreen: React.FC = () => {
     );
   };
 
+  // ---------------------------------------------------------------------------
+  // Renderers
+  // ---------------------------------------------------------------------------
+
+  const renderSectionHeader = ({ section }: { section: { title: string } }) => (
+    <View style={styles.sectionHeaderContainer}>
+      <Text style={[styles.sectionHeaderText, { color: colors.textSecondary }]}>
+        {section.title}
+      </Text>
+    </View>
+  );
+
   const renderNotification = ({ item }: { item: AppNotification }) => (
     <TouchableOpacity
       style={[
@@ -132,14 +224,16 @@ export const NotificationsScreen: React.FC = () => {
           borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7',
         },
         !item.isRead && {
-          backgroundColor: isDarkMode ? 'rgba(63, 143, 140, 0.18)' : '#EAF1F1',
-          borderColor: isDarkMode ? 'rgba(63, 143, 140, 0.3)' : '#D7E7E4',
+          backgroundColor: isDarkMode ? 'rgba(63, 143, 140, 0.10)' : '#F5F9F9',
+          borderLeftColor: item.color,
+          borderLeftWidth: 3,
         },
       ]}
       onPress={() => handleNotificationPress(item)}
+      activeOpacity={0.7}
     >
-      <View style={[styles.iconContainer, { backgroundColor: `${item.color}1A` }]}>
-        <MaterialIcons name={item.icon as any} size={24} color={item.color} />
+      <View style={[styles.iconContainer, { backgroundColor: `${item.color}15` }]}>
+        <MaterialIcons name={item.icon as any} size={22} color={item.color} />
       </View>
 
       <View style={styles.notificationContent}>
@@ -154,9 +248,9 @@ export const NotificationsScreen: React.FC = () => {
           >
             {item.title}
           </Text>
-          {!item.isRead && (
-            <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
-          )}
+          <Text style={[styles.notificationTime, { color: colors.textSecondary }]}>
+            {formatTimestamp(item.timestamp)}
+          </Text>
         </View>
         <Text
           style={[styles.notificationMessage, { color: colors.textSecondary }]}
@@ -164,30 +258,42 @@ export const NotificationsScreen: React.FC = () => {
         >
           {item.message}
         </Text>
-        <Text style={[styles.notificationTime, { color: colors.textSecondary }]}>
-          {formatTimestamp(item.timestamp)}
-        </Text>
       </View>
+
+      {!item.isRead && (
+        <View style={[styles.unreadDot, { backgroundColor: primaryColor }]} />
+      )}
     </TouchableOpacity>
   );
 
   const renderEmpty = () => (
     <View style={styles.emptyContainer}>
-      <MaterialIcons
-        name={hasPermission ? 'notifications-none' : 'notifications-off'}
-        size={64}
-        color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#BDBDBD'}
-      />
+      <View
+        style={[
+          styles.emptyIconCircle,
+          { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F5F5F5' },
+        ]}
+      >
+        <MaterialIcons
+          name={hasPermission ? 'notifications-none' : 'notifications-off'}
+          size={48}
+          color={isDarkMode ? 'rgba(255,255,255,0.2)' : '#BDBDBD'}
+        />
+      </View>
       <Text style={[styles.emptyTitle, { color: colors.text }]}>
-        {hasPermission ? 'No notifications' : 'Notifications disabled'}
+        {hasPermission ? 'All caught up!' : 'Notifications disabled'}
       </Text>
       <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
         {hasPermission
-          ? "You're all caught up!"
-          : 'Enable notifications in Settings to receive alerts'}
+          ? 'When something needs your attention, it will show up here.'
+          : 'Enable notifications in Settings to receive alerts.'}
       </Text>
     </View>
   );
+
+  // ---------------------------------------------------------------------------
+  // Layout
+  // ---------------------------------------------------------------------------
 
   return (
     <SafeAreaView
@@ -195,49 +301,57 @@ export const NotificationsScreen: React.FC = () => {
       edges={['top', 'bottom']}
     >
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: primaryColor }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <MaterialIcons name="arrow-back" size={24} color="#FFFFFF" />
+      <View style={[styles.header, { backgroundColor: colors.background }]}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Notifications</Text>
-        {notifications.length > 0 ? (
-          <TouchableOpacity onPress={handleClearAll}>
-            <MaterialIcons name="delete-outline" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 24 }} />
-        )}
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+        <View style={styles.headerActions}>
+          {unreadCount > 0 && (
+            <TouchableOpacity
+              onPress={markAllAsRead}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <MaterialIcons name="done-all" size={22} color={primaryColor} />
+            </TouchableOpacity>
+          )}
+          {notifications.length > 0 && (
+            <TouchableOpacity
+              onPress={handleClearAll}
+              style={{ marginLeft: 16 }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <MaterialIcons name="delete-outline" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
-      {/* Unread badge */}
-      {unreadCount > 0 && (
-        <TouchableOpacity
-          style={[styles.unreadBanner, { backgroundColor: `${primaryColor}15` }]}
-          onPress={markAllAsRead}
-        >
-          <Text style={[styles.unreadBannerText, { color: primaryColor }]}>
-            {unreadCount} unread notification{unreadCount !== 1 ? 's' : ''}
-          </Text>
-          <Text style={[styles.unreadBannerAction, { color: primaryColor }]}>
-            Mark all read
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      <FlatList
-        data={notifications}
+      {/* Notification list */}
+      <SectionList
+        sections={sections}
         renderItem={renderNotification}
+        renderSectionHeader={renderSectionHeader}
         keyExtractor={item => item.id}
         contentContainerStyle={[
           styles.listContent,
-          notifications.length === 0 && { flex: 1 },
+          sections.length === 0 && { flex: 1 },
         ]}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+        SectionSeparatorComponent={() => <View style={{ height: 4 }} />}
         ListEmptyComponent={renderEmpty}
+        stickySectionHeadersEnabled={false}
       />
     </SafeAreaView>
   );
 };
+
+// ---------------------------------------------------------------------------
+// Styles
+// ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
   container: {
@@ -247,56 +361,57 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
   },
   headerTitle: {
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
-    color: '#FFFFFF',
   },
-  unreadBanner: {
+  headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
   },
-  unreadBannerText: {
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
+  sectionHeaderContainer: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xs,
   },
-  unreadBannerAction: {
-    fontSize: fontSizes.sm,
+  sectionHeaderText: {
+    fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodySemibold,
-    textDecorationLine: 'underline',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
   },
   listContent: {
-    padding: 16,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
     flexGrow: 1,
   },
   notificationCard: {
     flexDirection: 'row',
+    alignItems: 'center',
     borderRadius: radius.lg,
-    padding: 16,
+    padding: spacing.md,
     borderWidth: 1,
     ...shadows.subtle,
   },
   iconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
   notificationContent: {
     flex: 1,
-    marginLeft: 16,
+    marginLeft: spacing.sm + 2,
   },
   notificationHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   notificationTitle: {
     flex: 1,
@@ -306,22 +421,22 @@ const styles = StyleSheet.create({
   notificationTitleUnread: {
     fontFamily: fontFamilies.bodyBold,
   },
+  notificationMessage: {
+    marginTop: 3,
+    fontSize: fontSizes.xs + 1,
+    lineHeight: 18,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  notificationTime: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
+  },
   unreadDot: {
     width: 8,
     height: 8,
     borderRadius: 4,
     marginLeft: 8,
-  },
-  notificationMessage: {
-    marginTop: 4,
-    fontSize: fontSizes.sm,
-    lineHeight: 20,
-    fontFamily: fontFamilies.bodyRegular,
-  },
-  notificationTime: {
-    marginTop: 6,
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodyMedium,
+    alignSelf: 'center',
   },
   emptyContainer: {
     flex: 1,
@@ -329,8 +444,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 64,
   },
+  emptyIconCircle: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
   emptyTitle: {
-    marginTop: 16,
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
   },

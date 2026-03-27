@@ -45,9 +45,6 @@ export const ActiveTaskBanner: React.FC<ActiveTaskBannerProps> = ({
           <Text style={[styles.buttonText, { color: primaryColor }]}>{doneLabel}</Text>
         </TouchableOpacity>
       )}
-      <TouchableOpacity onPress={onClear} style={styles.closeButton}>
-        <MaterialIcons name="close" size={22} color={colors.textSecondary} />
-      </TouchableOpacity>
     </View>
   );
 };

@@ -719,17 +719,13 @@ export const TaskDetailScreen: React.FC = () => {
       <View style={styles.badgeRow}>
         {currentStatus !== '' && (() => {
           const isWorking = currentStatusAction?.toUpperCase() === 'WORKING';
-          const parsedIcon = currentStatusIcon ? parseWorkspaceIcon(currentStatusIcon) : null;
           const chipColor = statusColor(currentStatus, currentStatusColor);
           return (
             <TouchableOpacity onPress={() => setStatusPickerVisible(true)} activeOpacity={0.7}>
               <CustomChip
-                label={currentStatus.toUpperCase()}
+                label={currentStatus}
                 color={chipColor}
                 animated={isWorking}
-                icon={parsedIcon ? (
-                  <FaIcon name={parsedIcon.name} size={11} color="#FFFFFF" solid={parsedIcon.solid} brand={parsedIcon.brand} />
-                ) : undefined}
               />
             </TouchableOpacity>
           );

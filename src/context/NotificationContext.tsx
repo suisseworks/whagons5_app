@@ -104,11 +104,17 @@ const STORAGE_KEY_NOTIFICATIONS = 'wh_notifications';
 // ---------------------------------------------------------------------------
 
 /** Map a notification type string to an icon name and color */
-function getNotificationMeta(type?: string): { icon: string; color: string } {
+export function getNotificationMeta(type?: string): { icon: string; color: string } {
   switch (type) {
     case 'task':
+    case 'task_updated':
     case 'assignment':
       return { icon: 'assignment-turned-in', color: '#2196F3' };
+    case 'task_completed':
+    case 'done':
+      return { icon: 'done-all', color: '#009688' };
+    case 'task_shared':
+      return { icon: 'share', color: '#2196F3' };
     case 'sla':
       return { icon: 'warning', color: '#FF9800' };
     case 'approval':
@@ -118,8 +124,6 @@ function getNotificationMeta(type?: string): { icon: string; color: string } {
       return { icon: 'chat', color: '#9C27B0' };
     case 'comment':
       return { icon: 'comment', color: '#9C27B0' };
-    case 'done':
-      return { icon: 'done-all', color: '#009688' };
     default:
       return { icon: 'notifications', color: '#607D8B' };
   }

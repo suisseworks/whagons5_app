@@ -408,9 +408,13 @@ const InlineVideoPlayer = ({ url }: { url: string }) => {
 
 interface ColabScreenProps {
   onChatViewChange?: (isInChat: boolean) => void;
+  /** If set, automatically open this conversation when the screen mounts */
+  initialConversationId?: string | number;
+  /** Called after the initial conversation has been consumed */
+  onConversationConsumed?: () => void;
 }
 
-export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) => {
+export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, initialConversationId, onConversationConsumed }) => {
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { data, isSyncing, refresh } = useData();
@@ -498,6 +502,14 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const [searchQuery, setSearchQuery] = useState('');
   const chatListRef = useRef<FlatList>(null);
 
+  // Handle deep-link from notification tap: open a specific conversation
+  useEffect(() => {
+    if (initialConversationId != null) {
+      setChatView({ type: 'conversation', conversationId: initialConversationId });
+      onConversationConsumed?.();
+    }
+  }, [initialConversationId]);
+
   // Locally-created conversations & participants not yet in sync data
   const [localConversations, setLocalConversations] = useState<SyncedConversation[]>([]);
   const [localParticipants, setLocalParticipants] = useState<SyncedConversationParticipant[]>([]);
@@ -549,13 +561,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   // ---------------------------------------------------------------------------
 
   const userMap = useMemo(() => {
-    const m = new Map<number, SyncedUser>();
-    for (const u of data.users) m.set(Number(u.id), u);
+    const m = new Map<string, SyncedUser>();
+    for (const u of data.users) m.set(String(u.id), u);
     return m;
   }, [data.users]);
 
   const getUser = useCallback(
-    (id: number | string): SyncedUser | undefined => userMap.get(Number(id)),
+    (id: number | string): SyncedUser | undefined => userMap.get(String(id)),
     [userMap],
   );
 
@@ -569,9 +581,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   // Link previews indexed by workspace_chat_id
   const linkPreviewsByWsChatId = useMemo(() => {
-    const map = new Map<number, SyncedLinkPreview[]>();
+    const map = new Map<string, SyncedLinkPreview[]>();
     for (const lp of data.linkPreviews) {
-      const chatId = lp.workspace_chat_id ? Number(lp.workspace_chat_id) : null;
+      const chatId = lp.workspace_chat_id ? String(lp.workspace_chat_id) : null;
       if (!chatId) continue;
       if (!map.has(chatId)) map.set(chatId, []);
       map.get(chatId)!.push(lp);
@@ -583,26 +595,26 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   // Merge synced conversations with locally-created ones (dedupe by id)
   const allConversations = useMemo(() => {
-    const syncedIds = new Set(data.conversations.map((c) => Number(c.id)));
-    const extras = localConversations.filter((c) => !syncedIds.has(Number(c.id)));
+    const syncedIds = new Set(data.conversations.map((c) => String(c.id)));
+    const extras = localConversations.filter((c) => !syncedIds.has(String(c.id)));
     return [...data.conversations, ...extras];
   }, [data.conversations, localConversations]);
 
   // Merge synced + local participants for lookups
   const allParticipants = useMemo(() => {
-    const syncedKeys = new Set(data.conversationParticipants.map((p) => `${p.conversation_id}-${p.user_id}`));
-    const extras = localParticipants.filter((p) => !syncedKeys.has(`${p.conversation_id}-${p.user_id}`));
+    const syncedKeys = new Set(data.conversationParticipants.map((p) => `${String(p.conversation_id)}-${String(p.user_id)}`));
+    const extras = localParticipants.filter((p) => !syncedKeys.has(`${String(p.conversation_id)}-${String(p.user_id)}`));
     return [...data.conversationParticipants, ...extras];
   }, [data.conversationParticipants, localParticipants]);
 
   const myConversations = useMemo(() => {
     const myConvIds = new Set(
       allParticipants
-        .filter((p) => Number(p.user_id) === Number(currentUserId))
-        .map((p) => Number(p.conversation_id)),
+        .filter((p) => String(p.user_id) === String(currentUserId))
+        .map((p) => String(p.conversation_id)),
     );
     return allConversations
-      .filter((c) => myConvIds.has(Number(c.id)))
+      .filter((c) => myConvIds.has(String(c.id)))
       .sort((a, b) => {
         const aTime = utcMs(a.last_message_at) || utcMs(a.created_at);
         const bTime = utcMs(b.last_message_at) || utcMs(b.created_at);
@@ -616,7 +628,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     return myConversations.filter((conv) => {
       if (conv.name && conv.name.toLowerCase().includes(q)) return true;
       const participants = allParticipants.filter(
-        (p) => Number(p.conversation_id) === Number(conv.id),
+        (p) => String(p.conversation_id) === String(conv.id),
       );
       return participants.some((p) => {
         const u = getUser(p.user_id);
@@ -630,36 +642,36 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   const conversationMessages = useMemo(() => {
     if (!activeConversationId) return [];
-    const synced = data.directMessages.filter((m) => Number(m.conversation_id) === activeConversationId);
+    const synced = data.directMessages.filter((m) => String(m.conversation_id) === String(activeConversationId));
     // Merge pending messages that aren't yet in synced data
     const syncedIds = new Set(synced.map((m) => m.uuid));
     const pending = pendingDmMessages.filter(
-      (m) => Number(m.conversation_id) === activeConversationId && !syncedIds.has(m.uuid),
+      (m) => String(m.conversation_id) === String(activeConversationId) && !syncedIds.has(m.uuid),
     );
     // Sort newest-first for inverted FlatList
     return [...synced, ...pending].sort((a, b) => {
       const diff = utcMs(b.created_at) - utcMs(a.created_at);
-      return diff !== 0 ? diff : Number(b.id) - Number(a.id);
+      return diff !== 0 ? diff : String(b.id).localeCompare(String(a.id));
     });
   }, [data.directMessages, activeConversationId, pendingDmMessages]);
 
   const activeConversation = useMemo(() => {
     if (!activeConversationId) return null;
-    return allConversations.find((c) => Number(c.id) === activeConversationId) || null;
+    return allConversations.find((c) => String(c.id) === String(activeConversationId)) || null;
   }, [allConversations, activeConversationId]);
 
   const activeParticipants = useMemo(() => {
     if (!activeConversationId) return [];
     return allParticipants.filter(
-      (p) => Number(p.conversation_id) === activeConversationId,
+      (p) => String(p.conversation_id) === String(activeConversationId),
     );
   }, [allParticipants, activeConversationId]);
 
   // Reactions indexed by message_id
   const reactionsByMessageId = useMemo(() => {
-    const map = new Map<number, SyncedMessageReaction[]>();
+    const map = new Map<string, SyncedMessageReaction[]>();
     for (const r of data.messageReactions) {
-      const msgId = Number(r.message_id);
+      const msgId = String(r.message_id);
       if (!map.has(msgId)) map.set(msgId, []);
       map.get(msgId)!.push(r);
     }
@@ -668,9 +680,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
 
   // Link previews indexed by message_id (for DM messages)
   const linkPreviewsByMessageId = useMemo(() => {
-    const map = new Map<number, SyncedLinkPreview[]>();
+    const map = new Map<string, SyncedLinkPreview[]>();
     for (const lp of data.linkPreviews) {
-      const msgId = lp.message_id ? Number(lp.message_id) : null;
+      const msgId = lp.message_id ? String(lp.message_id) : null;
       if (!msgId) continue;
       if (!map.has(msgId)) map.set(msgId, []);
       map.get(msgId)!.push(lp);
@@ -684,13 +696,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       if (!currentUserId) return 0;
       const myParticipant = data.conversationParticipants.find(
         (p) =>
-          Number(p.conversation_id) === Number(conv.id) &&
-          Number(p.user_id) === Number(currentUserId),
+          String(p.conversation_id) === String(conv.id) &&
+          String(p.user_id) === String(currentUserId),
       );
       const msgs = data.directMessages.filter(
         (m) =>
-          Number(m.conversation_id) === Number(conv.id) &&
-          Number(m.user_id) !== Number(currentUserId),
+          String(m.conversation_id) === String(conv.id) &&
+          String(m.user_id) !== String(currentUserId),
       );
       if (!myParticipant || !myParticipant.last_read_at) {
         return msgs.length;
@@ -710,17 +722,17 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     (conv: SyncedConversation): string => {
       if (conv.name) return conv.name;
       const participants = allParticipants.filter(
-        (p) => Number(p.conversation_id) === Number(conv.id),
+        (p) => String(p.conversation_id) === String(conv.id),
       );
       if (conv.type === 'dm') {
-        const other = participants.find((p) => Number(p.user_id) !== Number(currentUserId));
+        const other = participants.find((p) => String(p.user_id) !== String(currentUserId));
         if (other) {
           const u = getUser(other.user_id);
           return u?.name || 'Unknown';
         }
       } else {
         const otherNames = participants
-          .filter((p) => Number(p.user_id) !== Number(currentUserId))
+          .filter((p) => String(p.user_id) !== String(currentUserId))
           .map((p) => {
             const u = getUser(p.user_id);
             return u ? u.name.split(' ')[0] : 'Unknown';
@@ -735,7 +747,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const getLastMessage = useCallback(
     (conv: SyncedConversation): SyncedDirectMessage | undefined => {
       return data.directMessages
-        .filter((m) => Number(m.conversation_id) === Number(conv.id))
+        .filter((m) => String(m.conversation_id) === String(conv.id))
         .sort((a, b) => utcMs(b.created_at) - utcMs(a.created_at))[0];
     },
     [data.directMessages],
@@ -763,11 +775,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     return () => sub.remove();
   }, [isInChat, handleBack]);
 
-  const openConversation = useCallback((convId: number) => {
+  const openConversation = useCallback((convId: number | string) => {
     setChatView({ type: 'conversation', conversationId: convId });
     setInputText('');
     // Find the Convex _id for this conversation to call markAsRead
-    const conv = data.conversations.find((c) => Number(c.id) === Number(convId));
+    const conv = data.conversations.find((c) => String(c.id) === String(convId));
     const convexId = (conv as any)?._id;
     if (tenantId && convexId) {
       markAsReadMutation({ tenantId, conversationId: convexId }).catch(() => {});
@@ -777,7 +789,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   // Mark as read when messages change while conversation is open
   useEffect(() => {
     if (activeConversationId && conversationMessages.length > 0) {
-      const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
+      const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
       const convexId = (conv as any)?._id;
       if (tenantId && convexId) {
         markAsReadMutation({ tenantId, conversationId: convexId }).catch(() => {});
@@ -799,7 +811,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         ? `![${a.fileName}](convex-file:${a.storageId})`
         : `[${a.fileName}](convex-file:${a.storageId})`;
       try {
-        const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
+        const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
         const convexConvId = (conv as any)?._id;
         if (tenantId && convexConvId) {
           await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
@@ -819,7 +831,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     setIsSending(true);
 
     try {
-      const conv = data.conversations.find((c) => Number(c.id) === Number(activeConversationId));
+      const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
       const convexConvId = (conv as any)?._id;
       if (!tenantId || !convexConvId) throw new Error('Conversation not found');
 
@@ -848,7 +860,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     setIsSending(true);
 
     try {
-      const ws = data.workspaces.find((w) => Number(w.id) === Number(spaceWsId));
+      const ws = data.workspaces.find((w) => String(w.id) === String(spaceWsId));
       const convexWsId = (ws as any)?._id;
       if (!tenantId || !convexWsId) throw new Error('Workspace not found');
 
@@ -936,7 +948,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       try {
         // Check if user already reacted with this emoji
         const existing = data.messageReactions.find(
-          (r) => r.message_id === String(messageId) && r.emoji === emoji && Number(r.user_id) === Number(currentUserId),
+          (r) => r.message_id === String(messageId) && r.emoji === emoji && String(r.user_id) === String(currentUserId),
         );
         if (existing) {
           const convexId = (existing as any)?._id;
@@ -966,13 +978,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       try {
         if (!tenantId) throw new Error('Not authenticated');
         // Find Convex _id for target user
-        const targetUser = data.users.find((u) => Number(u.id) === Number(targetUserId));
+        const targetUser = data.users.find((u) => String(u.id) === String(targetUserId));
         const targetConvexUserId = (targetUser as any)?._id;
         if (!targetConvexUserId) throw new Error('User not found');
 
         const convId = await cvxCreateConversation({ tenantId, type: 'dm' });
         // Add both participants
-        const myConvexUser = data.users.find((u) => Number(u.id) === Number(currentUserId));
+        const myConvexUser = data.users.find((u) => String(u.id) === String(currentUserId));
         if (myConvexUser && (myConvexUser as any)._id) {
           await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: (myConvexUser as any)._id as any });
         }
@@ -1012,7 +1024,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       // Add all participants (including self)
       const allUserIds = [currentUserId, ...selectedGroupUsers];
       for (const uid of allUserIds) {
-        const u = data.users.find((usr) => Number(usr.id) === Number(uid));
+        const u = data.users.find((usr) => String(usr.id) === String(uid));
         const convexUid = (u as any)?._id;
         if (convexUid) {
           await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: convexUid as any });
@@ -1042,7 +1054,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
   const availableUsers = useMemo(() => {
     const q = newChatSearch.toLowerCase();
     return data.users
-      .filter((u) => Number(u.id) !== Number(currentUserId))
+      .filter((u) => String(u.id) !== String(currentUserId))
       .filter((u) => {
         if (!q) return true;
         return (
@@ -1087,7 +1099,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         for (const r of reactions) {
           const existing = groups.get(r.emoji) || { emoji: r.emoji, count: 0, hasOwn: false };
           existing.count++;
-          if (Number(r.user_id) === Number(currentUserId)) existing.hasOwn = true;
+          if (String(r.user_id) === String(currentUserId)) existing.hasOwn = true;
           groups.set(r.emoji, existing);
         }
         reactionGroups.push(...Array.from(groups.values()));
@@ -1525,11 +1537,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
         }
         renderItem={({ item: ws }) => {
           const wsColor = ws.color || primaryColor;
-          const wsMessages = data.workspaceChat.filter((m) => Number(m.workspace_id) === ws.id);
+          const wsMessages = data.workspaceChat.filter((m) => String(m.workspace_id) === String(ws.id));
           const lastMsg = wsMessages.sort((a, b) => utcMs(b.created_at) - utcMs(a.created_at))[0];
           const sender = lastMsg ? getUser(lastMsg.user_id) : null;
           const preview = lastMsg
-            ? `${Number(lastMsg.user_id) === Number(currentUserId) ? 'You' : sender?.name?.split(' ')[0] || 'Someone'}: ${lastMsg.message}`
+            ? `${String(lastMsg.user_id) === String(currentUserId) ? 'You' : sender?.name?.split(' ')[0] || 'Someone'}: ${lastMsg.message}`
             : 'No messages yet';
 
           return (
@@ -1603,14 +1615,14 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     if (!spaceWs) return null;
 
     // Messages for this specific workspace (sorted newest-first for inverted list)
-    const synced = data.workspaceChat.filter((m) => Number(m.workspace_id) === spaceWs.id);
+    const synced = data.workspaceChat.filter((m) => String(m.workspace_id) === String(spaceWs.id));
     const syncedIds = new Set(synced.map((m) => m.uuid));
     const pending = pendingSpaceMessages.filter(
-      (m) => Number(m.workspace_id) === spaceWs.id && !syncedIds.has(m.uuid),
+      (m) => String(m.workspace_id) === String(spaceWs.id) && !syncedIds.has(m.uuid),
     );
     const spaceMessages = [...synced, ...pending].sort((a, b) => {
       const diff = utcMs(b.created_at) - utcMs(a.created_at);
-      return diff !== 0 ? diff : Number(b.id) - Number(a.id);
+      return diff !== 0 ? diff : String(b.id).localeCompare(String(a.id));
     });
 
     const wsColor = spaceWs.color || primaryColor;
@@ -1664,8 +1676,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               </View>
             }
             renderItem={({ item: msg }) => {
-              const isMe = Number(msg.user_id) === Number(currentUserId);
-              const previews = linkPreviewsByWsChatId.get(msg.id) || [];
+              const isMe = String(msg.user_id) === String(currentUserId);
+              const previews = linkPreviewsByWsChatId.get(String(msg.id)) || [];
               return renderMessageBubble({
                 msgId: msg.id,
                 userId: msg.user_id,
@@ -1699,8 +1711,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       if (!isGroup) {
         const other = allParticipants.find(
           (p) =>
-            Number(p.conversation_id) === Number(conv.id) &&
-            Number(p.user_id) !== Number(currentUserId),
+            String(p.conversation_id) === String(conv.id) &&
+            String(p.user_id) !== String(currentUserId),
         );
         if (other) otherUser = getUser(other.user_id);
       }
@@ -1709,7 +1721,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
       if (lastMsg) {
         const sender = getUser(lastMsg.user_id);
         const senderName =
-          Number(lastMsg.user_id) === Number(currentUserId)
+          String(lastMsg.user_id) === String(currentUserId)
             ? 'You'
             : sender?.name.split(' ')[0] || 'Someone';
         // Strip markdown file links for preview
@@ -1895,7 +1907,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
     // Get other user for DM header avatar
     let otherUser: SyncedUser | undefined;
     if (!isGroup) {
-      const other = activeParticipants.find((p) => Number(p.user_id) !== Number(currentUserId));
+      const other = activeParticipants.find((p) => String(p.user_id) !== String(currentUserId));
       if (other) otherUser = getUser(other.user_id);
     }
 
@@ -1956,9 +1968,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange }) =>
               </View>
             }
             renderItem={({ item: msg }) => {
-              const isMe = Number(msg.user_id) === Number(currentUserId);
-              const reactions = reactionsByMessageId.get(msg.id) || [];
-              const previews = linkPreviewsByMessageId.get(msg.id) || [];
+              const isMe = String(msg.user_id) === String(currentUserId);
+              const reactions = reactionsByMessageId.get(String(msg.id)) || [];
+              const previews = linkPreviewsByMessageId.get(String(msg.id)) || [];
               return renderMessageBubble({
                 msgId: msg.id,
                 userId: msg.user_id,

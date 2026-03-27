@@ -21,9 +21,9 @@ import {
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MaterialIcons } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
@@ -39,7 +39,7 @@ import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
-import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
+import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, getMciIconName } from '../utils/helpers';
 
 // ---------------------------------------------------------------------------
 // Surface color tokens (3-level hierarchy)
@@ -160,6 +160,7 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
 
 export const MainScreen: React.FC = () => {
   const navigation = useNavigation<MainScreenNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Main'>>();
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const {
@@ -294,9 +295,25 @@ export const MainScreen: React.FC = () => {
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [colabInChat, setColabInChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [initialConversationId, setInitialConversationId] = useState<string | number | undefined>(undefined);
   // Status chip selection is now driven by filters.statuses from context
   // so it stays in sync with the filter sheet
   const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
+
+  // Handle navigation params from notification taps (e.g., switch to Colab tab + open conversation)
+  useEffect(() => {
+    const params = route.params;
+    if (params?.tab != null) {
+      setSelectedNav(params.tab);
+    }
+    if (params?.conversationId != null) {
+      setInitialConversationId(params.conversationId);
+    }
+    // Clear params after consuming them so they don't replay on re-render
+    if (params?.tab != null || params?.conversationId != null) {
+      navigation.setParams({ tab: undefined, conversationId: undefined } as any);
+    }
+  }, [route.params]);
 
   // Handle hardware back button when inside a workspace or workspaces list
   useEffect(() => {
@@ -795,13 +812,25 @@ export const MainScreen: React.FC = () => {
     );
   };
 
+  // Task counts per workspace for the workspace list
+  const taskCountsByWorkspace = useMemo(() => {
+    const counts = new Map<string | number, number>();
+    for (const t of data.tasks) {
+      const wsId = (t as any).workspace_id;
+      if (wsId != null) {
+        counts.set(wsId, (counts.get(wsId) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [data.tasks]);
+
   const renderWorkspacesList = () => {
     const wsItems = workspaceObjects;
     return (
       <FlatList
         data={wsItems}
         keyExtractor={(item) => String(item.id)}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={styles.wsListContent}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
         ListHeaderComponent={
           /* Shared with me — permanent item at top */
@@ -821,7 +850,7 @@ export const MainScreen: React.FC = () => {
             }}
           >
             <View style={[styles.workspaceListIcon, { backgroundColor: '#8B5CF6' }]}>
-              <MaterialIcons name="inbox" size={16} color="#FFFFFF" />
+              <MaterialIcons name="inbox" size={18} color="#FFFFFF" />
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
@@ -859,6 +888,9 @@ export const MainScreen: React.FC = () => {
         renderItem={({ item: ws }) => {
           const wsColor = ws.color || primaryColor;
           const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(ws.icon);
+          const wsTaskCount = taskCountsByWorkspace.get(ws.id) || 0;
+          const wsDescription = (ws as any).description;
+          const wsType = (ws as any).type;
           return (
             <TouchableOpacity
               style={[
@@ -875,19 +907,23 @@ export const MainScreen: React.FC = () => {
               }}
             >
               <View style={[styles.workspaceListIcon, { backgroundColor: wsColor }]}>
-                <FaIcon name={iconName} size={14} color="#FFFFFF" solid={solid} brand={wsBrand} />
+                <FaIcon name={iconName} size={16} color="#FFFFFF" solid={solid} brand={wsBrand} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
                   {ws.name}
                 </Text>
-                {ws.type ? (
-                  <Text style={[styles.workspaceListType, { color: colors.textSecondary }]}>
-                    {String(ws.type) === 'PROJECT' ? 'Project' : 'Workspace'}
-                  </Text>
-                ) : null}
+                <Text style={[styles.workspaceListType, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {wsType === 'PROJECT' ? 'Project' : 'Workspace'}
+                  {wsDescription ? ` · ${wsDescription}` : ''}
+                </Text>
               </View>
-              <MaterialIcons name="chevron-right" size={20} color={colors.textSecondary} />
+              <View style={styles.wsTaskCountContainer}>
+                <Text style={[styles.wsTaskCountText, { color: colors.textSecondary }]}>
+                  {wsTaskCount}
+                </Text>
+                <MaterialIcons name="chevron-right" size={20} color={colors.textSecondary} />
+              </View>
             </TouchableOpacity>
           );
         }}
@@ -937,7 +973,13 @@ export const MainScreen: React.FC = () => {
     }
 
     if (selectedNav === 1) {
-      return <ColabScreen onChatViewChange={handleColabChatViewChange} />;
+      return (
+        <ColabScreen
+          onChatViewChange={handleColabChatViewChange}
+          initialConversationId={initialConversationId}
+          onConversationConsumed={() => setInitialConversationId(undefined)}
+        />
+      );
     }
 
     if (selectedNav === 2) {
@@ -1042,7 +1084,7 @@ export const MainScreen: React.FC = () => {
 
           <TouchableOpacity
             style={styles.iconButton}
-            onPress={() => navigation.navigate('Settings')}
+            onPress={() => navigation.navigate('Notifications')}
           >
             {authUser?.photo_url ? (
               <Image
@@ -1184,6 +1226,8 @@ export const MainScreen: React.FC = () => {
           onDone={(taskId) => completeWorkingTask(taskId)}
           onRemove={(taskId) => removeWorkingTask(taskId)}
           onPress={(task) => navigation.navigate('TaskDetail', { task })}
+          getAllowedStatuses={getAllowedStatuses}
+          onStatusChange={(taskId, status) => changeTaskStatus(taskId, status)}
         />
       )}
 
@@ -1194,8 +1238,8 @@ export const MainScreen: React.FC = () => {
             styles.bottomBar,
             {
               backgroundColor: colors.surface,
-              borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E0D7',
-              marginBottom: Math.max(insets.bottom, 12),
+              borderTopColor: isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.1)',
+              paddingBottom: insets.bottom,
             },
           ]}
         >
@@ -1212,7 +1256,7 @@ export const MainScreen: React.FC = () => {
                 <View style={styles.navIconContainer}>
                   <MaterialIcons
                     name={item.icon}
-                    size={22}
+                    size={26}
                     color={selectedNav === index ? primaryColor : (item.color || colors.textSecondary)}
                   />
                   {index === 1 && chatUnreadCount > 0 && (
@@ -1238,6 +1282,7 @@ export const MainScreen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
             ))}
+
           </View>
 
           {/* FAB */}
@@ -1247,7 +1292,6 @@ export const MainScreen: React.FC = () => {
           >
             <MaterialIcons name="add" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-
         </View>
       )}
 
@@ -1623,18 +1667,22 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodySemibold,
   },
   // Workspace list items
+  wsListContent: {
+    paddingHorizontal: spacing.sm,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.xl,
+  },
   workspaceListItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
     borderRadius: 12,
     borderWidth: 1,
-    marginHorizontal: 16,
   },
   workspaceListIcon: {
-    width: 36,
-    height: 36,
+    width: 40,
+    height: 40,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1647,6 +1695,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fontFamilies.bodyRegular,
     marginTop: 1,
+  },
+  wsTaskCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  wsTaskCountText: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyMedium,
   },
   sharedCountBadge: {
     minWidth: 22,
@@ -1832,32 +1889,44 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyMedium,
   },
   bottomBar: {
-    height: 72,
-    borderRadius: radius.lg,
-    marginHorizontal: 12,
-    borderWidth: 1,
-    ...shadows.lifted,
+    borderTopWidth: 0.5,
   },
   bottomBarContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: '100%',
-    paddingLeft: 16,
-    paddingRight: 88,
-    justifyContent: 'space-between',
+    paddingTop: 8,
+    paddingBottom: 6,
+    paddingLeft: 8,
+    paddingRight: 72,
+    justifyContent: 'space-around',
   },
   navItem: {
     flex: 1,
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 4,
   },
   navIconContainer: {
     position: 'relative',
   },
   navLabel: {
-    marginTop: 4,
-    fontSize: 11,
+    marginTop: 2,
+    fontSize: 10,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  fab: {
+    position: 'absolute',
+    right: 14,
+    top: -10,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
   },
   boardsBadge: {
     position: 'absolute',
@@ -1876,17 +1945,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 10,
     fontFamily: fontFamilies.bodyBold,
-  },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 46,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...shadows.lifted,
   },
   menuModalOverlay: {
     flex: 1,

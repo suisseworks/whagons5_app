@@ -23,6 +23,98 @@ export const parseWorkspaceIcon = (
   return { name, solid, brand };
 };
 
+// FontAwesome → MaterialCommunityIcons mapping for rendering FA icon names
+// with MCI (which is more reliably bundled). Shared between TaskCard, workspace lists, etc.
+export const FA_TO_MCI: Record<string, string> = {
+  'bullhorn': 'bullhorn',
+  'store': 'store',
+  'users': 'account-group',
+  'wrench': 'wrench',
+  'shield-alt': 'shield-alert',
+  'shield-halved': 'shield-half-full',
+  'clipboard-check': 'clipboard-check',
+  'truck': 'truck',
+  'broom': 'broom',
+  'tools': 'tools',
+  'cogs': 'cog',
+  'heart': 'heart',
+  'calendar-check': 'calendar-check',
+  'snowflake': 'snowflake',
+  'chart-line': 'chart-line-variant',
+  'bug': 'bug',
+  'certificate': 'certificate',
+  'thermometer-half': 'thermometer',
+  'handshake': 'handshake',
+  'exchange-alt': 'swap-horizontal',
+  'dolly': 'dolly',
+  'tag': 'tag',
+  'search': 'magnify',
+  'boxes': 'package-variant-closed',
+  'money-bill': 'cash',
+  'user-times': 'account-remove',
+  'user-secret': 'account-eye',
+  'video': 'video',
+  'info-circle': 'information',
+  'folder': 'folder',
+  'tasks': 'format-list-checks',
+  'file-alt': 'file-document',
+  'clipboard-list': 'clipboard-list',
+  'building': 'office-building',
+  'bell': 'bell',
+  'eye': 'eye',
+  'play': 'play',
+  'hand': 'hand-back-right',
+  'flag-checkered': 'flag-checkered',
+  'ban': 'cancel',
+  'inbox': 'inbox',
+  'people-group': 'account-group',
+  'gear': 'cog',
+  'gears': 'cog',
+  'hammer': 'hammer',
+  'paint-roller': 'format-paint',
+  'utensils': 'silverware-fork-knife',
+  'bed': 'bed',
+  'key': 'key',
+  'wifi': 'wifi',
+  'fire': 'fire',
+  'leaf': 'leaf',
+  'tree': 'tree',
+  'sun': 'white-balance-sunny',
+  'moon': 'moon-waning-crescent',
+  'star': 'star',
+  'bolt': 'lightning-bolt',
+  'lock': 'lock',
+  'exclamation-triangle': 'alert',
+  'graduation-cap': 'school',
+  'gavel': 'gavel',
+  'redo': 'redo',
+  'vacuum': 'vacuum',
+  'shower': 'shower',
+  'swimming-pool': 'pool',
+  'dumbbell': 'dumbbell',
+  'spa': 'spa',
+  'concierge-bell': 'bell-ring',
+  'glass-martini': 'glass-cocktail',
+  'coffee': 'coffee',
+};
+
+/** Resolve an icon name (FA class string or plain name) to a MaterialCommunityIcons name */
+export function getMciIconName(iconStr?: string | null): string {
+  if (!iconStr) return 'folder';
+  // Handle full FA class strings like "fas fa-broom"
+  const parts = iconStr.trim().split(/\s+/);
+  let name = iconStr;
+  for (const part of parts) {
+    if (part.startsWith('fa-')) {
+      name = part.replace('fa-', '');
+      break;
+    }
+  }
+  // If no fa- prefix was found, use the raw string (handles plain names like "broom")
+  const clean = name.startsWith('fa-') ? name.slice(3) : name;
+  return FA_TO_MCI[clean] ?? clean;
+}
+
 // Default workspace color fallback
 export const DEFAULT_WORKSPACE_COLOR = '#3b82f6';
 

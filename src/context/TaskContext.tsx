@@ -868,11 +868,60 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   useEffect(() => {
     if (allMappedTasks.length === 0) return;
-    const validIds = workingTaskIds.filter((id) => allMappedTaskMap.has(id));
+    const validIds = workingTaskIds.filter((id) => {
+      const task = allMappedTaskMap.get(id);
+      if (!task) return false; // task deleted
+      // Remove tasks that reached a final or initial status
+      if (task.statusId != null) {
+        const statusInfo = statusMap.get(task.statusId);
+        if (statusInfo?.final || statusInfo?.initial) return false;
+      }
+      return true;
+    });
     if (validIds.length !== workingTaskIds.length) {
       setWorkingTaskIds(validIds);
     }
-  }, [allMappedTaskMap]);
+  }, [allMappedTaskMap, allMappedTasks, statusMap]);
+
+  // Build set of task IDs the current user is assigned to
+  const myTaskIds = useMemo(() => {
+    const currentUserId = authUser?.id;
+    if (!currentUserId) return new Set<string>();
+    const s = new Set<string>();
+    for (const tu of data.taskUsers) {
+      if (tu.user_id === currentUserId) s.add(String(tu.task_id));
+    }
+    return s;
+  }, [data.taskUsers, authUser]);
+
+  // Auto-populate working tasks: any task assigned to me with a WORKING status action
+  useEffect(() => {
+    if (!workingTaskIdsLoaded.current) return;
+    if (allMappedTasks.length === 0) return;
+
+    const autoWorkingIds = new Set<string>();
+    for (const task of allMappedTasks) {
+      if (!task.id) continue;
+      if (task.statusAction?.toUpperCase() !== 'WORKING') continue;
+      if (!myTaskIds.has(task.id)) continue;
+      autoWorkingIds.add(task.id);
+    }
+
+    if (autoWorkingIds.size === 0) return;
+
+    setWorkingTaskIds((prev) => {
+      const existing = new Set(prev);
+      let changed = false;
+      for (const id of autoWorkingIds) {
+        if (!existing.has(id)) {
+          existing.add(id);
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      return Array.from(existing).slice(0, MAX_WORKING_TASKS);
+    });
+  }, [allMappedTasks, myTaskIds]);
 
   const activeTask = workingTasks.length > 0 ? workingTasks[0] : null;
 

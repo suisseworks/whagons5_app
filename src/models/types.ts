@@ -260,7 +260,7 @@ export type RootStackParamList = {
   Splash: undefined;
   Login: undefined;
   TenantSelect: { tenants: string[]; firebaseIdToken: string };
-  Main: undefined;
+  Main: { tab?: number; conversationId?: string | number } | undefined;
   TaskDetail: { task: TaskItem };
   SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;

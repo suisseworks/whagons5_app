@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { fontFamilies, radius } from '../config/designTokens';
 
 interface CustomChipProps {
@@ -11,7 +12,7 @@ interface CustomChipProps {
   tinted?: boolean;
   /** Optional icon element rendered to the left of the label */
   icon?: React.ReactNode;
-  /** If true, apply a subtle pulse animation (e.g. for working/active status) */
+  /** If true, show a spinning loader icon (e.g. for working/active status) */
   animated?: boolean;
 }
 
@@ -34,6 +35,24 @@ function darkenHex(hex: string, factor: number = 0.35): string {
   return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
+/** Continuously rotating spinner for "in-progress" / working status */
+const SpinnerIcon: React.FC<{ color: string; size?: number }> = React.memo(({ color, size = 12 }) => {
+  const spin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(spin, { toValue: 1, duration: 900, easing: Easing.linear, useNativeDriver: true }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  return (
+    <Animated.View style={{ width: size, height: size, transform: [{ rotate }] }}>
+      <MaterialCommunityIcons name="loading" size={size} color={color} />
+    </Animated.View>
+  );
+});
+
 export const CustomChip: React.FC<CustomChipProps> = ({
   label,
   color,
@@ -43,23 +62,6 @@ export const CustomChip: React.FC<CustomChipProps> = ({
   icon,
   animated = false,
 }) => {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (!animated) {
-      pulseAnim.setValue(1);
-      return;
-    }
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 0.55, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1200, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [animated, pulseAnim]);
-
   const rgb = hexToRgb(color);
   const bgColor = tinted && rgb
     ? `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.14)`
@@ -68,19 +70,18 @@ export const CustomChip: React.FC<CustomChipProps> = ({
     ? (textColor ?? darkenHex(color))
     : (textColor ?? '#FFFFFF');
 
-  const Container = animated ? Animated.View : View;
-  const animStyle = animated ? { opacity: pulseAnim } : undefined;
+  // When animated, show spinning icon (unless a custom icon is already provided)
+  const displayIcon = icon ?? (animated ? <SpinnerIcon color={fgColor} size={12} /> : null);
 
   return (
-    <Container
+    <View
       style={[
         tinted ? styles.chipTinted : styles.chip,
         { backgroundColor: bgColor },
         compact && (tinted ? styles.chipTintedCompact : styles.chipCompact),
-        animStyle,
       ]}
     >
-      {icon && <View style={styles.iconWrap}>{icon}</View>}
+      {displayIcon && <View style={styles.iconWrap}>{displayIcon}</View>}
       <Text
         style={[
           tinted ? styles.labelTinted : styles.label,
@@ -90,7 +91,7 @@ export const CustomChip: React.FC<CustomChipProps> = ({
       >
         {label}
       </Text>
-    </Container>
+    </View>
   );
 };
 
