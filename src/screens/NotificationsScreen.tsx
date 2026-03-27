@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,22 +10,72 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useQuery, useMutation, useConvexAuth } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications, AppNotification } from '../context/NotificationContext';
+import { useTenant } from '../hooks/useTenant';
 import { formatTimestamp } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 export const NotificationsScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { tenantId } = useTenant();
+  const { isAuthenticated } = useConvexAuth();
   const {
-    notifications,
-    unreadCount,
-    markAsRead,
-    markAllAsRead,
+    notifications: localNotifications,
+    unreadCount: localUnreadCount,
+    markAsRead: localMarkAsRead,
+    markAllAsRead: localMarkAllAsRead,
     clearAll,
     hasPermission,
   } = useNotifications();
+
+  // Convex in-app notifications
+  const convexNotifications = useQuery(
+    api.settings.listNotifications,
+    isAuthenticated && tenantId ? { tenantId } : 'skip'
+  );
+  const markAllReadMutation = useMutation(api.settings.markAllRead);
+  const markReadMutation = useMutation(api.settings.markRead);
+  const clearAllMutation = useMutation(api.settings.clearAllNotifications);
+
+  // Merge: Convex notifications take priority, local ones as fallback
+  const notifications: AppNotification[] = useMemo(() => {
+    const fromConvex: AppNotification[] = (convexNotifications ?? []).map((n: any) => ({
+      id: n._id,
+      title: n.title ?? '',
+      message: n.message ?? '',
+      timestamp: new Date(n._creationTime),
+      isRead: !!n.readAt,
+      icon: 'notifications',
+      color: '#607D8B',
+      type: n.type,
+      data: n.data,
+    }));
+    if (fromConvex.length > 0) return fromConvex;
+    return localNotifications;
+  }, [convexNotifications, localNotifications]);
+
+  const unreadCount = useMemo(
+    () => notifications.filter(n => !n.isRead).length,
+    [notifications]
+  );
+
+  const markAsRead = (id: string) => {
+    localMarkAsRead(id);
+    if (tenantId && convexNotifications?.length) {
+      markReadMutation({ tenantId, id: id as any }).catch(() => {});
+    }
+  };
+
+  const markAllAsRead = () => {
+    localMarkAllAsRead();
+    if (tenantId && convexNotifications?.length) {
+      markAllReadMutation({ tenantId }).catch(() => {});
+    }
+  };
 
   // Mark all as read after a brief delay when viewing the screen
   useEffect(() => {
@@ -59,7 +109,16 @@ export const NotificationsScreen: React.FC = () => {
       'Remove all notifications?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Clear', style: 'destructive', onPress: clearAll },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: () => {
+            clearAll();
+            if (tenantId) {
+              clearAllMutation({ tenantId }).catch(() => {});
+            }
+          },
+        },
       ],
     );
   };

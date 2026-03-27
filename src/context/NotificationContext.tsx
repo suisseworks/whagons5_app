@@ -23,7 +23,10 @@ import React, {
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useMutation, useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { useAuth } from './AuthContext';
+import { useTenant } from '../hooks/useTenant';
 import { APP_VERSION } from '../config/version';
 import {
   requestNotificationPermission,
@@ -130,6 +133,9 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { token: authToken, subdomain } = useAuth();
+  const { tenantId } = useTenant();
+  const registerTokenMutation = useMutation(api.pushNotificationHelpers.registerToken);
+  const unregisterTokenMutation = useMutation(api.pushNotificationHelpers.unregisterToken);
 
   const [hasPermission, setHasPermission] = useState(false);
   const [fcmToken, setFcmToken] = useState<string | null>(null);
@@ -166,14 +172,28 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   }, []);
 
   // -----------------------------------------------------------------------
-  // Register FCM token with the backend
+  // Register FCM token with the backend via Convex
   // -----------------------------------------------------------------------
-  // FCM token registration — not yet available in Convex
   const registerTokenWithBackend = useCallback(
-    async (_deviceToken: string) => {
-      console.log('[Notifications] FCM token registration skipped (no Convex endpoint)');
+    async (deviceToken: string) => {
+      if (!tenantId) {
+        console.log('[Notifications] No tenantId — skipping FCM registration');
+        return;
+      }
+      try {
+        const deviceId = `${Platform.OS}-${APP_VERSION}`;
+        await registerTokenMutation({
+          tenantId,
+          fcmToken: deviceToken,
+          platform: Platform.OS,
+          deviceId,
+        });
+        console.log('[Notifications] FCM token registered with Convex');
+      } catch (err) {
+        console.error('[Notifications] Failed to register FCM token:', err);
+      }
     },
-    [],
+    [tenantId, registerTokenMutation],
   );
 
   // -----------------------------------------------------------------------
@@ -181,7 +201,10 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!authToken || !subdomain) {
-      // Logged out – clean up
+      // Logged out – unregister token and clean up
+      if (fcmToken && tenantId) {
+        unregisterTokenMutation({ tenantId, fcmToken }).catch(() => {});
+      }
       cleanupRefs.current.forEach(fn => fn());
       cleanupRefs.current = [];
       setFcmToken(null);
@@ -299,13 +322,21 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     AsyncStorage.removeItem(STORAGE_KEY_NOTIFICATIONS).catch(() => {});
   }, []);
 
+  const updateMeMutation = useMutation(api.users.updateMe);
   const updatePreferences = useCallback((updates: Partial<NotificationPreferences>) => {
     setPreferences(prev => {
       const next = { ...prev, ...updates };
       AsyncStorage.setItem(STORAGE_KEY_PREFS, JSON.stringify(next)).catch(() => {});
+      // Sync master toggles to Convex user.settings.notifications
+      if (tenantId) {
+        updateMeMutation({
+          tenantId,
+          settings: { mobile_notifications: next },
+        }).catch(() => {});
+      }
       return next;
     });
-  }, []);
+  }, [tenantId, updateMeMutation]);
 
   const clearTapPayload = useCallback(() => {
     setLastTapPayload(null);

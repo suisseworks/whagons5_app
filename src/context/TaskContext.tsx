@@ -959,9 +959,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (args.latitude != null) mutationArgs.latitude = args.latitude;
     if (args.longitude != null) mutationArgs.longitude = args.longitude;
 
-    const taskId = await createTaskMutation(mutationArgs as any);
-    return String(taskId);
-  }, [tenantId, createTaskMutation]);
+    const result = await createTaskMutation(mutationArgs as any);
+    const taskConvexId = (result as any)?._id ?? String(result);
+
+    // Assign selected users to the newly created task
+    if (args.userConvexIds?.length) {
+      await Promise.all(
+        args.userConvexIds.map(userId =>
+          assignUserMutation({
+            tenantId,
+            taskId: taskConvexId as any,
+            userId: userId as any,
+          }).catch(err => console.warn('[TaskContext] Failed to assign user:', err))
+        )
+      );
+    }
+
+    return String(result);
+  }, [tenantId, createTaskMutation, assignUserMutation]);
 
   const addTask = (_task: TaskItem) => {
     // Legacy stub - use createTask instead

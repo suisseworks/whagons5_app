@@ -76,10 +76,10 @@ export function getAllToneChannelConfigs(): Array<{
     .map(t => ({
       id: `${TONE_CHANNEL_PREFIX}${t.id}`,
       name: `Tone: ${t.name}`,
-      // On Android, custom channel sounds require bundled raw audio resources.
-      // Until custom audio files are added to android/app/src/main/res/raw/,
-      // all channels use 'default' system sound (except 'none' which is silent).
-      sound: t.id === 'none' ? '' : 'default',
+      // Android looks for res/raw/tone_<id>.wav (no extension in the ref).
+      // If the file doesn't exist yet, Android falls back to system default.
+      // Run app/scripts/generate-notification-sounds.sh to create them.
+      sound: t.id === 'none' ? '' : `tone_${t.id}`,
       silent: t.id === 'none',
     }));
 }

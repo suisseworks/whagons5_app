@@ -374,32 +374,33 @@ export const TaskDetailScreen: React.FC = () => {
   const viewersForDisplay = useMemo(() => {
     if (!taskViews.length) return [];
     return taskViews
-      .map((v) => {
-        const id = Number(v.user_id);
-        const name = userMap.get(id) || userMap.get(String(id)) || `User #${id}`;
-        const pic = data.users.find((u) => Number(u.id) === id)?.url_picture ?? null;
-        return {
-          id,
-          name: String(name),
-          picture: pic,
-          viewedAt: v.viewed_at,
-          isSelf: currentUserId !== null && id === currentUserId,
-        };
+      .map((v: any) => {
+        const id = v.user_id ? Number(v.user_id) : 0;
+        const localName = userMap.get(id) || userMap.get(String(id)) || userMap.get(v.convex_user_id);
+        const name = localName ? String(localName) : (v.name || `User #${id}`);
+        const localPic = data.users.find((u) => Number(u.id) === id)?.url_picture ?? null;
+        const picture = localPic || v.url_picture || null;
+        const isSelf = currentUserId !== null && (
+          id === currentUserId ||
+          (v.convex_user_id && v.convex_user_id === (authUser as any)?._id)
+        );
+        return { id, name, picture, viewedAt: v.viewed_at, isSelf };
       })
-      .filter((row) => !Number.isNaN(row.id))
       .sort((a, b) => {
         if (a.isSelf && !b.isSelf) return -1;
         if (!a.isSelf && b.isSelf) return 1;
         return new Date(a.viewedAt).getTime() - new Date(b.viewedAt).getTime();
       });
-  }, [taskViews, userMap, currentUserId, data.users]);
+  }, [taskViews, userMap, currentUserId, data.users, authUser]);
 
   const seenTaskIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (!tenantId || !Number.isFinite(taskPgId) || taskPgId <= 0) return;
     if (seenTaskIdRef.current === taskPgId) return;
     seenTaskIdRef.current = taskPgId;
-    recordTaskView({ tenantId, taskPgId }).catch(() => {});
+    recordTaskView({ tenantId, taskPgId }).catch((err) => {
+      console.warn('[TaskDetail] Failed to record task view:', err);
+    });
   }, [tenantId, taskPgId, recordTaskView]);
 
   const handleStatusChange = (status: StatusOption) => {
