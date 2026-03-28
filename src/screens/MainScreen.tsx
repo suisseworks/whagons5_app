@@ -26,6 +26,7 @@ import { FaIcon } from '../components/FaIcon';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -58,13 +59,14 @@ interface NavItem {
   color?: string;
 }
 
-const BASE_NAV_ITEMS: NavItem[] = [
-  { icon: 'checklist', label: 'Tasks' },
-  { icon: 'forum', label: 'Colab' },
-  { icon: 'people-outline', label: 'Boards' },
+// Nav items are now built inside the component to access t()
+const BASE_NAV_KEYS: { icon: keyof typeof MaterialIcons.glyphMap; labelKey: string }[] = [
+  { icon: 'checklist', labelKey: 'main.navTasks' },
+  { icon: 'forum', labelKey: 'main.navColab' },
+  { icon: 'people-outline', labelKey: 'main.navBoards' },
 ];
 
-const CLEANING_NAV_ITEM: NavItem = { icon: 'cleaning-services', label: 'Cleaning' };
+const CLEANING_NAV_KEY = { icon: 'cleaning-services' as keyof typeof MaterialIcons.glyphMap, labelKey: 'main.navCleaning' };
 
 // ---------------------------------------------------------------------------
 // Stable FlatList helpers (module-level to avoid re-creation)
@@ -82,13 +84,15 @@ interface SwipeableTaskItemProps {
   cardDensity: CardDensity;
   isDarkMode: boolean;
   primaryColor: string;
+  swipeStatusLabel: string;
+  swipeAssignLabel: string;
   onPress: (task: TaskItem) => void;
   onSwipeLeft: (task: TaskItem) => void;
   onSwipeRight: (task: TaskItem) => void;
 }
 
 const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
-  ({ item, cardDensity, isDarkMode, primaryColor, onPress, onSwipeLeft, onSwipeRight }) => {
+  ({ item, cardDensity, isDarkMode, primaryColor, swipeStatusLabel, swipeAssignLabel, onPress, onSwipeLeft, onSwipeRight }) => {
     const translateX = useRef(new Animated.Value(0)).current;
 
     const panResponder = useMemo(
@@ -137,7 +141,7 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
           ]}
         >
           <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
-          <Text style={[styles.swipeText, { color: primaryColor }]}>Status</Text>
+          <Text style={[styles.swipeText, { color: primaryColor }]}>{swipeStatusLabel}</Text>
         </View>
         <View
           style={[
@@ -146,7 +150,7 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
             isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' },
           ]}
         >
-          <Text style={[styles.swipeText, { color: '#2196F3' }]}>Assign</Text>
+          <Text style={[styles.swipeText, { color: '#2196F3' }]}>{swipeAssignLabel}</Text>
           <MaterialIcons name="person-add" size={24} color="#2196F3" />
         </View>
 
@@ -163,6 +167,7 @@ export const MainScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'Main'>>();
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const {
     tasks,
     totalTaskCount,
@@ -197,8 +202,9 @@ export const MainScreen: React.FC = () => {
   }, [data.plugins]);
 
   const navItems = useMemo(() => {
-    return isCleaningEnabled ? [...BASE_NAV_ITEMS, CLEANING_NAV_ITEM] : BASE_NAV_ITEMS;
-  }, [isCleaningEnabled]);
+    const base: NavItem[] = BASE_NAV_KEYS.map((k) => ({ icon: k.icon, label: t(k.labelKey) }));
+    return isCleaningEnabled ? [...base, { icon: CLEANING_NAV_KEY.icon, label: t(CLEANING_NAV_KEY.labelKey) }] : base;
+  }, [isCleaningEnabled, t]);
 
   // -- Sync pill: show while syncing / offline, briefly after sync, then hide --
   const wasSyncingRef = useRef(false);
@@ -363,7 +369,7 @@ export const MainScreen: React.FC = () => {
       }
     }
     const chips: { label: string; statusKey: string; color: string; count: number }[] = [
-      { label: 'All', statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: source.length },
+      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: source.length },
     ];
     const seen = new Set<string>();
     for (const s of availableStatuses) {
@@ -379,7 +385,7 @@ export const MainScreen: React.FC = () => {
       });
     }
     return chips;
-  }, [unfilteredTasks, availableStatuses, isDarkMode]);
+  }, [unfilteredTasks, availableStatuses, isDarkMode, t]);
 
   // Client-side search filter (status filtering is already handled by context filters)
   const displayedTasks = useMemo(() => {
@@ -478,7 +484,7 @@ export const MainScreen: React.FC = () => {
     (user: { id: number; name: string }) => {
       if (assigneePickerTask?.id) {
         if (assigneePickerTask.assignees.some((a) => a.name === user.name)) {
-          Alert.alert('Already Assigned', `${user.name} is already assigned to this task`);
+          Alert.alert(t('main.alreadyAssignedTitle'), t('main.alreadyAssignedMessage', { name: user.name }));
         } else {
           assignTaskToUser(assigneePickerTask.id, user.id, user.name);
         }
@@ -487,7 +493,7 @@ export const MainScreen: React.FC = () => {
       setAssigneePickerTask(null);
       setAssigneeSearch('');
     },
-    [assigneePickerTask, assignTaskToUser],
+    [assigneePickerTask, assignTaskToUser, t],
   );
 
   const handleSwipeRight = useCallback(
@@ -509,6 +515,8 @@ export const MainScreen: React.FC = () => {
     [statusPickerTask, changeTaskStatus],
   );
 
+  const swipeStatusLabel = t('main.swipeStatus');
+  const swipeAssignLabel = t('main.swipeAssign');
   const renderTaskItem = useCallback(
     ({ item }: { item: TaskItem }) => (
       <SwipeableTaskItem
@@ -516,12 +524,14 @@ export const MainScreen: React.FC = () => {
         cardDensity={cardDensity}
         isDarkMode={isDarkMode}
         primaryColor={primaryColor}
+        swipeStatusLabel={swipeStatusLabel}
+        swipeAssignLabel={swipeAssignLabel}
         onPress={handleTaskPress}
         onSwipeLeft={handleSwipeLeft}
         onSwipeRight={handleSwipeRight}
       />
     ),
-    [cardDensity, isDarkMode, primaryColor, handleTaskPress, handleSwipeLeft, handleSwipeRight],
+    [cardDensity, isDarkMode, primaryColor, swipeStatusLabel, swipeAssignLabel, handleTaskPress, handleSwipeLeft, handleSwipeRight],
   );
 
   const handleChipPress = useCallback((statusKey: string) => {
@@ -548,10 +558,10 @@ export const MainScreen: React.FC = () => {
     if (!showSyncPill && !showChips) return null;
 
     const baseSyncLabel = syncError
-      ? 'Offline'
+      ? t('main.syncOffline')
       : isReplaying
-        ? 'Syncing changes'
-        : isSyncing ? 'Syncing' : 'Updated';
+        ? t('main.syncSyncingChanges')
+        : isSyncing ? t('main.syncSyncing') : t('main.syncUpdated');
     const syncLabel = pendingCount > 0 && !isReplaying
       ? `${baseSyncLabel} · ${pendingCount} pending`
       : baseSyncLabel;
@@ -641,9 +651,9 @@ export const MainScreen: React.FC = () => {
         contentContainerStyle={styles.colabListContent}
         ListHeaderComponent={
           <View style={styles.colabListHeader}>
-            <Text style={[styles.listTitle, { color: colors.text }]}>Boards</Text>
+            <Text style={[styles.listTitle, { color: colors.text }]}>{t('main.boardsTitle')}</Text>
             <Text style={[styles.listSubtitle, { color: colors.textSecondary }]}>
-              {boards.length} {boards.length === 1 ? 'board' : 'boards'}
+              {boards.length === 1 ? t('main.boardCount', { count: boards.length }) : t('main.boardCountPlural', { count: boards.length })}
             </Text>
           </View>
         }
@@ -687,7 +697,7 @@ export const MainScreen: React.FC = () => {
                   </Text>
                 ) : (
                   <Text style={[styles.colabSpaceDesc, { color: colors.textSecondary }]}>
-                    {memberCount} {memberCount === 1 ? 'member' : 'members'} · {messageCount} {messageCount === 1 ? 'post' : 'posts'}
+                    {memberCount === 1 ? t('main.memberCount', { count: memberCount }) : t('main.memberCountPlural', { count: memberCount })} · {messageCount === 1 ? t('main.postCount', { count: messageCount }) : t('main.postCountPlural', { count: messageCount })}
                   </Text>
                 )}
               </View>
@@ -699,10 +709,10 @@ export const MainScreen: React.FC = () => {
           <View style={styles.placeholderContainer}>
             <MaterialIcons name="campaign" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
             <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>
-              No boards yet
+              {t('main.noBoardsYet')}
             </Text>
             <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>
-              Boards will appear here once they are created
+              {t('main.boardsWillAppear')}
             </Text>
           </View>
         }
@@ -731,9 +741,9 @@ export const MainScreen: React.FC = () => {
           >
             <ActivityIndicator size="large" color={primaryColor} />
           </View>
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>Syncing your tasks</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('main.syncingYourTasks')}</Text>
           <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            This may take a moment on first launch
+            {t('main.syncFirstLaunch')}
           </Text>
         </View>
       );
@@ -751,9 +761,9 @@ export const MainScreen: React.FC = () => {
           >
             <MaterialIcons name="search-off" size={40} color={colors.textSecondary} />
           </View>
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>No results</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('main.noResults')}</Text>
           <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            No tasks match "{searchQuery.trim()}"
+            {t('main.noTasksMatchSearch', { query: searchQuery.trim() })}
           </Text>
         </View>
       );
@@ -771,9 +781,9 @@ export const MainScreen: React.FC = () => {
           >
             <MaterialIcons name="filter-list-off" size={40} color={colors.textSecondary} />
           </View>
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>No matching tasks</Text>
+          <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('main.noMatchingTasks')}</Text>
           <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            Try selecting a different status or tap "All"
+            {t('main.tryDifferentStatus')}
           </Text>
           <TouchableOpacity
             style={[
@@ -787,7 +797,7 @@ export const MainScreen: React.FC = () => {
             onPress={() => setFilters({ ...filters, statuses: [] })}
           >
             <MaterialIcons name="filter-list-off" size={16} color={colors.textSecondary} />
-            <Text style={[styles.clearFiltersText, { color: colors.text }]}>Clear filters</Text>
+            <Text style={[styles.clearFiltersText, { color: colors.text }]}>{t('main.clearFilters')}</Text>
           </TouchableOpacity>
         </View>
       );
@@ -804,9 +814,9 @@ export const MainScreen: React.FC = () => {
           >
             <MaterialIcons name="task-alt" size={40} color={isDarkMode ? 'rgba(255,255,255,0.18)' : '#D1D5DB'} />
         </View>
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>No tasks yet</Text>
+        <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('main.noTasksYet')}</Text>
         <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-          Tasks will appear here once they are created
+          {t('main.tasksWillAppear')}
         </Text>
       </View>
     );
@@ -854,11 +864,11 @@ export const MainScreen: React.FC = () => {
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
-                Shared with me
+                {t('main.sharedWithMe')}
               </Text>
               {sharedCount > 0 && (
                 <Text style={[styles.workspaceListType, { color: colors.textSecondary }]}>
-                  {sharedCount} {sharedCount === 1 ? 'task' : 'tasks'}
+                  {sharedCount === 1 ? t('main.taskCount', { count: sharedCount }) : t('main.taskCountPlural', { count: sharedCount })}
                 </Text>
               )}
             </View>
@@ -873,8 +883,8 @@ export const MainScreen: React.FC = () => {
         ListEmptyComponent={
           <View style={[styles.placeholderContainer, { paddingTop: 40 }]}>
             <MaterialIcons name="workspaces" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
-            <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>No workspaces</Text>
-            <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>You don't have any workspaces yet</Text>
+            <Text style={[styles.placeholderTitle, { color: colors.text, marginTop: 16 }]}>{t('main.noWorkspaces')}</Text>
+            <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>{t('main.noWorkspacesYet')}</Text>
           </View>
         }
         refreshControl={
@@ -987,13 +997,13 @@ export const MainScreen: React.FC = () => {
     }
 
     // Cleaning tab placeholder
-    if (navItems[selectedNav]?.label === 'Cleaning') {
+    if (selectedNav === 3 && isCleaningEnabled) {
       return (
         <View style={styles.placeholderContainer}>
           <MaterialIcons name="cleaning-services" size={64} color="#BDBDBD" />
-          <Text style={[styles.placeholderTitle, { color: colors.text }]}>Cleaning</Text>
-          <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>Cleaning management coming soon</Text>
-          <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>Coming soon</Text>
+          <Text style={[styles.placeholderTitle, { color: colors.text }]}>{t('main.cleaningTitle')}</Text>
+          <Text style={[styles.placeholderSubtitle, { color: colors.textSecondary }]}>{t('main.cleaningComingSoon')}</Text>
+          <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>{t('main.comingSoon')}</Text>
         </View>
       );
     }
@@ -1036,7 +1046,7 @@ export const MainScreen: React.FC = () => {
               />
               <TextInput
                 style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search tasks..."
+                placeholder={t('main.searchTasks')}
                 placeholderTextColor="#999999"
                 value={searchQuery}
                 onChangeText={setSearchQuery}
@@ -1144,7 +1154,7 @@ export const MainScreen: React.FC = () => {
                 },
               ]}
             >
-              Everything
+              {t('main.tabEverything')}
             </Text>
           </TouchableOpacity>
 
@@ -1170,7 +1180,7 @@ export const MainScreen: React.FC = () => {
                 },
               ]}
             >
-              Workspaces
+              {t('main.tabWorkspaces')}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1336,7 +1346,7 @@ export const MainScreen: React.FC = () => {
           >
             <View style={styles.statusPickerHandle} />
             <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              Change Status
+              {t('common.changeStatus')}
             </Text>
             {statusPickerTask && (
               <Text
@@ -1422,7 +1432,7 @@ export const MainScreen: React.FC = () => {
           >
             <View style={styles.statusPickerHandle} />
             <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              Assign To
+              {t('common.assignTo')}
             </Text>
             {assigneePickerTask && (
               <Text
@@ -1449,7 +1459,7 @@ export const MainScreen: React.FC = () => {
               />
               <TextInput
                 style={[styles.assigneeSearchInput, { color: colors.text }]}
-                placeholder="Search users..."
+                placeholder={t('common.searchUsers')}
                 placeholderTextColor={colors.textSecondary}
                 value={assigneeSearch}
                 onChangeText={setAssigneeSearch}
@@ -1494,7 +1504,7 @@ export const MainScreen: React.FC = () => {
                           isAssigned && { fontFamily: fontFamilies.bodySemibold },
                         ]}
                       >
-                        {u.name}{isCurrentUser ? ' (You)' : ''}
+                        {u.name}{isCurrentUser ? t('main.userYouSuffix') : ''}
                       </Text>
                       {isAssigned && (
                         <MaterialIcons name="check" size={20} color="#2196F3" />

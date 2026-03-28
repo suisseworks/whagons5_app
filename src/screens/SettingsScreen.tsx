@@ -9,6 +9,7 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -21,9 +22,19 @@ import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
 import { VERSION_DISPLAY } from '../config/version';
 import { useData } from '../context/DataContext';
+import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 
 export const GPS_CAPTURE_STORAGE_KEY = '@whagons/gps_capture_enabled';
+
+/** Avoid Fabric crash on Android: reset() from Alert onPress races dialog teardown ("child already has a parent"). */
+function runAfterAlertNavigationWork(fn: () => void) {
+  InteractionManager.runAfterInteractions(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(fn);
+    });
+  });
+}
 
 type SettingsNavProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
 
@@ -33,11 +44,11 @@ export const SettingsScreen: React.FC = () => {
   const { preferences, updatePreferences, hasPermission } = useNotifications();
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
+  const { language, setLanguage, t } = useLanguage();
   const [isSwitching, setIsSwitching] = useState(false);
 
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [autoBackup, setAutoBackup] = useState(true);
-  const [selectedLanguage, setSelectedLanguage] = useState('English');
   const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(true);
 
   useEffect(() => {
@@ -57,35 +68,38 @@ export const SettingsScreen: React.FC = () => {
   ];
 
   const showComingSoon = (feature: string) => {
-    Alert.alert('Coming Soon', `${feature} coming soon`);
+    Alert.alert(t('common.comingSoonTitle'), t('common.comingSoonMessage', { feature }));
   };
 
   const showLanguageDialog = () => {
-    const languages = ['English', 'Spanish', 'French', 'German', 'Portuguese'];
+    const languages: { label: string; code: SupportedLanguage }[] = [
+      { label: t('settings.languageEnglish'), code: 'en' },
+      { label: t('settings.languageSpanish'), code: 'es' },
+    ];
     Alert.alert(
-      'Select Language',
-      'Choose your preferred language',
+      t('settings.selectLanguageTitle'),
+      t('settings.selectLanguageMessage'),
       languages.map(lang => ({
-        text: lang,
-        onPress: () => setSelectedLanguage(lang),
+        text: lang.label,
+        onPress: () => setLanguage(lang.code),
       }))
     );
   };
 
   const showClearCacheDialog = () => {
     Alert.alert(
-      'Force Resync',
-      'This will clear all cached data and resync everything from the server.',
+      t('settings.forceResyncTitle'),
+      t('settings.forceResyncMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Resync',
+          text: t('settings.resyncButton'),
           onPress: async () => {
             try {
               await forceResync();
-              Alert.alert('Done', 'Data resynced successfully');
+              Alert.alert(t('settings.resyncDoneTitle'), t('settings.resyncDoneMessage'));
             } catch (err: any) {
-              Alert.alert('Error', err?.message || 'Resync failed');
+              Alert.alert(t('common.error'), err?.message || t('settings.resyncFailed'));
             }
           },
         },
@@ -95,25 +109,27 @@ export const SettingsScreen: React.FC = () => {
 
   const handleSwitchTenant = () => {
     Alert.alert(
-      'Switch Tenant',
-      'This will clear your current data and let you pick a different tenant.',
+      t('settings.switchTenantAlertTitle'),
+      t('settings.switchTenantAlertMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Switch',
+          text: t('settings.switchTenantButton'),
           onPress: async () => {
             setIsSwitching(true);
             try {
               const { tenants, firebaseIdToken } = await switchTenant();
-              navigation.dispatch(
-                CommonActions.reset({
-                  index: 0,
-                  routes: [{ name: 'TenantSelect', params: { tenants, firebaseIdToken } }],
-                }),
-              );
+              runAfterAlertNavigationWork(() => {
+                navigation.dispatch(
+                  CommonActions.reset({
+                    index: 0,
+                    routes: [{ name: 'TenantSelect', params: { tenants, firebaseIdToken } }],
+                  }),
+                );
+                setIsSwitching(false);
+              });
             } catch (err: any) {
-              Alert.alert('Error', err?.message || 'Failed to switch tenant');
-            } finally {
+              Alert.alert(t('common.error'), err?.message || t('settings.switchTenantError'));
               setIsSwitching(false);
             }
           },
@@ -124,21 +140,23 @@ export const SettingsScreen: React.FC = () => {
 
   const showLogoutDialog = () => {
     Alert.alert(
-      'Logout',
-      'Are you sure you want to logout? You can pick a different tenant when you sign back in.',
+      t('settings.logoutAlertTitle'),
+      t('settings.logoutAlertMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Logout',
+          text: t('settings.logout'),
           style: 'destructive',
           onPress: async () => {
             await logout();
-            navigation.dispatch(
-              CommonActions.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              }),
-            );
+            runAfterAlertNavigationWork(() => {
+              navigation.dispatch(
+                CommonActions.reset({
+                  index: 0,
+                  routes: [{ name: 'Login' }],
+                }),
+              );
+            });
           },
         },
       ]
@@ -233,13 +251,13 @@ export const SettingsScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Settings</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('settings.title')}</Text>
         <View style={{ width: 24 }} />
       </View>
 
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
         {/* Account Section */}
-        <SectionHeader title="Account" />
+        <SectionHeader title={t('settings.sectionAccount')} />
         <View style={cardStyle}>
           <TouchableOpacity style={styles.profileTile} onPress={() => showComingSoon('Profile editing')}>
             {user?.photo_url ? (
@@ -257,7 +275,7 @@ export const SettingsScreen: React.FC = () => {
             <View style={styles.profileContent}>
               <Text style={[styles.profileName, { color: colors.text }]}>{user?.name || 'User'}</Text>
               <Text style={[styles.profileSubtitle, { color: colors.textSecondary }]}>
-                View and edit profile
+                {t('settings.viewAndEditProfile')}
               </Text>
             </View>
             <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />
@@ -265,40 +283,40 @@ export const SettingsScreen: React.FC = () => {
           <View style={styles.divider} />
           <ListTile
             icon="email"
-            title="Email"
-            subtitle={user?.email || 'Not set'}
+            title={t('settings.email')}
+            subtitle={user?.email || t('common.unknown')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Email settings')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="phone"
-            title="Phone"
-            subtitle="Not set"
+            title={t('settings.phone')}
+            subtitle={t('common.unknown')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Phone settings')}
           />
         </View>
 
         {/* Tenant Section */}
-        <SectionHeader title="Tenant" />
+        <SectionHeader title={t('settings.sectionTenant')} />
         <View style={cardStyle}>
           <View style={styles.listTile}>
             <MaterialIcons name="business" size={24} color={primaryColor} />
             <View style={styles.listTileContent}>
               <Text style={[styles.listTileTitle, { color: colors.text }]}>
-                {subdomain ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1) : 'No tenant'}
+                {subdomain ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1) : t('settings.noTenant')}
               </Text>
               <Text style={[styles.listTileSubtitle, { color: colors.textSecondary }]}>
-                Current tenant
+                {t('settings.currentTenant')}
               </Text>
             </View>
           </View>
           <View style={styles.divider} />
           <ListTile
             icon="swap-horiz"
-            title="Switch Tenant"
-            subtitle="Sign into a different tenant"
+            title={t('settings.switchTenant')}
+            subtitle={t('settings.switchTenantSubtitle')}
             trailing={
               isSwitching ? (
                 <ActivityIndicator size="small" color={primaryColor} />
@@ -311,20 +329,20 @@ export const SettingsScreen: React.FC = () => {
         </View>
 
         {/* Notifications Section */}
-        <SectionHeader title="Notifications" />
+        <SectionHeader title={t('settings.sectionNotifications')} />
         <View style={cardStyle}>
           <SwitchTile
             icon="notifications"
-            title="Enable Notifications"
-            subtitle={hasPermission ? 'Receive all notifications' : 'Permission not granted'}
+            title={t('settings.enableNotifications')}
+            subtitle={hasPermission ? t('settings.receiveAllNotifications') : t('settings.permissionNotGranted')}
             value={preferences.enabled}
             onValueChange={(val) => updatePreferences({ enabled: val })}
           />
           <View style={styles.divider} />
           <SwitchTile
             icon="notifications-active"
-            title="Push Notifications"
-            subtitle="Alert on new tasks"
+            title={t('settings.pushNotifications')}
+            subtitle={t('settings.pushNotificationsSubtitle')}
             value={preferences.pushEnabled}
             onValueChange={(val) => updatePreferences({ pushEnabled: val })}
             enabled={preferences.enabled}
@@ -332,8 +350,8 @@ export const SettingsScreen: React.FC = () => {
           <View style={styles.divider} />
           <SwitchTile
             icon="email"
-            title="Email Notifications"
-            subtitle="Daily task summary"
+            title={t('settings.emailNotifications')}
+            subtitle={t('settings.emailNotificationsSubtitle')}
             value={preferences.emailEnabled}
             onValueChange={(val) => updatePreferences({ emailEnabled: val })}
             enabled={preferences.enabled}
@@ -341,8 +359,8 @@ export const SettingsScreen: React.FC = () => {
           <View style={styles.divider} />
           <SwitchTile
             icon="volume-up"
-            title="Sound"
-            subtitle="Notification sounds"
+            title={t('settings.sound')}
+            subtitle={t('settings.soundSubtitle')}
             value={preferences.soundEnabled}
             onValueChange={(val) => updatePreferences({ soundEnabled: val })}
             enabled={preferences.enabled}
@@ -350,8 +368,8 @@ export const SettingsScreen: React.FC = () => {
           <View style={styles.divider} />
           <SwitchTile
             icon="vibration"
-            title="Vibration"
-            subtitle="Vibrate on notifications"
+            title={t('settings.vibration')}
+            subtitle={t('settings.vibrationSubtitle')}
             value={preferences.vibrationEnabled}
             onValueChange={(val) => updatePreferences({ vibrationEnabled: val })}
             enabled={preferences.enabled}
@@ -359,159 +377,159 @@ export const SettingsScreen: React.FC = () => {
         </View>
 
         {/* Task Creation Section */}
-        <SectionHeader title="Task Creation" />
+        <SectionHeader title={t('settings.sectionTaskCreation')} />
         <View style={cardStyle}>
           <SwitchTile
             icon="gps-fixed"
-            title="Capture GPS Location"
-            subtitle="Attach device location when creating tasks"
+            title={t('settings.captureGpsLocation')}
+            subtitle={t('settings.captureGpsLocationSubtitle')}
             value={gpsCaptureEnabled}
             onValueChange={handleGpsToggle}
           />
         </View>
 
         {/* Appearance Section */}
-        <SectionHeader title="Appearance" />
+        <SectionHeader title={t('settings.sectionAppearance')} />
         <View style={cardStyle}>
           <SwitchTile
             icon={isDarkMode ? 'dark-mode' : 'light-mode'}
-            title="Dark Mode"
-            subtitle="Use dark theme"
+            title={t('settings.darkMode')}
+            subtitle={t('settings.darkModeSubtitle')}
             value={isDarkMode}
             onValueChange={toggleDarkMode}
           />
           <View style={styles.divider} />
           <ListTile
             icon="palette"
-            title="Theme"
-            subtitle="Customize app colors"
+            title={t('settings.theme')}
+            subtitle={t('settings.themeSubtitle')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Theme customization')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="language"
-            title="Language"
-            subtitle={selectedLanguage}
+            title={t('settings.language')}
+            subtitle={language === 'es' ? 'Español' : 'English'}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={showLanguageDialog}
           />
         </View>
 
         {/* Privacy & Security Section */}
-        <SectionHeader title="Privacy & Security" />
+        <SectionHeader title={t('settings.sectionPrivacySecurity')} />
         <View style={cardStyle}>
           <SwitchTile
             icon="fingerprint"
-            title="Biometric Login"
-            subtitle="Use fingerprint/face ID"
+            title={t('settings.biometricLogin')}
+            subtitle={t('settings.biometricLoginSubtitle')}
             value={biometricEnabled}
             onValueChange={setBiometricEnabled}
           />
           <View style={styles.divider} />
           <ListTile
             icon="lock"
-            title="Change Password"
-            subtitle="Update your password"
+            title={t('settings.changePassword')}
+            subtitle={t('settings.changePasswordSubtitle')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Password change')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="shield"
-            title="Privacy Policy"
+            title={t('settings.privacyPolicy')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Privacy policy')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="description"
-            title="Terms of Service"
+            title={t('settings.termsOfService')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Terms of service')}
           />
         </View>
 
         {/* Data & Storage Section */}
-        <SectionHeader title="Data & Storage" />
+        <SectionHeader title={t('settings.sectionDataStorage')} />
         <View style={cardStyle}>
           <SwitchTile
             icon="backup"
-            title="Auto Backup"
-            subtitle="Backup data automatically"
+            title={t('settings.autoBackup')}
+            subtitle={t('settings.autoBackupSubtitle')}
             value={autoBackup}
             onValueChange={setAutoBackup}
           />
           <View style={styles.divider} />
           <ListTile
             icon="cloud-download"
-            title="Download Data"
-            subtitle="Export your data"
+            title={t('settings.downloadData')}
+            subtitle={t('settings.downloadDataSubtitle')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Data export')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="storage"
-            title="Clear Cache"
-            subtitle="125 MB"
+            title={t('settings.clearCache')}
+            subtitle={t('settings.clearCacheSubtitle')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={showClearCacheDialog}
           />
         </View>
 
         {/* Support Section */}
-        <SectionHeader title="Support" />
+        <SectionHeader title={t('settings.sectionSupport')} />
         <View style={cardStyle}>
           <ListTile
             icon="help-outline"
-            title="Help Center"
+            title={t('settings.helpCenter')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Help center')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="chat-bubble-outline"
-            title="Contact Support"
+            title={t('settings.contactSupport')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Contact support')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="rate-review"
-            title="Rate App"
+            title={t('settings.rateApp')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Rate app')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="bug-report"
-            title="Report Bug"
+            title={t('settings.reportBug')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Bug report')}
           />
         </View>
 
         {/* About Section */}
-        <SectionHeader title="About" />
+        <SectionHeader title={t('settings.sectionAbout')} />
         <View style={cardStyle}>
           <ListTile
             icon="info-outline"
-            title="App Version"
+            title={t('settings.appVersion')}
             subtitle={VERSION_DISPLAY}
             onPress={() => {}}
           />
           <View style={styles.divider} />
           <ListTile
             icon="update"
-            title="Check for Updates"
+            title={t('settings.checkForUpdates')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Check updates')}
           />
           <View style={styles.divider} />
           <ListTile
             icon="article"
-            title="What's New"
+            title={t('settings.whatsNew')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Release notes')}
           />
@@ -521,7 +539,7 @@ export const SettingsScreen: React.FC = () => {
         <View style={[cardStyle, { marginTop: 20 }]}>
           <ListTile
             icon="logout"
-            title="Logout"
+            title={t('settings.logout')}
             titleColor="#F44336"
             iconColor="#F44336"
             onPress={showLogoutDialog}

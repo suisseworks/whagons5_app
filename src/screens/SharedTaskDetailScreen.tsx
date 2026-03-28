@@ -16,6 +16,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../hooks/useTenant';
@@ -37,6 +38,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const route = useRoute<SharedTaskDetailRoute>();
   const { task } = route.params;
   const { colors, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { width: screenWidth } = useWindowDimensions();
   const { tenantId } = useTenant();
   const { user: authUser } = useAuth();
@@ -215,9 +217,9 @@ export const SharedTaskDetailScreen: React.FC = () => {
         ...(responseComment ? { responseComment } : {}),
         ...(signatureStorageId ? { signatureStorageId: signatureStorageId as Id<'_storage'> } : {}),
       });
-      Alert.alert('Success', decision === 'approved' ? 'Approved successfully' : 'Rejected successfully');
+      Alert.alert(t('common.success'), decision === 'approved' ? t('sharedTask.approvedSuccessfully') : t('sharedTask.rejectedSuccessfully'));
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to record decision');
+      Alert.alert(t('common.error'), err?.message || t('sharedTask.failedToRecordDecision'));
     } finally {
       setDeciding(false);
     }
@@ -229,7 +231,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
     try {
       await acknowledgeMutation({ tenantId, shareId: myPendingShareId as Id<'taskShares'> });
     } catch (err: any) {
-      Alert.alert('Error', 'Failed to acknowledge');
+      Alert.alert(t('common.error'), t('sharedTask.failedToAcknowledge'));
     } finally {
       setAcknowledging(false);
     }
@@ -240,7 +242,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
 
   const statusPillColor = derived === 'approved' ? '#16A34A' : derived === 'rejected' ? '#DC2626' : '#EA580C';
   const statusPillBg = derived === 'approved' ? '#F0FDF4' : derived === 'rejected' ? '#FEF2F2' : '#FFF7ED';
-  const statusPillLabel = derived === 'approved' ? 'Approved' : derived === 'rejected' ? 'Rejected' : 'Pending Approval';
+  const statusPillLabel = derived === 'approved' ? t('sharedTask.statusApproved') : derived === 'rejected' ? t('sharedTask.statusRejected') : t('sharedTask.statusPendingApproval');
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
@@ -277,17 +279,17 @@ export const SharedTaskDetailScreen: React.FC = () => {
         {/* Metadata Card */}
         <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
           <View style={styles.metaGrid}>
-            <MetaItem label="Status" value={task.status} color={task.statusColor} isDark={isDarkMode} textColor={colors.text} />
-            <MetaItem label="Priority" value={task.priority} isDark={isDarkMode} textColor={colors.text} />
-            {task.spot ? <MetaItem label="Location" value={task.spot} isDark={isDarkMode} textColor={colors.text} /> : null}
-            {task.createdAt ? <MetaItem label="Created" value={task.createdAt} isDark={isDarkMode} textColor={colors.text} /> : null}
+            <MetaItem label={t('sharedTask.metaLabelStatus')} value={task.status} color={task.statusColor} isDark={isDarkMode} textColor={colors.text} />
+            <MetaItem label={t('sharedTask.metaLabelPriority')} value={task.priority} isDark={isDarkMode} textColor={colors.text} />
+            {task.spot ? <MetaItem label={t('sharedTask.metaLabelLocation')} value={task.spot} isDark={isDarkMode} textColor={colors.text} /> : null}
+            {task.createdAt ? <MetaItem label={t('sharedTask.metaLabelCreated')} value={task.createdAt} isDark={isDarkMode} textColor={colors.text} /> : null}
           </View>
         </View>
 
         {/* Description */}
         {task.description && (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Description</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('sharedTask.sectionDescription')}</Text>
             <RenderHtml
               contentWidth={screenWidth - 64}
               source={{ html: task.description }}
@@ -299,7 +301,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
         {/* Approvers Section */}
         {approverDetails.length > 0 && (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>Approvers</Text>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('sharedTask.sectionApprovers')}</Text>
             {approverDetails.map((d) => (
               <ApproverRow
                 key={d.id}
@@ -307,6 +309,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
                 colors={colors}
                 isDark={isDarkMode}
                 tertiaryText={tertiaryText}
+                t={t}
               />
             ))}
           </View>
@@ -316,7 +319,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
         {ackData.total > 0 && (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
             <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Acknowledgments</Text>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('sharedTask.sectionAcknowledgments')}</Text>
               <View style={[styles.ackProgressBadge, {
                 backgroundColor: ackData.done === ackData.total ? '#F0FDF4' : '#FFF7ED',
               }]}>
@@ -329,12 +332,12 @@ export const SharedTaskDetailScreen: React.FC = () => {
             </View>
             {ackData.shares.map((share: any) => {
               const teamName = share.sharedToTeamId
-                ? (teamMap[String(share.sharedToTeamId)]?.name || 'Team')
+                ? (teamMap[String(share.sharedToTeamId)]?.name || t('sharedTask.fallbackTeam'))
                 : null;
               const userName = share.sharedToUserId
-                ? (userMap[String(share.sharedToUserId)]?.name || 'User')
+                ? (userMap[String(share.sharedToUserId)]?.name || t('sharedTask.fallbackUser'))
                 : null;
-              const label = teamName || userName || 'Unknown';
+              const label = teamName || userName || t('sharedTask.fallbackUnknown');
               const isAcked = share.status === 'acknowledged';
               return (
                 <View key={share._id} style={styles.ackRow}>
@@ -345,7 +348,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
                   />
                   <Text style={[styles.ackLabel, { color: colors.text }]}>{label}</Text>
                   <Text style={[styles.ackStatus, { color: isAcked ? '#16A34A' : tertiaryText }]}>
-                    {isAcked ? 'Acknowledged' : 'Pending'}
+                    {isAcked ? t('sharedTask.ackStatusAcknowledged') : t('sharedTask.ackStatusPending')}
                   </Text>
                 </View>
               );
@@ -362,7 +365,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
                 ) : (
                   <>
                     <MaterialIcons name="visibility" size={16} color="#FFFFFF" />
-                    <Text style={styles.ackButtonText}>Acknowledge</Text>
+                    <Text style={styles.ackButtonText}>{t('sharedTask.acknowledgeButton')}</Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -383,7 +386,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
             disabled={deciding}
           >
             <MaterialIcons name="close" size={18} color="#DC2626" />
-            <Text style={styles.rejectFooterText}>Reject</Text>
+            <Text style={styles.rejectFooterText}>{t('sharedTask.rejectButton')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -397,7 +400,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
               <>
                 <MaterialIcons name={requireSignature ? 'edit' : 'check'} size={18} color="#FFFFFF" />
                 <Text style={styles.approveFooterText}>
-                  {requireSignature ? 'Approve & Sign' : 'Approve'}
+                  {requireSignature ? t('sharedTask.approveAndSignButton') : t('sharedTask.approveButton')}
                 </Text>
               </>
             )}
@@ -459,15 +462,16 @@ const ApproverRow: React.FC<{
   colors: any;
   isDark: boolean;
   tertiaryText: string;
-}> = ({ detail, colors, isDark, tertiaryText }) => {
+  t: (key: string) => string;
+}> = ({ detail, colors, isDark, tertiaryText, t }) => {
   const statusIcon = detail.status === 'approved' ? 'check-circle' as const
     : detail.status === 'rejected' ? 'close-circle' as const
     : 'clock-outline' as const;
 
-  const statusLabel = detail.status === 'approved' ? 'Approved'
-    : detail.status === 'rejected' ? 'Rejected'
-    : detail.status === 'not started' ? 'Not Started'
-    : 'Pending';
+  const statusLabel = detail.status === 'approved' ? t('sharedTask.statusApproved')
+    : detail.status === 'rejected' ? t('sharedTask.statusRejected')
+    : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
+    : t('sharedTask.ackStatusPending');
 
   return (
     <View style={approverStyles.row}>

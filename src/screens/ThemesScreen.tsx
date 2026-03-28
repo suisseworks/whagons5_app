@@ -10,6 +10,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { ThemeName } from '../models/types';
 import { themeMetadata, getLightTheme, getDarkTheme, getPrimaryColor } from '../config/themes';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
@@ -17,6 +18,7 @@ import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens
 export const ThemesScreen: React.FC = () => {
   const navigation = useNavigation();
   const { themeName, setThemeName, isDarkMode, colors, primaryColor } = useTheme();
+  const { t } = useLanguage();
 
   const handleSelectTheme = (theme: ThemeName) => {
     setThemeName(theme);
@@ -93,7 +95,7 @@ export const ThemesScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Choose Theme</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('themes.title')}</Text>
         <View style={{ width: 24 }} />
       </View>
 

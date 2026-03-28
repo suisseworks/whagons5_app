@@ -14,6 +14,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, LeaderboardEntry } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useGamification } from '../context/GamificationContext';
 import { useAuth } from '../context/AuthContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -25,6 +26,7 @@ type TabId = 'leaderboard' | 'badges' | 'levels';
 export const GamificationScreen: React.FC = () => {
   const navigation = useNavigation<GamificationNavProp>();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { user } = useAuth();
   const {
     leaderboard, pointsSummary, badges, levels, levelProgress,
@@ -69,25 +71,25 @@ export const GamificationScreen: React.FC = () => {
     <View style={cardStyle}>
       <View style={styles.cardHeader}>
         <MaterialIcons name="stars" size={20} color={primaryColor} />
-        <Text style={[styles.cardTitle, { color: colors.text }]}>Your Stats</Text>
+        <Text style={[styles.cardTitle, { color: colors.text }]}>{t('gamification.yourStats')}</Text>
       </View>
       {pointsSummary ? (
         <View style={styles.statsGrid}>
           <View style={styles.statItem}>
             <Text style={[styles.statValue, { color: primaryColor }]}>{pointsSummary.total_points}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Total</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('gamification.statTotal')}</Text>
           </View>
           <View style={styles.statItem}>
             <Text style={[styles.statValue, { color: colors.text }]}>{pointsSummary.weekly_points}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>This Week</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('gamification.statThisWeek')}</Text>
           </View>
           <View style={styles.statItem}>
             <Text style={[styles.statValue, { color: colors.text }]}>{pointsSummary.monthly_points}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>This Month</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('gamification.statThisMonth')}</Text>
           </View>
           <View style={styles.statItem}>
             <Text style={[styles.statValue, { color: colors.text }]}>#{pointsSummary.rank}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Rank</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{t('gamification.statRank')}</Text>
           </View>
         </View>
       ) : (
@@ -106,7 +108,7 @@ export const GamificationScreen: React.FC = () => {
           </View>
           {levelProgress.points_to_next_level != null && (
             <Text style={[styles.progressText, { color: colors.textSecondary }]}>
-              {levelProgress.points_to_next_level} pts to {levelProgress.next_level?.name ?? 'next level'}
+              {t('gamification.ptsToNextLevel', { points: levelProgress.points_to_next_level, level: levelProgress.next_level?.name ?? 'next level' })}
             </Text>
           )}
         </View>
@@ -161,7 +163,7 @@ export const GamificationScreen: React.FC = () => {
             onPress={() => setLeaderboardPeriod(p)}
           >
             <Text style={[styles.periodTabText, { color: leaderboardPeriod === p ? '#fff' : colors.textSecondary }]}>
-              {p === 'all_time' ? 'All Time' : p === 'weekly' ? 'Weekly' : 'Monthly'}
+              {p === 'all_time' ? t('gamification.periodAllTime') : p === 'weekly' ? t('gamification.periodWeekly') : t('gamification.periodMonthly')}
             </Text>
           </TouchableOpacity>
         ))}
@@ -170,12 +172,12 @@ export const GamificationScreen: React.FC = () => {
       <View style={cardStyle}>
         <View style={styles.cardHeader}>
           <MaterialIcons name="leaderboard" size={20} color={primaryColor} />
-          <Text style={[styles.cardTitle, { color: colors.text }]}>Top Performers</Text>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>{t('gamification.topPerformers')}</Text>
         </View>
         {leaderboard.length > 0 ? (
           leaderboard.map((entry, i) => renderLeaderboardEntry(entry, i))
         ) : (
-          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No data yet</Text>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('gamification.noDataYet')}</Text>
         )}
       </View>
 
@@ -184,7 +186,7 @@ export const GamificationScreen: React.FC = () => {
         <View style={[cardStyle, { marginTop: spacing.md }]}>
           <View style={styles.cardHeader}>
             <MaterialIcons name="bolt" size={20} color={primaryColor} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Recent Activity</Text>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>{t('gamification.recentActivity')}</Text>
           </View>
           {recentActivity.slice(0, 5).map(tx => (
             <View key={tx.id} style={styles.activityRow}>
@@ -208,7 +210,7 @@ export const GamificationScreen: React.FC = () => {
     <View style={cardStyle}>
       <View style={styles.cardHeader}>
         <MaterialIcons name="military-tech" size={20} color={primaryColor} />
-        <Text style={[styles.cardTitle, { color: colors.text }]}>Badges</Text>
+        <Text style={[styles.cardTitle, { color: colors.text }]}>{t('gamification.badgesTitle')}</Text>
       </View>
       {badges.length > 0 ? (
         <View style={styles.badgeGrid}>
@@ -237,14 +239,14 @@ export const GamificationScreen: React.FC = () => {
               )}
               {badge.earned && (
                 <View style={[styles.earnedBadge, { backgroundColor: '#10B981' }]}>
-                  <Text style={styles.earnedBadgeText}>Earned</Text>
+                  <Text style={styles.earnedBadgeText}>{t('gamification.earnedBadge')}</Text>
                 </View>
               )}
             </View>
           ))}
         </View>
       ) : (
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No badges available yet</Text>
+        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('gamification.noBadgesYet')}</Text>
       )}
     </View>
   );
@@ -256,7 +258,7 @@ export const GamificationScreen: React.FC = () => {
         <View style={cardStyle}>
           <View style={styles.cardHeader}>
             <MaterialIcons name="trending-up" size={20} color={primaryColor} />
-            <Text style={[styles.cardTitle, { color: colors.text }]}>Current Level</Text>
+            <Text style={[styles.cardTitle, { color: colors.text }]}>{t('gamification.currentLevel')}</Text>
           </View>
           <View style={styles.currentLevelSection}>
             <View style={[styles.levelCircleLarge, { backgroundColor: levelProgress.current_level.color }]}>
@@ -264,7 +266,7 @@ export const GamificationScreen: React.FC = () => {
             </View>
             <Text style={[styles.currentLevelName, { color: colors.text }]}>{levelProgress.current_level.name}</Text>
             <Text style={[styles.currentLevelDesc, { color: colors.textSecondary }]}>{levelProgress.current_level.description}</Text>
-            <Text style={[styles.totalPointsText, { color: primaryColor }]}>{levelProgress.total_points} pts</Text>
+            <Text style={[styles.totalPointsText, { color: primaryColor }]}>{levelProgress.total_points} {t('gamification.ptsUnit')}</Text>
             <View style={[styles.progressBarBg, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.1)' : '#E5E7EB', marginTop: spacing.sm }]}>
               <View style={[styles.progressBarFill, { width: `${levelProgress.progress_percentage}%`, backgroundColor: levelProgress.current_level.color }]} />
             </View>
@@ -276,7 +278,7 @@ export const GamificationScreen: React.FC = () => {
       <View style={[cardStyle, { marginTop: spacing.md }]}>
         <View style={styles.cardHeader}>
           <MaterialIcons name="format-list-numbered" size={20} color={primaryColor} />
-          <Text style={[styles.cardTitle, { color: colors.text }]}>All Levels</Text>
+          <Text style={[styles.cardTitle, { color: colors.text }]}>{t('gamification.allLevels')}</Text>
         </View>
         {levels.map(level => (
           <View
@@ -293,12 +295,12 @@ export const GamificationScreen: React.FC = () => {
             <View style={{ flex: 1, marginLeft: spacing.sm }}>
               <Text style={[styles.levelItemName, { color: colors.text }]}>{level.name}</Text>
               <Text style={[styles.levelItemRange, { color: colors.textSecondary }]}>
-                {level.min_points} - {level.max_points != null ? `${level.max_points} pts` : 'Unlimited'}
+                {level.min_points} - {level.max_points != null ? `${level.max_points} ${t('gamification.ptsUnit')}` : t('gamification.unlimitedPoints')}
               </Text>
             </View>
             {level.is_current && (
               <View style={[styles.currentTag, { backgroundColor: '#8B5CF6' }]}>
-                <Text style={styles.currentTagText}>Current</Text>
+                <Text style={styles.currentTagText}>{t('gamification.currentTag')}</Text>
               </View>
             )}
             {level.is_unlocked && !level.is_current && (
@@ -317,7 +319,7 @@ export const GamificationScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Gamification</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('gamification.headerTitle')}</Text>
         <TouchableOpacity onPress={() => navigation.navigate('PointHistory')} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <MaterialIcons name="history" size={24} color={colors.textSecondary} />
         </TouchableOpacity>
@@ -326,9 +328,9 @@ export const GamificationScreen: React.FC = () => {
       {/* Tab bar */}
       <View style={[styles.tabBar, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E5E7EB' }]}>
         {([
-          { id: 'leaderboard' as TabId, label: 'Leaderboard', icon: 'leaderboard' as const },
-          { id: 'badges' as TabId, label: 'Badges', icon: 'military-tech' as const },
-          { id: 'levels' as TabId, label: 'Levels', icon: 'trending-up' as const },
+          { id: 'leaderboard' as TabId, label: t('gamification.tabLeaderboard'), icon: 'leaderboard' as const },
+          { id: 'badges' as TabId, label: t('gamification.tabBadges'), icon: 'military-tech' as const },
+          { id: 'levels' as TabId, label: t('gamification.tabLevels'), icon: 'trending-up' as const },
         ]).map(tab => (
           <TouchableOpacity
             key={tab.id}

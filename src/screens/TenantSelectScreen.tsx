@@ -16,6 +16,7 @@ import type { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../models/types';
 import { useAuth } from '../context/AuthContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 type NavProp = NativeStackNavigationProp<RootStackParamList, 'TenantSelect'>;
 type RoutePropType = RouteProp<RootStackParamList, 'TenantSelect'>;
@@ -24,6 +25,7 @@ export const TenantSelectScreen: React.FC = () => {
   const navigation = useNavigation<NavProp>();
   const route = useRoute<RoutePropType>();
   const { selectTenant, logout } = useAuth();
+  const { t } = useLanguage();
 
   const { tenants, firebaseIdToken } = route.params;
   const [selecting, setSelecting] = useState<string | null>(null);
@@ -38,7 +40,7 @@ export const TenantSelectScreen: React.FC = () => {
         CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }),
       );
     } catch (err: any) {
-      setError(err?.message || 'Failed to connect to workspace');
+      setError(err?.message || t('tenantSelect.connectionError'));
       setSelecting(null);
     }
   };
@@ -96,10 +98,9 @@ export const TenantSelectScreen: React.FC = () => {
           source={require('../../assets/whagons-check.png')}
           style={styles.logo}
         />
-        <Text style={styles.title}>Choose Workspace</Text>
+        <Text style={styles.title}>{t('tenantSelect.title')}</Text>
         <Text style={styles.subtitle}>
-          You belong to {tenants.length} workspace{tenants.length > 1 ? 's' : ''}.{'\n'}
-          Select one to continue.
+          {t('tenantSelect.subtitle', { count: tenants.length })}
         </Text>
       </View>
 
@@ -132,7 +133,7 @@ export const TenantSelectScreen: React.FC = () => {
           }}
         >
           <MaterialIcons name="arrow-back" size={18} color="#8B8E84" />
-          <Text style={styles.backText}>Back to sign in</Text>
+          <Text style={styles.backText}>{t('tenantSelect.backToSignIn')}</Text>
         </TouchableOpacity>
       </View>
     </SafeAreaView>

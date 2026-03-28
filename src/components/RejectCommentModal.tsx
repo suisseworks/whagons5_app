@@ -12,6 +12,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import { fontFamilies, radius } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 interface RejectCommentModalProps {
   visible: boolean;
@@ -21,6 +22,7 @@ interface RejectCommentModalProps {
 
 export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible, onClose, onSubmit }) => {
   const { colors, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const [comment, setComment] = useState('');
 
   const handleSubmit = useCallback(() => {
@@ -43,14 +45,14 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
       >
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>Reject Approval</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{t('component.rejectCommentModal.title')}</Text>
             <TouchableOpacity onPress={handleClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <MaterialIcons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <Text style={[styles.subtitle, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#6B7280' }]}>
-            A comment is required to reject this approval.
+            {t('component.rejectCommentModal.subtitle')}
           </Text>
 
           <TextInput
@@ -62,7 +64,7 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
                 backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#FAFAFA',
               },
             ]}
-            placeholder="Enter your reason for rejection..."
+            placeholder={t('component.rejectCommentModal.placeholder')}
             placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#9CA3AF'}
             multiline
             numberOfLines={4}
@@ -77,7 +79,7 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
               style={[styles.cancelBtn, { borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#E5E7EB' }]}
               onPress={handleClose}
             >
-              <Text style={[styles.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
+              <Text style={[styles.cancelText, { color: colors.textSecondary }]}>{t('component.rejectCommentModal.cancelButton')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
@@ -88,7 +90,7 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
               disabled={!comment.trim()}
             >
               <MaterialIcons name="close" size={18} color="#FFFFFF" />
-              <Text style={styles.rejectText}>Reject</Text>
+              <Text style={styles.rejectText}>{t('component.rejectCommentModal.rejectButton')}</Text>
             </TouchableOpacity>
           </View>
         </View>

@@ -51,7 +51,8 @@
         }
       ],
       "expo-video",
-      "./plugins/withNotifee.js"
+      "./plugins/withNotifee.js",
+      "expo-localization"
     ]
   }
 }

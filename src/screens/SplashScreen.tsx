@@ -14,12 +14,14 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes } from '../config/designTokens';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 type SplashScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Splash'>;
 
 export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<SplashScreenNavigationProp>();
   const { isLoading: authLoading, token, pendingTenants } = useAuth();
+  const { t } = useLanguage();
   const navigatedRef = useRef(false);
   const latestAuth = useRef({ token, pendingTenants });
   latestAuth.current = { token, pendingTenants };
@@ -119,12 +121,12 @@ export const SplashScreen: React.FC = () => {
 
           {/* Brand name */}
           <Animated.Text style={[styles.title, { opacity: textFade }]}>
-            Whagons
+            {t('splash.brandName')}
           </Animated.Text>
 
           {/* Tagline */}
           <Animated.Text style={[styles.subtitle, { opacity: textFade }]}>
-            Operational Intelligence in Action.
+            {t('splash.tagline')}
           </Animated.Text>
 
           {/* Loading indicator */}

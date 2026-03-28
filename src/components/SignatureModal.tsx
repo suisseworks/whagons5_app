@@ -15,6 +15,7 @@ import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useTheme } from '../context/ThemeContext';
 import { fontFamilies, radius } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 interface SignatureModalProps {
   visible: boolean;
@@ -25,6 +26,7 @@ interface SignatureModalProps {
 export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose, onSigned }) => {
   const { tenantId } = useTenant();
   const { colors, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const generateUploadUrl = useMutation(api.taskResources.generateUploadUrl);
 
   const [signatureData, setSignatureData] = useState<string | null>(null);
@@ -52,7 +54,7 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
       onSigned(storageId);
       setSignatureData(null);
     } catch (err: any) {
-      Alert.alert('Error', 'Failed to upload signature. Please try again.');
+      Alert.alert(t('component.signatureModal.uploadError'), t('component.signatureModal.uploadErrorMessage'));
     } finally {
       setUploading(false);
     }
@@ -68,14 +70,14 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
       <View style={styles.overlay}>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>Sign to Approve</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{t('component.signatureModal.title')}</Text>
             <TouchableOpacity onPress={handleClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <MaterialIcons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <Text style={[styles.subtitle, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#6B7280' }]}>
-            Draw your signature below to approve this task
+            {t('component.signatureModal.subtitle')}
           </Text>
 
           <View style={styles.padWrapper}>
@@ -94,7 +96,7 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
               style={[styles.cancelBtn, { borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#E5E7EB' }]}
               onPress={handleClose}
             >
-              <Text style={[styles.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
+              <Text style={[styles.cancelText, { color: colors.textSecondary }]}>{t('component.signatureModal.cancelButton')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[
@@ -109,7 +111,7 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
               ) : (
                 <>
                   <MaterialIcons name="check" size={18} color="#FFFFFF" />
-                  <Text style={styles.confirmText}>Confirm</Text>
+                  <Text style={styles.confirmText}>{t('component.signatureModal.confirmButton')}</Text>
                 </>
               )}
             </TouchableOpacity>

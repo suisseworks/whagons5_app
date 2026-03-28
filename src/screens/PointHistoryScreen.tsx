@@ -14,6 +14,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, PointTransaction } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useGamification } from '../context/GamificationContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
@@ -36,6 +37,7 @@ const ACTION_ICONS: Record<string, keyof typeof MaterialIcons.glyphMap> = {
 export const PointHistoryScreen: React.FC = () => {
   const navigation = useNavigation<PointHistoryNavProp>();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { pointsSummary, pointHistory, fetchPointsSummary, fetchPointHistory } = useGamification();
   const [page, setPage] = useState(1);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -90,7 +92,7 @@ export const PointHistoryScreen: React.FC = () => {
         </View>
         <View style={styles.txContent}>
           <Text style={[styles.txAction, { color: colors.text }]} numberOfLines={1}>
-            {item.action?.name ?? 'Action'}
+            {item.action?.name ?? t('pointHistory.fallbackAction')}
           </Text>
           <Text style={[styles.txDesc, { color: colors.textSecondary }]} numberOfLines={1}>
             {item.description}
@@ -111,7 +113,7 @@ export const PointHistoryScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Point History</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('pointHistory.headerTitle')}</Text>
         <View style={{ width: 24 }} />
       </View>
 
@@ -126,17 +128,17 @@ export const PointHistoryScreen: React.FC = () => {
         ListHeaderComponent={
           pointsSummary ? (
             <View style={styles.statsRow}>
-              {renderStatCard('Total', pointsSummary.total_points, 'stars')}
-              {renderStatCard('Weekly', pointsSummary.weekly_points, 'date-range')}
-              {renderStatCard('Monthly', pointsSummary.monthly_points, 'calendar-today')}
-              {renderStatCard('Rank', `#${pointsSummary.rank}`, 'emoji-events')}
+              {renderStatCard(t('pointHistory.statTotal'), pointsSummary.total_points, 'stars')}
+              {renderStatCard(t('pointHistory.statWeekly'), pointsSummary.weekly_points, 'date-range')}
+              {renderStatCard(t('pointHistory.statMonthly'), pointsSummary.monthly_points, 'calendar-today')}
+              {renderStatCard(t('pointHistory.statRank'), `#${pointsSummary.rank}`, 'emoji-events')}
             </View>
           ) : null
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <MaterialIcons name="emoji-events" size={48} color={colors.textSecondary} />
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No point history yet</Text>
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('pointHistory.emptyText')}</Text>
           </View>
         }
         ListFooterComponent={loadingMore ? <ActivityIndicator color={primaryColor} style={{ padding: 16 }} /> : null}

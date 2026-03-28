@@ -32,6 +32,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import {
   useData,
   SyncedUser,
@@ -79,7 +80,7 @@ function utcMs(ts: string | null | undefined): number {
   return new Date(normalized).getTime() || 0;
 }
 
-function formatMessageTime(ts: string | null | undefined): string {
+function formatMessageTime(ts: string | null | undefined, _t?: (key: string, opts?: any) => string): string {
   if (!ts) return '';
   const normalized = ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z';
   const d = new Date(normalized);
@@ -91,11 +92,11 @@ function formatMessageTime(ts: string | null | undefined): string {
   const isYesterday = d.toDateString() === yesterday.toDateString();
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   if (isToday) return time;
-  if (isYesterday) return `Yesterday ${time}`;
+  if (isYesterday) return `${_t ? _t('colab.timeYesterday') : 'Yesterday'} ${time}`;
   return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
 }
 
-function formatConversationTime(ts: string | null | undefined): string {
+function formatConversationTime(ts: string | null | undefined, _t?: (key: string, opts?: any) => string): string {
   if (!ts) return '';
   const normalized = ts.includes('Z') || ts.includes('+') ? ts : ts + 'Z';
   const d = new Date(normalized);
@@ -104,11 +105,11 @@ function formatConversationTime(ts: string | null | undefined): string {
   const diffMs = now.getTime() - d.getTime();
   const diffMins = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMs / 3600000);
-  if (diffMins < 1) return 'now';
-  if (diffMins < 60) return `${diffMins}m`;
-  if (diffHours < 24) return `${diffHours}h`;
+  if (diffMins < 1) return _t ? _t('colab.timeNow') : 'now';
+  if (diffMins < 60) return _t ? _t('colab.timeMinutes', { count: diffMins }) : `${diffMins}m`;
+  if (diffHours < 24) return _t ? _t('colab.timeHours', { count: diffHours }) : `${diffHours}h`;
   const diffDays = Math.floor(diffMs / 86400000);
-  if (diffDays < 7) return `${diffDays}d`;
+  if (diffDays < 7) return _t ? _t('colab.timeDays', { count: diffDays }) : `${diffDays}d`;
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
@@ -417,6 +418,7 @@ interface ColabScreenProps {
 export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, initialConversationId, onConversationConsumed }) => {
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { data, isSyncing, refresh } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
@@ -728,20 +730,20 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         const other = participants.find((p) => String(p.user_id) !== String(currentUserId));
         if (other) {
           const u = getUser(other.user_id);
-          return u?.name || 'Unknown';
+          return u?.name || t('colab.fallbackUnknown');
         }
       } else {
         const otherNames = participants
           .filter((p) => String(p.user_id) !== String(currentUserId))
           .map((p) => {
             const u = getUser(p.user_id);
-            return u ? u.name.split(' ')[0] : 'Unknown';
+            return u ? u.name.split(' ')[0] : t('colab.fallbackUnknown');
           });
         if (otherNames.length > 0) return otherNames.join(', ');
       }
-      return 'Conversation';
+      return t('colab.fallbackConversation');
     },
-    [allParticipants, currentUserId, getUser],
+    [allParticipants, currentUserId, getUser, t],
   );
 
   const getLastMessage = useCallback(
@@ -817,10 +819,10 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
         }
       } catch {
-        Alert.alert('Error', `Failed to send ${a.fileName}`);
+        Alert.alert('Error', t('colab.failedToSendFile', { fileName: a.fileName }));
       }
     }
-  }, [activeConversationId, currentUserId, tenantId, data.conversations, pickAndUpload]);
+  }, [activeConversationId, currentUserId, tenantId, data.conversations, pickAndUpload, t]);
 
   // Send message (DM/group)
   const handleSendConversationMessage = useCallback(async () => {
@@ -843,7 +845,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       // Convex reactive query will show the message automatically
       setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 200);
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to send message');
+      Alert.alert('Error', err?.message || t('colab.failedToSendMessage'));
       setInputText(text);
     } finally {
       setIsSending(false);
@@ -871,7 +873,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       });
       setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 200);
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to send message');
+      Alert.alert('Error', err?.message || t('colab.failedToSendMessage'));
       setInputText(text);
     } finally {
       setIsSending(false);
@@ -899,11 +901,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         if (convexId) await cvxUpdateWsMessage({ tenantId, id: convexId as any, message: editText.trim() });
       }
     } catch {
-      Alert.alert('Error', 'Failed to edit message');
+      Alert.alert('Error', t('colab.failedToEditMessage'));
     }
     setEditingMessageId(null);
     setEditText('');
-  }, [editingMessageId, editText, tenantId, data.directMessages, data.workspaceChat, cvxUpdateMessage, cvxUpdateWsMessage]);
+  }, [editingMessageId, editText, tenantId, data.directMessages, data.workspaceChat, cvxUpdateMessage, cvxUpdateWsMessage, t]);
 
   const handleCancelEdit = useCallback(() => {
     setEditingMessageId(null);
@@ -913,10 +915,10 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   // Delete message
   const handleDeleteMessage = useCallback(
     (msgId: number, msgType: 'dm' | 'space') => {
-      Alert.alert('Delete Message', 'Are you sure?', [
-        { text: 'Cancel', style: 'cancel' },
+      Alert.alert(t('colab.alertDeleteTitle'), t('colab.alertDeleteMessage'), [
+        { text: t('colab.cancelButton'), style: 'cancel' },
         {
-          text: 'Delete',
+          text: t('colab.alertDeleteButton'),
           style: 'destructive',
           onPress: async () => {
             if (!tenantId) return;
@@ -931,13 +933,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                 if (convexId) await cvxDeleteWsMessage({ tenantId, id: convexId as any });
               }
             } catch {
-              Alert.alert('Error', 'Failed to delete message');
+              Alert.alert('Error', t('colab.failedToDeleteMessage'));
             }
           },
         },
       ]);
     },
-    [tenantId, data.directMessages, data.workspaceChat, cvxDeleteMessage, cvxDeleteWsMessage],
+    [tenantId, data.directMessages, data.workspaceChat, cvxDeleteMessage, cvxDeleteWsMessage, t],
   );
 
   // Toggle reaction
@@ -999,7 +1001,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         setShowNewChatModal(false);
         setNewChatSearch('');
       } catch {
-        Alert.alert('Error', 'Failed to create conversation');
+        Alert.alert('Error', t('colab.failedToCreateConversation'));
       } finally {
         setIsCreating(false);
       }
@@ -1014,7 +1016,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     const defaultName = selectedGroupUsers
       .map((id) => {
         const u = getUser(id);
-        return u ? u.name.split(' ')[0] : 'Unknown';
+        return u ? u.name.split(' ')[0] : t('colab.fallbackUnknown');
       })
       .join(', ');
 
@@ -1039,7 +1041,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       setSelectedGroupUsers([]);
       setNewChatSearch('');
     } catch {
-      Alert.alert('Error', 'Failed to create group');
+      Alert.alert('Error', t('colab.failedToCreateGroup'));
     } finally {
       setIsCreating(false);
     }
@@ -1089,7 +1091,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       reactions?: SyncedMessageReaction[];
     }) => {
       const sender = getUser(userId);
-      const senderName = isMe ? 'You' : sender?.name || 'Unknown';
+      const senderName = isMe ? t('colab.senderYou') : sender?.name || t('colab.fallbackUnknown');
       const isEditing = editingMessageId === msgId;
 
       // Group reactions by emoji
@@ -1130,7 +1132,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                 {senderName}
               </Text>
               <Text style={[styles.messageTime, { color: colors.textSecondary }, isMe && { marginRight: 0, marginLeft: 8 }]}>
-                {formatMessageTime(createdAt)}
+                {formatMessageTime(createdAt, t)}
               </Text>
             </View>
 
@@ -1201,7 +1203,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                             <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'video' })}>
                               <View style={styles.messageVideoThumb}>
                                 <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
-                                <Text style={styles.messageVideoLabel} numberOfLines={1}>{part.label || 'Video'}</Text>
+                                <Text style={styles.messageVideoLabel} numberOfLines={1}>{part.label || t('colab.videoLabel')}</Text>
                               </View>
                             </Pressable>
                           );
@@ -1222,10 +1224,10 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                         if (msgType === 'dm') {
                           setReactionMessageId(msgId);
                         } else if (isMe) {
-                          Alert.alert('Message', undefined, [
-                            { text: 'Edit', onPress: () => handleStartEdit(msgId, message) },
-                            { text: 'Delete', style: 'destructive', onPress: () => handleDeleteMessage(msgId, msgType) },
-                            { text: 'Cancel', style: 'cancel' },
+                          Alert.alert(t('colab.alertMessageTitle'), undefined, [
+                            { text: t('colab.alertEditButton'), onPress: () => handleStartEdit(msgId, message) },
+                            { text: t('colab.alertDeleteButton'), style: 'destructive', onPress: () => handleDeleteMessage(msgId, msgType) },
+                            { text: t('colab.cancelButton'), style: 'cancel' },
                           ]);
                         }
                       }}
@@ -1352,6 +1354,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       handleCancelEdit,
       handleDeleteMessage,
       handleToggleReaction,
+      t,
     ],
   );
 
@@ -1378,7 +1381,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               color: colors.text,
             },
           ]}
-          placeholder="Message..."
+          placeholder={t('colab.messagePlaceholder')}
           placeholderTextColor={colors.textSecondary}
           value={inputText}
           onChangeText={setInputText}
@@ -1421,7 +1424,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         </TouchableOpacity>
       </View>
     ),
-    [inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile],
+    [inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile, t],
   );
 
   // ---------------------------------------------------------------------------
@@ -1459,7 +1462,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
             },
           ]}
         >
-          Workspaces
+          {t('colab.tabWorkspaces')}
         </Text>
       </TouchableOpacity>
 
@@ -1485,7 +1488,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
             },
           ]}
         >
-          Chats
+          {t('colab.tabChats')}
         </Text>
         {totalUnreadCount > 0 && (
           <View style={[styles.tabBadge, { backgroundColor: primaryColor }]}>
@@ -1512,10 +1515,10 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
             color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'}
           />
           <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 16 }]}>
-            No workspaces
+            {t('colab.noWorkspacesTitle')}
           </Text>
           <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-            You don't have any workspaces yet
+            {t('colab.noWorkspacesSubtitle')}
           </Text>
         </View>
       );
@@ -1541,8 +1544,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           const lastMsg = wsMessages.sort((a, b) => utcMs(b.created_at) - utcMs(a.created_at))[0];
           const sender = lastMsg ? getUser(lastMsg.user_id) : null;
           const preview = lastMsg
-            ? `${String(lastMsg.user_id) === String(currentUserId) ? 'You' : sender?.name?.split(' ')[0] || 'Someone'}: ${lastMsg.message}`
-            : 'No messages yet';
+            ? `${String(lastMsg.user_id) === String(currentUserId) ? t('colab.senderYou') : sender?.name?.split(' ')[0] || t('colab.fallbackSomeone')}: ${lastMsg.message}`
+            : t('colab.noMessagesPreview');
 
           return (
             <TouchableOpacity
@@ -1572,7 +1575,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                   </Text>
                   {lastMsg && (
                     <Text style={[styles.conversationTime, { color: colors.textSecondary }]}>
-                      {formatConversationTime(lastMsg.created_at)}
+                      {formatConversationTime(lastMsg.created_at, t)}
                     </Text>
                   )}
                 </View>
@@ -1597,7 +1600,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'}
             />
             <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 16 }]}>
-              No workspaces
+              {t('colab.noWorkspacesTitle')}
             </Text>
           </View>
         }
@@ -1647,7 +1650,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                 {spaceWs.name}
               </Text>
               <Text style={[styles.chatHeaderSub, { color: colors.textSecondary }]}>
-                Workspace chat
+                {t('colab.workspaceChat')}
               </Text>
             </View>
           </View>
@@ -1671,8 +1674,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                   size={48}
                   color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
                 />
-                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
-                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
+                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t('colab.noMessagesYet')}</Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>{t('colab.startTheConversation')}</Text>
               </View>
             }
             renderItem={({ item: msg }) => {
@@ -1717,17 +1720,17 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         if (other) otherUser = getUser(other.user_id);
       }
 
-      let preview = 'Tap to start a conversation';
+      let preview = t('colab.tapToStartConversation');
       if (lastMsg) {
         const sender = getUser(lastMsg.user_id);
         const senderName =
           String(lastMsg.user_id) === String(currentUserId)
-            ? 'You'
-            : sender?.name.split(' ')[0] || 'Someone';
+            ? t('colab.senderYou')
+            : sender?.name.split(' ')[0] || t('colab.fallbackSomeone');
         // Strip markdown file links for preview
         let msgText = lastMsg.message
-          .replace(/!\[([^\]]*)\]\([^)]+\)/g, '📷 Photo')
-          .replace(/\[([^\]]*)\]\([^)]+\)/g, '📎 File');
+          .replace(/!\[([^\]]*)\]\([^)]+\)/g, `📷 ${t('colab.photoPreview')}`)
+          .replace(/\[([^\]]*)\]\([^)]+\)/g, `📎 ${t('colab.filePreview')}`);
         preview = isGroup ? `${senderName}: ${msgText}` : msgText;
       }
 
@@ -1767,7 +1770,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               </Text>
               {lastMsg && (
                 <Text style={[styles.conversationTime, { color: colors.textSecondary }]}>
-                  {formatConversationTime(lastMsg.created_at)}
+                  {formatConversationTime(lastMsg.created_at, t)}
                 </Text>
               )}
             </View>
@@ -1795,7 +1798,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     [
       getConversationDisplayName, getLastMessage, getUnreadCount, getUser,
       allParticipants, currentUserId, isDarkMode, primaryColor,
-      colors, openConversation,
+      colors, openConversation, t,
     ],
   );
 
@@ -1815,7 +1818,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           <MaterialIcons name="search" size={20} color={colors.textSecondary} style={{ marginRight: 8 }} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search conversations..."
+            placeholder={t('colab.searchConversationsPlaceholder')}
             placeholderTextColor={colors.textSecondary}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -1850,10 +1853,10 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'}
             />
             <Text style={[styles.emptyTitle, { color: colors.text, marginTop: 16 }]}>
-              No conversations yet
+              {t('colab.noConversationsTitle')}
             </Text>
             <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-              Start a new chat to get going
+              {t('colab.noConversationsSubtitle')}
             </Text>
           </View>
         }
@@ -1892,7 +1895,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
             <TouchableOpacity style={styles.backButton} onPress={handleBack}>
               <MaterialIcons name="arrow-back" size={22} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[styles.chatHeaderTitle, { color: colors.text }]}>Loading...</Text>
+            <Text style={[styles.chatHeaderTitle, { color: colors.text }]}>{t('colab.loading')}</Text>
           </View>
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <ActivityIndicator size="large" color={primaryColor} />
@@ -1938,8 +1941,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               </Text>
               <Text style={[styles.chatHeaderSub, { color: colors.textSecondary }]}>
                 {isGroup
-                  ? `${participantCount} member${participantCount !== 1 ? 's' : ''}`
-                  : 'Direct message'}
+                  ? (participantCount !== 1 ? t('colab.memberCountPlural', { count: participantCount }) : t('colab.memberCount', { count: participantCount }))
+                  : t('colab.directMessage')}
               </Text>
             </View>
           </View>
@@ -1963,8 +1966,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                   size={48}
                   color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
                 />
-                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>No messages yet</Text>
-                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>Start the conversation</Text>
+                <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>{t('colab.noMessagesYet')}</Text>
+                <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>{t('colab.startTheConversation')}</Text>
               </View>
             }
             renderItem={({ item: msg }) => {
@@ -2023,9 +2026,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                 setGroupName('');
               }}
             >
-              <Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text>
+              <Text style={[styles.modalCancel, { color: colors.textSecondary }]}>{t('colab.cancelButton')}</Text>
             </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>New Chat</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{t('colab.newChatTitle')}</Text>
             {newChatMode === 'group' ? (
               <TouchableOpacity
                 onPress={handleCreateGroup}
@@ -2042,7 +2045,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                     },
                   ]}
                 >
-                  {isCreating ? 'Creating...' : 'Create'}
+                  {isCreating ? t('colab.creatingButton') : t('colab.createButton')}
                 </Text>
               </TouchableOpacity>
             ) : (
@@ -2074,7 +2077,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                   { color: newChatMode === 'dm' ? primaryColor : colors.textSecondary },
                 ]}
               >
-                Direct Message
+                {t('colab.directMessageMode')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2096,7 +2099,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                   { color: newChatMode === 'group' ? primaryColor : colors.textSecondary },
                 ]}
               >
-                Group Chat
+                {t('colab.groupChatMode')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -2108,7 +2111,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           >
             {newChatMode === 'group' && (
               <>
-                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Group Name (optional)</Text>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('colab.groupNameLabel')}</Text>
                 <TextInput
                   style={[
                     styles.groupNameInput,
@@ -2118,14 +2121,14 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                       borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                     },
                   ]}
-                  placeholder="e.g. Design Team, Morning Shift..."
+                  placeholder={t('colab.groupNamePlaceholder')}
                   placeholderTextColor={colors.textSecondary}
                   value={groupName}
                   onChangeText={setGroupName}
                 />
                 {selectedGroupUsers.length > 0 && (
                   <Text style={[styles.selectedCount, { color: primaryColor }]}>
-                    {selectedGroupUsers.length} selected
+                    {t('colab.selectedCount', { count: selectedGroupUsers.length })}
                   </Text>
                 )}
               </>
@@ -2144,7 +2147,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               <MaterialIcons name="search" size={20} color={colors.textSecondary} style={{ marginRight: 8 }} />
               <TextInput
                 style={[styles.searchInput, { color: colors.text }]}
-                placeholder="Search people..."
+                placeholder={t('colab.searchPeoplePlaceholder')}
                 placeholderTextColor={colors.textSecondary}
                 value={newChatSearch}
                 onChangeText={setNewChatSearch}
@@ -2216,7 +2219,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               })}
               {availableUsers.length === 0 && (
                 <Text style={[styles.noResults, { color: colors.textSecondary }]}>
-                  {newChatSearch ? `No people matching "${newChatSearch}"` : 'No team members available'}
+                  {newChatSearch ? t('colab.noMatchingPeople', { query: newChatSearch }) : t('colab.noTeamMembers')}
                 </Text>
               )}
             </View>

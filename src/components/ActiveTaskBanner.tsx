@@ -5,6 +5,7 @@ import { TaskItem } from '../models/types';
 import { statusColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 interface ActiveTaskBannerProps {
   task: TaskItem;
@@ -20,6 +21,7 @@ export const ActiveTaskBanner: React.FC<ActiveTaskBannerProps> = ({
   onClear,
 }) => {
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7';
 
   return (
@@ -35,7 +37,7 @@ export const ActiveTaskBanner: React.FC<ActiveTaskBannerProps> = ({
     >
       <MaterialIcons name="play-circle-fill" size={24} color={primaryColor} />
       <View style={styles.content}>
-        <Text style={[styles.label, { color: colors.textSecondary }]}>Working on</Text>
+        <Text style={[styles.label, { color: colors.textSecondary }]}>{t('component.activeTaskBanner.workingOnLabel')}</Text>
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
           {task.title}
         </Text>

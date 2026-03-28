@@ -17,6 +17,7 @@ import { useTasks } from '../context/TaskContext';
 import { emptyFilters } from '../context/TaskContext';
 import type { TaskFilters } from '../context/TaskContext';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -28,19 +29,19 @@ interface TaskFilterSheetProps {
   onClose: () => void;
 }
 
-const PRIORITIES: { label: string; color: string }[] = [
-  { label: 'High', color: '#EF4444' },
-  { label: 'Medium', color: '#F59E0B' },
-  { label: 'Low', color: '#6B7280' },
+const PRIORITY_KEYS: { key: string; value: string; color: string }[] = [
+  { key: 'priorityHigh', value: 'High', color: '#EF4444' },
+  { key: 'priorityMedium', value: 'Medium', color: '#F59E0B' },
+  { key: 'priorityLow', value: 'Low', color: '#6B7280' },
 ];
 
-const FLAG_COLOR_OPTIONS: { value: string; label: string; color: string }[] = [
-  { value: 'red', label: 'Red', color: '#ef4444' },
-  { value: 'orange', label: 'Orange', color: '#f97316' },
-  { value: 'yellow', label: 'Yellow', color: '#eab308' },
-  { value: 'green', label: 'Green', color: '#22c55e' },
-  { value: 'blue', label: 'Blue', color: '#3b82f6' },
-  { value: 'purple', label: 'Purple', color: '#a855f7' },
+const FLAG_COLOR_KEYS: { value: string; key: string; color: string }[] = [
+  { value: 'red', key: 'flagRed', color: '#ef4444' },
+  { value: 'orange', key: 'flagOrange', color: '#f97316' },
+  { value: 'yellow', key: 'flagYellow', color: '#eab308' },
+  { value: 'green', key: 'flagGreen', color: '#22c55e' },
+  { value: 'blue', key: 'flagBlue', color: '#3b82f6' },
+  { value: 'purple', key: 'flagPurple', color: '#a855f7' },
 ];
 
 const INITIAL_ASSIGNEE_COUNT = 5;
@@ -51,6 +52,7 @@ const INITIAL_ASSIGNEE_COUNT = 5;
 
 export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClose }) => {
   const { isDarkMode, primaryColor, colors } = useTheme();
+  const { t } = useLanguage();
   const { filters, setFilters, availableStatuses, categories, availableAssignees, availableTags, selectedWorkspace } = useTasks();
 
   // Local draft so the user can adjust before applying
@@ -296,12 +298,12 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
 
           {/* Header */}
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>Filters</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{t('component.taskFilterSheet.title')}</Text>
             <TouchableOpacity
               onPress={onClose}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               accessibilityRole="button"
-              accessibilityLabel="Close filters"
+              accessibilityLabel={t('component.taskFilterSheet.closeFiltersA11y')}
             >
               <MaterialIcons name="close" size={22} color={colors.textSecondary} />
             </TouchableOpacity>
@@ -319,7 +321,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
             {isEverything && categories.length > 1 && (
               <View style={styles.categorySection}>
                 <Text style={[styles.categorySectionLabel, { color: colors.textSecondary }]}>
-                  Category
+                  {t('component.taskFilterSheet.categoryLabel')}
                 </Text>
                 <ScrollView
                   horizontal
@@ -348,7 +350,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
                         selectedCategory === null && { fontFamily: fontFamilies.bodySemibold },
                       ]}
                     >
-                      All
+                      {t('component.taskFilterSheet.categoryAll')}
                     </Text>
                   </TouchableOpacity>
                   {categories.map((cat) => (
@@ -385,7 +387,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
             )}
 
             {/* ── Status section ── */}
-            {renderSectionHeader('Status', 'status', draft.statuses.length)}
+            {renderSectionHeader(t('component.taskFilterSheet.sectionStatus'), 'status', draft.statuses.length)}
             {!collapsedSections.status && (
               <View style={styles.chipGrid}>
                 {visibleStatuses.map((s) =>
@@ -402,16 +404,16 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
             )}
 
             {/* ── Priority section ── */}
-            {renderSectionHeader('Priority', 'priority', draft.priorities.length)}
+            {renderSectionHeader(t('component.taskFilterSheet.sectionPriority'), 'priority', draft.priorities.length)}
             {!collapsedSections.priority && (
               <View style={styles.chipGrid}>
-                {PRIORITIES.map((p) =>
+                {PRIORITY_KEYS.map((p) =>
                   renderChip(
-                    `priority-${p.label}`,
-                    p.label,
-                    draft.priorities.includes(p.label),
+                    `priority-${p.value}`,
+                    t(`component.taskFilterSheet.${p.key}`),
+                    draft.priorities.includes(p.value),
                     p.color,
-                    () => togglePriority(p.label),
+                    () => togglePriority(p.value),
                     <View style={[styles.statusDot, { backgroundColor: p.color }]} />,
                   ),
                 )}
@@ -421,7 +423,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
             {/* ── Assignee section ── */}
             {availableAssignees.length > 0 && (
               <>
-                {renderSectionHeader('Assignee', 'assignee', draft.assignees.length)}
+                {renderSectionHeader(t('component.taskFilterSheet.sectionAssignee'), 'assignee', draft.assignees.length)}
                 {!collapsedSections.assignee && (
                   <View>
                     {/* Search input */}
@@ -435,7 +437,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
                         <MaterialIcons name="search" size={16} color={colors.textSecondary} />
                         <TextInput
                           style={[styles.searchInput, { color: colors.text }]}
-                          placeholder="Search assignees..."
+                          placeholder={t('component.taskFilterSheet.searchAssigneesPlaceholder')}
                           placeholderTextColor={colors.textSecondary}
                           value={assigneeSearch}
                           onChangeText={setAssigneeSearch}
@@ -476,7 +478,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
                         activeOpacity={0.7}
                       >
                         <Text style={[styles.showAllText, { color: primaryColor }]}>
-                          Show all ({filteredAssignees.total})
+                          {t('component.taskFilterSheet.showAll', { count: filteredAssignees.total })}
                         </Text>
                       </TouchableOpacity>
                     )}
@@ -488,7 +490,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
             {/* ── Tags section ── */}
             {availableTags.length > 0 && (
               <>
-                {renderSectionHeader('Tags', 'tag', draft.tags.length)}
+                {renderSectionHeader(t('component.taskFilterSheet.sectionTags'), 'tag', draft.tags.length)}
                 {!collapsedSections.tag && (
                   <View style={styles.chipGrid}>
                     {availableTags.map((tag) =>
@@ -512,13 +514,13 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
             )}
 
             {/* ── Flag section ── */}
-            {renderSectionHeader('Flag', 'flag', draft.flagColors.length)}
+            {renderSectionHeader(t('component.taskFilterSheet.sectionFlag'), 'flag', draft.flagColors.length)}
             {!collapsedSections.flag && (
               <View style={styles.chipGrid}>
-                {FLAG_COLOR_OPTIONS.map(({ label, color, value }) =>
+                {FLAG_COLOR_KEYS.map(({ key, color, value }) =>
                   renderChip(
                     `flag-${value}`,
-                    label,
+                    t(`component.taskFilterSheet.${key}`),
                     draft.flagColors.includes(value),
                     color,
                     () => toggleFlagColor(value),
@@ -540,7 +542,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
               activeOpacity={0.7}
               disabled={activeFilterCount === 0}
               accessibilityRole="button"
-              accessibilityLabel="Reset all filters"
+              accessibilityLabel={t('component.taskFilterSheet.resetButton')}
             >
               <Text
                 style={[
@@ -548,7 +550,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
                   { color: activeFilterCount > 0 ? colors.text : colors.textSecondary },
                 ]}
               >
-                Reset
+                {t('component.taskFilterSheet.resetButton')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -556,10 +558,10 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
               onPress={handleApply}
               activeOpacity={0.8}
               accessibilityRole="button"
-              accessibilityLabel={`Apply ${activeFilterCount} filters`}
+              accessibilityLabel={t('component.taskFilterSheet.applyFiltersWithCount', { count: activeFilterCount })}
             >
               <Text style={styles.applyText}>
-                {activeFilterCount > 0 ? `Apply filters (${activeFilterCount})` : 'Apply filters'}
+                {activeFilterCount > 0 ? t('component.taskFilterSheet.applyFiltersWithCount', { count: activeFilterCount }) : t('component.taskFilterSheet.applyFilters')}
               </Text>
             </TouchableOpacity>
           </View>

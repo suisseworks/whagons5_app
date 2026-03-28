@@ -20,12 +20,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { FaIcon } from '../components/FaIcon';
+import { Toast, ToastRef } from '../components/Toast';
 import { parseWorkspaceIcon } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { GPS_CAPTURE_STORAGE_KEY } from './SettingsScreen';
@@ -57,11 +59,11 @@ const PRIORITY_FALLBACK_COLORS: Record<string, string> = {
   low: '#9CA3AF',
 };
 
-const PRIORITY_MATCHERS: { key: string; label: string; match: (name: string) => boolean }[] = [
-  { key: 'urgent', label: 'Urgent', match: (n) => n.includes('urgent') || n.includes('urgente') },
-  { key: 'high', label: 'High', match: (n) => n.includes('high') || n.includes('alta') },
-  { key: 'normal', label: 'Normal', match: (n) => n.includes('medium') || n.includes('normal') || n.includes('media') },
-  { key: 'low', label: 'Low', match: (n) => n.includes('low') || n.includes('baja') },
+const PRIORITY_MATCHERS: { key: string; labelKey: string; match: (name: string) => boolean }[] = [
+  { key: 'urgent', labelKey: 'createTask.priorityUrgent', match: (n) => n.includes('urgent') || n.includes('urgente') },
+  { key: 'high', labelKey: 'createTask.priorityHigh', match: (n) => n.includes('high') || n.includes('alta') },
+  { key: 'normal', labelKey: 'createTask.priorityNormal', match: (n) => n.includes('medium') || n.includes('normal') || n.includes('media') },
+  { key: 'low', labelKey: 'createTask.priorityLow', match: (n) => n.includes('low') || n.includes('baja') },
 ];
 
 const MAX_ATTACHMENTS = 10;
@@ -196,9 +198,11 @@ export const CreateTaskScreen: React.FC = () => {
   const { data, userTeams } = useData();
   const { user } = useAuth();
   const { tenantId } = useTenant();
+  const { t } = useLanguage();
   const { pickImages, takePhoto, pickDocuments, uploadFile } = useConvexUpload();
 
   const titleInputRef = useRef<TextInput>(null);
+  const toastRef = useRef<ToastRef>(null);
 
   // Form state
   const [chosenWorkspaceId, setChosenWorkspaceId] = useState<string | null>(null);
@@ -356,8 +360,8 @@ export const CreateTaskScreen: React.FC = () => {
   // Templates for the current workspace's category
   const categoryTemplates = useMemo(() => {
     if (workspaceCategoryIds.size === 0) return [];
-    return data.templates.filter((t: any) =>
-      t.categoryId && workspaceCategoryIds.has(t.categoryId) && !t.deletedAt && t.enabled !== false
+    return data.templates.filter((tmpl: any) =>
+      tmpl.categoryId && workspaceCategoryIds.has(tmpl.categoryId) && !tmpl.deletedAt && tmpl.enabled !== false
     );
   }, [data.templates, workspaceCategoryIds]);
 
@@ -385,11 +389,11 @@ export const CreateTaskScreen: React.FC = () => {
       const backendPriority = data.priorities.find((p: any) => matcher.match(p.name.toLowerCase()));
       return {
         key: matcher.key,
-        label: backendPriority?.name ?? matcher.label,
+        label: backendPriority?.name ?? t(matcher.labelKey),
         color: backendPriority?.color ?? PRIORITY_FALLBACK_COLORS[matcher.key],
       };
     });
-  }, [data.priorities]);
+  }, [data.priorities, t]);
 
   const matchedPriorityId = useMemo(() => {
     const key = selectedPriorityKey.toLowerCase();
@@ -416,11 +420,11 @@ export const CreateTaskScreen: React.FC = () => {
   }, [data.spots]);
 
   const tagItems = useMemo(() => {
-    return data.tags.map((t: any) => ({ _id: t._id, name: t.name, color: t.color ?? null }));
+    return data.tags.map((tg: any) => ({ _id: tg._id, name: tg.name, color: tg.color ?? null }));
   }, [data.tags]);
 
   const selectedAssigneeIds = useMemo(() => new Set(selectedAssignees.map(a => a._id)), [selectedAssignees]);
-  const selectedTagIds = useMemo(() => new Set(selectedTags.map(t => t._id)), [selectedTags]);
+  const selectedTagIds = useMemo(() => new Set(selectedTags.map(tg => tg._id)), [selectedTags]);
 
   // ---------------------------------------------------------------------------
   // Workspace selection
@@ -443,8 +447,8 @@ export const CreateTaskScreen: React.FC = () => {
 
   const handleToggleTag = useCallback((item: { _id: string; name: string; color?: string | null }) => {
     setSelectedTags((prev) => {
-      const exists = prev.find((t) => t._id === item._id);
-      if (exists) return prev.filter((t) => t._id !== item._id);
+      const exists = prev.find((tg) => tg._id === item._id);
+      if (exists) return prev.filter((tg) => tg._id !== item._id);
       return [...prev, { _id: item._id, name: item.name, color: item.color }];
     });
   }, []);
@@ -455,7 +459,7 @@ export const CreateTaskScreen: React.FC = () => {
   const addAttachmentFiles = useCallback(async (files: { uri: string; fileName: string; fileSize: number; fileType: string }[]) => {
     const available = MAX_ATTACHMENTS - attachments.length;
     if (available <= 0) {
-      Alert.alert('Limit reached', `Maximum ${MAX_ATTACHMENTS} attachments per task.`);
+      Alert.alert(t('createTask.limitReachedTitle'), t('createTask.limitReachedMessage', { max: MAX_ATTACHMENTS }));
       return;
     }
     const toAdd = files.slice(0, available);
@@ -463,7 +467,7 @@ export const CreateTaskScreen: React.FC = () => {
     // Check file sizes
     const oversized = toAdd.filter(f => f.fileSize > MAX_FILE_SIZE);
     if (oversized.length > 0) {
-      Alert.alert('File too large', `Maximum file size is 25 MB. ${oversized.length} file(s) skipped.`);
+      Alert.alert(t('createTask.fileTooLargeTitle'), t('createTask.fileTooLargeMessage', { count: oversized.length }));
     }
     const valid = toAdd.filter(f => f.fileSize <= MAX_FILE_SIZE || f.fileSize === 0); // 0 = unknown size, allow
     if (valid.length === 0) return;
@@ -498,7 +502,7 @@ export const CreateTaskScreen: React.FC = () => {
         );
       }
     }
-  }, [attachments.length, uploadFile]);
+  }, [attachments.length, uploadFile, t]);
 
   const handlePickFile = useCallback(async () => {
     const docs = await pickDocuments();
@@ -508,9 +512,9 @@ export const CreateTaskScreen: React.FC = () => {
   }, [pickDocuments, addAttachmentFiles]);
 
   const handlePickPhoto = useCallback(async () => {
-    Alert.alert('Add Photo', 'Choose an option', [
+    Alert.alert(t('createTask.addPhotoTitle'), t('createTask.addPhotoMessage'), [
       {
-        text: 'Take Photo',
+        text: t('createTask.takePhoto'),
         onPress: async () => {
           const photo = await takePhoto();
           if (photo) {
@@ -519,7 +523,7 @@ export const CreateTaskScreen: React.FC = () => {
         },
       },
       {
-        text: 'Photo Library',
+        text: t('createTask.photoLibrary'),
         onPress: async () => {
           const images = await pickImages();
           if (images.length > 0) {
@@ -527,9 +531,9 @@ export const CreateTaskScreen: React.FC = () => {
           }
         },
       },
-      { text: 'Cancel', style: 'cancel' },
+      { text: t('common.cancel'), style: 'cancel' },
     ]);
-  }, [takePhoto, pickImages, addAttachmentFiles]);
+  }, [takePhoto, pickImages, addAttachmentFiles, t]);
 
   const handleRetryAttachment = useCallback(async (item: AttachmentItem) => {
     if (!item.uri) return;
@@ -566,15 +570,15 @@ export const CreateTaskScreen: React.FC = () => {
   const handleCreateTask = useCallback(async () => {
     const finalName = hasTemplates ? (selectedTemplate?.name ?? '') : taskName.trim();
     if (!finalName) {
-      Alert.alert('Error', hasTemplates ? 'Please select a template' : 'Please enter a task name');
+      Alert.alert(t('common.error'), hasTemplates ? t('createTask.errorSelectTemplate') : t('createTask.errorEnterTaskName'));
       return;
     }
     if (!workspaceConvexId) {
-      Alert.alert('Error', 'No workspace available. Please select a workspace first.');
+      Alert.alert(t('common.error'), t('createTask.errorNoWorkspace'));
       return;
     }
     if (hasUploadingFiles) {
-      Alert.alert('Please wait', 'Some files are still uploading.');
+      Alert.alert(t('createTask.pleaseWaitTitle'), t('createTask.pleaseWaitMessage'));
       return;
     }
 
@@ -604,11 +608,11 @@ export const CreateTaskScreen: React.FC = () => {
         longitude: capturedLocation?.longitude,
       });
 
-      Alert.alert('Success', 'Task created successfully');
-      navigation.goBack();
+      toastRef.current?.show({ type: 'success', title: t('common.success'), body: t('createTask.taskCreatedSuccess') });
+      setTimeout(() => navigation.goBack(), 800);
     } catch (err: any) {
       console.warn('[CreateTask] Failed:', err);
-      Alert.alert('Error', err?.message || 'Failed to create task. Please try again.');
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('createTask.createFailedMessage') });
     } finally {
       setIsSubmitting(false);
     }
@@ -616,7 +620,7 @@ export const CreateTaskScreen: React.FC = () => {
     taskName, description, workspaceConvexId, createTask, navigation,
     initialStatusConvexId, matchedPriorityId, attachments, hasUploadingFiles,
     workspaceCategories, currentWorkspace, capturedLocation,
-    hasTemplates, selectedTemplate, selectedSpot, selectedAssignees,
+    hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, t,
   ]);
 
   // ---------------------------------------------------------------------------
@@ -631,7 +635,7 @@ export const CreateTaskScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <MaterialIcons name="close" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>New Task</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('createTask.headerTitle')}</Text>
         {gpsStatus === 'loading' || gpsStatus === 'done' ? (
           <Animated.View style={{
             opacity: gpsStatus === 'loading' ? gpsOpacityAnim : 1,
@@ -681,7 +685,7 @@ export const CreateTaskScreen: React.FC = () => {
               )}
             </View>
             <Text style={[styles.workspaceBadgeText, { color: colors.text }]}>
-              {currentWorkspace?.name ?? 'Select workspace'}
+              {currentWorkspace?.name ?? t('createTask.selectWorkspace')}
             </Text>
             <MaterialIcons name="keyboard-arrow-down" size={18} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -715,7 +719,7 @@ export const CreateTaskScreen: React.FC = () => {
                 ]}
                 numberOfLines={1}
               >
-                {selectedTemplate?.name ?? 'Select template'}
+                {selectedTemplate?.name ?? t('createTask.selectTemplate')}
               </Text>
               <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
             </TouchableOpacity>
@@ -723,7 +727,7 @@ export const CreateTaskScreen: React.FC = () => {
             <TextInput
               ref={titleInputRef}
               style={[styles.titleInput, { color: colors.text }]}
-              placeholder="Task name"
+              placeholder={t('createTask.taskName')}
               placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
               value={taskName}
               onChangeText={setTaskName}
@@ -742,7 +746,7 @@ export const CreateTaskScreen: React.FC = () => {
                   borderColor,
                 },
               ]}
-              placeholder="Add a description..."
+              placeholder={t('createTask.addDescriptionPlaceholder')}
               placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
               value={description}
               onChangeText={setDescription}
@@ -754,12 +758,12 @@ export const CreateTaskScreen: React.FC = () => {
           ) : (
             <TouchableOpacity onPress={() => setShowDescription(true)} style={styles.addDescriptionButton}>
               <MaterialIcons name="add" size={18} color={primaryColor} />
-              <Text style={[styles.addDescriptionText, { color: primaryColor }]}>Add description</Text>
+              <Text style={[styles.addDescriptionText, { color: primaryColor }]}>{t('createTask.addDescription')}</Text>
             </TouchableOpacity>
           )}
 
           {/* Priority Selector */}
-          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>PRIORITY</Text>
+          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.priorityLabel')}</Text>
           <View style={styles.priorityRow}>
             {priorityOptions.map((opt) => {
               const isActive = selectedPriorityKey === opt.key;
@@ -799,7 +803,7 @@ export const CreateTaskScreen: React.FC = () => {
           </View>
 
           {/* Assign To */}
-          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>ASSIGN TO</Text>
+          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.assignToLabel')}</Text>
           <TouchableOpacity
             style={[
               styles.fieldSelector,
@@ -827,7 +831,7 @@ export const CreateTaskScreen: React.FC = () => {
               ]}
               numberOfLines={1}
             >
-              {selectedAssignees.length > 0 ? selectedAssignees.map(a => a.name).join(', ') : 'Select assignees'}
+              {selectedAssignees.length > 0 ? selectedAssignees.map(a => a.name).join(', ') : t('createTask.selectAssignees')}
             </Text>
             <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
           </TouchableOpacity>
@@ -847,7 +851,7 @@ export const CreateTaskScreen: React.FC = () => {
           {/* Spot / Location */}
           {spotItems.length > 0 && (
             <>
-              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>LOCATION</Text>
+              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.locationLabel')}</Text>
               <TouchableOpacity
                 style={[
                   styles.fieldSelector,
@@ -875,7 +879,7 @@ export const CreateTaskScreen: React.FC = () => {
                   ]}
                   numberOfLines={1}
                 >
-                  {selectedSpot?.name ?? 'Select location'}
+                  {selectedSpot?.name ?? t('createTask.selectLocation')}
                 </Text>
                 <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
               </TouchableOpacity>
@@ -885,7 +889,7 @@ export const CreateTaskScreen: React.FC = () => {
           {/* Tags */}
           {tagItems.length > 0 && (
             <>
-              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>TAGS</Text>
+              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.tagsLabel')}</Text>
               <TouchableOpacity
                 style={[
                   styles.fieldSelector,
@@ -913,7 +917,7 @@ export const CreateTaskScreen: React.FC = () => {
                   ]}
                   numberOfLines={1}
                 >
-                  {selectedTags.length > 0 ? selectedTags.map(t => t.name).join(', ') : 'Select tags'}
+                  {selectedTags.length > 0 ? selectedTags.map(tg => tg.name).join(', ') : t('createTask.selectTags')}
                 </Text>
                 <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
               </TouchableOpacity>
@@ -934,7 +938,7 @@ export const CreateTaskScreen: React.FC = () => {
           )}
 
           {/* Attachments */}
-          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>ATTACHMENTS</Text>
+          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.attachmentsLabel')}</Text>
           <View style={styles.attachmentButtonsRow}>
             <TouchableOpacity
               style={[styles.attachmentButton, { borderColor, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface }]}
@@ -942,7 +946,7 @@ export const CreateTaskScreen: React.FC = () => {
               activeOpacity={0.7}
             >
               <MaterialIcons name="attach-file" size={20} color={isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780'} />
-              <Text style={[styles.attachmentButtonText, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780' }]}>File</Text>
+              <Text style={[styles.attachmentButtonText, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780' }]}>{t('createTask.fileButton')}</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.attachmentButton, { borderColor, backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface }]}
@@ -950,7 +954,7 @@ export const CreateTaskScreen: React.FC = () => {
               activeOpacity={0.7}
             >
               <MaterialIcons name="photo-camera" size={20} color={isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780'} />
-              <Text style={[styles.attachmentButtonText, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780' }]}>Photo</Text>
+              <Text style={[styles.attachmentButtonText, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780' }]}>{t('createTask.photoButton')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -981,7 +985,7 @@ export const CreateTaskScreen: React.FC = () => {
                 </Text>
                 <Text style={[styles.attachmentSize, { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299' }]}>
                   {att.fileSize > 0 ? formatFileSize(att.fileSize) : ''}
-                  {att.status === 'error' && ' — Upload failed'}
+                  {att.status === 'error' && ` — ${t('createTask.uploadFailed')}`}
                 </Text>
               </View>
               {att.status === 'uploading' && (
@@ -1038,7 +1042,7 @@ export const CreateTaskScreen: React.FC = () => {
               },
             ]}
           >
-            {isSubmitting ? 'Creating...' : 'Create Task'}
+            {isSubmitting ? t('createTask.creatingButton') : t('createTask.createButton')}
           </Text>
         </TouchableOpacity>
       </View>
@@ -1046,7 +1050,7 @@ export const CreateTaskScreen: React.FC = () => {
       {/* Workspace Modal */}
       <SelectorModal
         visible={workspaceModalVisible}
-        title="Select Workspace"
+        title={t('createTask.selectWorkspaceModalTitle')}
         items={workspaceItems}
         selectedId={currentWorkspace?._id}
         onSelect={handleWorkspaceSelect}
@@ -1062,8 +1066,8 @@ export const CreateTaskScreen: React.FC = () => {
       {/* Template Modal */}
       <SelectorModal
         visible={templateModalVisible}
-        title="Select Template"
-        items={categoryTemplates.map((t: any) => ({ _id: t._id, name: t.name, color: null }))}
+        title={t('createTask.selectTemplateModalTitle')}
+        items={categoryTemplates.map((tmpl: any) => ({ _id: tmpl._id, name: tmpl.name, color: null }))}
         selectedId={selectedTemplate?._id}
         onSelect={(item) => {
           setSelectedTemplate(item);
@@ -1079,7 +1083,7 @@ export const CreateTaskScreen: React.FC = () => {
       {/* Assignee Modal (multi-select) */}
       <SelectorModal
         visible={assigneeModalVisible}
-        title="Select Assignees"
+        title={t('createTask.selectAssigneesModalTitle')}
         items={userItems}
         onSelect={handleToggleAssignee}
         onClose={() => setAssigneeModalVisible(false)}
@@ -1094,7 +1098,7 @@ export const CreateTaskScreen: React.FC = () => {
       {/* Spot Modal */}
       <SelectorModal
         visible={spotModalVisible}
-        title="Select Location"
+        title={t('createTask.selectLocationModalTitle')}
         items={spotItems}
         selectedId={selectedSpot?._id}
         onSelect={(item) => { setSelectedSpot(item); setSpotModalVisible(false); }}
@@ -1108,7 +1112,7 @@ export const CreateTaskScreen: React.FC = () => {
       {/* Tag Modal (multi-select) */}
       <SelectorModal
         visible={tagModalVisible}
-        title="Select Tags"
+        title={t('createTask.selectTagsModalTitle')}
         items={tagItems}
         onSelect={handleToggleTag}
         onClose={() => setTagModalVisible(false)}
@@ -1119,6 +1123,7 @@ export const CreateTaskScreen: React.FC = () => {
         isDarkMode={isDarkMode}
         primaryColor={primaryColor}
       />
+      <Toast ref={toastRef} />
     </SafeAreaView>
   );
 };

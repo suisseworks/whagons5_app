@@ -10,6 +10,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
 
@@ -18,6 +19,7 @@ type SpotsMapNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Spo
 export const SpotsMapScreen: React.FC = () => {
   const navigation = useNavigation<SpotsMapNavigationProp>();
   const { colors, isDarkMode } = useTheme();
+  const { t } = useLanguage();
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
@@ -26,18 +28,18 @@ export const SpotsMapScreen: React.FC = () => {
         <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Map</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('spotsMap.headerTitle')}</Text>
         <View style={{ width: 40 }} />
       </View>
 
       {/* Coming Soon Content */}
       <View style={styles.content}>
         <MaterialIcons name="map" size={64} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
-        <Text style={[styles.title, { color: colors.text }]}>Map</Text>
+        <Text style={[styles.title, { color: colors.text }]}>{t('spotsMap.title')}</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          Interactive map view is on the way
+          {t('spotsMap.subtitle')}
         </Text>
-        <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>Coming soon</Text>
+        <Text style={[styles.comingSoon, { color: colors.textSecondary }]}>{t('spotsMap.comingSoon')}</Text>
       </View>
     </SafeAreaView>
   );

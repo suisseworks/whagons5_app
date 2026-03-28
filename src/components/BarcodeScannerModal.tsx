@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const VIEWFINDER_WIDTH = SCREEN_WIDTH * 0.8;
@@ -60,6 +61,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   onClose,
   onScan,
 }) => {
+  const { t } = useLanguage();
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraAvailable, setCameraAvailable] = useState<boolean | null>(null);
   const [permissionGranted, setPermissionGranted] = useState(false);
@@ -131,7 +133,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
       return (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color="#FFFFFF" />
-          <Text style={styles.messageText}>Loading camera...</Text>
+          <Text style={styles.messageText}>{t('component.barcodeScanner.loadingCamera')}</Text>
         </View>
       );
     }
@@ -147,15 +149,15 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           />
           <Text style={styles.messageText}>
             {!cameraAvailable
-              ? 'Camera scanner requires a dev build.\nEnter barcode manually:'
-              : 'Camera permission denied.\nEnter barcode manually:'}
+              ? t('component.barcodeScanner.cameraRequiresDevBuild')
+              : t('component.barcodeScanner.cameraPermissionDenied')}
           </Text>
           <View style={styles.manualInputRow}>
             <TextInput
               style={styles.manualInput}
               value={manualValue}
               onChangeText={setManualValue}
-              placeholder="Enter barcode..."
+              placeholder={t('component.barcodeScanner.enterBarcodePlaceholder')}
               placeholderTextColor="rgba(255,255,255,0.4)"
               autoFocus
               onSubmitEditing={handleManualSubmit}
@@ -181,7 +183,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
                 }
               }}
             >
-              <Text style={styles.permissionButtonText}>Grant Camera Permission</Text>
+              <Text style={styles.permissionButtonText}>{t('component.barcodeScanner.grantCameraPermission')}</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -252,7 +254,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
             <MaterialIcons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Scan Barcode</Text>
+          <Text style={styles.headerTitle}>{t('component.barcodeScanner.title')}</Text>
           <View style={{ width: 44 }} />
         </View>
 
@@ -260,7 +262,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         {cameraAvailable && permissionGranted && cameraReady && (
           <View style={styles.hintContainer}>
             <Text style={styles.hintText}>
-              Point your camera at a barcode
+              {t('component.barcodeScanner.hint')}
             </Text>
           </View>
         )}

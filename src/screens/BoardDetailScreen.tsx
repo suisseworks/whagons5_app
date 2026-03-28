@@ -18,6 +18,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useData, SyncedBoardMessage } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { RootStackParamList } from '../models/types';
@@ -37,6 +38,7 @@ export const BoardDetailScreen: React.FC = () => {
   const route = useRoute<BoardDetailRouteProp>();
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { data, isSyncing, refresh } = useData();
   const { token, subdomain } = useAuth();
   const { tenantId } = useTenant();
@@ -90,10 +92,10 @@ export const BoardDetailScreen: React.FC = () => {
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 1) return t('boardDetail.timeJustNow');
+    if (diffMins < 60) return t('boardDetail.timeMinutesAgo', { count: diffMins });
+    if (diffHours < 24) return t('boardDetail.timeHoursAgo', { count: diffHours });
+    if (diffDays < 7) return t('boardDetail.timeDaysAgo', { count: diffDays });
     return date.toLocaleDateString();
   };
 
@@ -114,7 +116,7 @@ export const BoardDetailScreen: React.FC = () => {
       });
       setMessageInput('');
     } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to send message');
+      Alert.alert('Error', err?.message || t('boardDetail.failedToSendMessage'));
     } finally {
       setIsSending(false);
     }
@@ -140,7 +142,7 @@ export const BoardDetailScreen: React.FC = () => {
           content,
         });
       } catch {
-        Alert.alert('Error', `Failed to send ${a.fileName}`);
+        Alert.alert('Error', t('boardDetail.failedToSendFile', { fileName: a.fileName }));
       }
     }
   }, [tenantId, boardId, data.boards, createBoardMessage, pickAndUpload]);
@@ -151,7 +153,7 @@ export const BoardDetailScreen: React.FC = () => {
 
   const renderMessage = ({ item }: { item: SyncedBoardMessage }) => {
     const author = userMap.get(item.created_by);
-    const authorName = author?.name || 'Unknown';
+    const authorName = author?.name || t('boardDetail.fallbackAuthor');
     const cardBg = isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)';
     const cardBorder = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)';
 
@@ -161,7 +163,7 @@ export const BoardDetailScreen: React.FC = () => {
         {item.is_pinned && (
           <View style={[styles.pinnedBadge, { backgroundColor: `${primaryColor}18` }]}>
             <MaterialIcons name="push-pin" size={12} color={primaryColor} />
-            <Text style={[styles.pinnedText, { color: primaryColor }]}>Pinned</Text>
+            <Text style={[styles.pinnedText, { color: primaryColor }]}>{t('boardDetail.pinnedBadge')}</Text>
           </View>
         )}
 
@@ -196,12 +198,12 @@ export const BoardDetailScreen: React.FC = () => {
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.placeholderContainer}>
           <MaterialIcons name="error-outline" size={56} color={colors.textSecondary} />
-          <Text style={[styles.placeholderTitle, { color: colors.text }]}>Board not found</Text>
+          <Text style={[styles.placeholderTitle, { color: colors.text }]}>{t('boardDetail.boardNotFound')}</Text>
           <TouchableOpacity
             style={[styles.backButton, { backgroundColor: primaryColor }]}
             onPress={() => navigation.goBack()}
           >
-            <Text style={styles.backButtonText}>Go back</Text>
+            <Text style={styles.backButtonText}>{t('boardDetail.goBack')}</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -242,7 +244,7 @@ export const BoardDetailScreen: React.FC = () => {
             {board.name}
           </Text>
           <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-            {memberCount} {memberCount === 1 ? 'member' : 'members'} · {messages.length} {messages.length === 1 ? 'post' : 'posts'}
+            {memberCount} {memberCount === 1 ? t('boardDetail.memberSingular') : t('boardDetail.memberPlural')} · {messages.length} {messages.length === 1 ? t('boardDetail.postSingular') : t('boardDetail.postPlural')}
           </Text>
         </View>
       </View>
@@ -271,10 +273,10 @@ export const BoardDetailScreen: React.FC = () => {
                 color={isDarkMode ? 'rgba(255,255,255,0.12)' : '#D1D5DB'}
               />
               <Text style={[styles.emptyTitle, { color: colors.textSecondary }]}>
-                No posts yet
+                {t('boardDetail.noPostsTitle')}
               </Text>
               <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-                Be the first to post on this board
+                {t('boardDetail.noPostsSubtitle')}
               </Text>
             </View>
           }
@@ -318,7 +320,7 @@ export const BoardDetailScreen: React.FC = () => {
                 color: colors.text,
               },
             ]}
-            placeholder="Write a post..."
+            placeholder={t('boardDetail.composerPlaceholder')}
             placeholderTextColor={colors.textSecondary}
             value={messageInput}
             onChangeText={setMessageInput}

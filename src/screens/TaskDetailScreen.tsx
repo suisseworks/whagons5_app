@@ -23,7 +23,7 @@ import Animated, {
   useAnimatedStyle,
   withSpring,
 } from 'react-native-reanimated';
-import MapView, { Marker } from 'react-native-maps';
+
 import { useVideoPlayer, VideoView } from 'expo-video';
 import RenderHtml from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -33,13 +33,63 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { useTenant } from '../hooks/useTenant';
 import { RootStackParamList } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
+import TaskNavigationMap from '../components/TaskNavigationMap';
 import { FormFiller } from '../components/FormFiller';
+
+/** Error-safe wrapper so a MapView crash never takes down TaskDetail */
+class TaskNavigationMapSafe extends React.Component<
+  React.ComponentProps<typeof TaskNavigationMap> & {
+    sectionLabelStyle: any;
+    sectionLabelText: string;
+    primaryColor: string;
+    openInMapsText: string;
+  },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  render() {
+    const { sectionLabelStyle, sectionLabelText, primaryColor, openInMapsText,
+            taskLatitude, taskLongitude, ...mapProps } = this.props;
+    if (this.state.hasError) {
+      return (
+        <>
+          <Text style={sectionLabelStyle}>{sectionLabelText}</Text>
+          <TouchableOpacity
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 }}
+            onPress={() => {
+              const url = Platform.select({
+                ios: `maps:${taskLatitude},${taskLongitude}?q=${taskLatitude},${taskLongitude}`,
+                android: `geo:${taskLatitude},${taskLongitude}?q=${taskLatitude},${taskLongitude}`,
+              });
+              if (url) Linking.openURL(url).catch(() => {});
+            }}
+          >
+            <MaterialIcons name="map" size={18} color={primaryColor} />
+            <Text style={{ color: primaryColor, fontSize: 13 }}>{openInMapsText}</Text>
+          </TouchableOpacity>
+        </>
+      );
+    }
+    return (
+      <>
+        <Text style={sectionLabelStyle}>{sectionLabelText}</Text>
+        <TaskNavigationMap
+          taskLatitude={taskLatitude}
+          taskLongitude={taskLongitude}
+          {...mapProps}
+        />
+      </>
+    );
+  }
+}
 import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -243,20 +293,20 @@ function generateUUID(): string {
   });
 }
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t?: (key: string, opts?: Record<string, any>) => string): string {
   const date = new Date(
     dateStr.includes('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z',
   );
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return 'Just now';
+  if (diffSec < 60) return t ? t('taskDetail.timeJustNow') : 'Just now';
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return t ? t('taskDetail.timeMinutesAgo', { count: diffMin }) : `${diffMin}m ago`;
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return t ? t('taskDetail.timeHoursAgo', { count: diffHr }) : `${diffHr}h ago`;
   const diffDay = Math.floor(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
+  if (diffDay < 30) return t ? t('taskDetail.timeDaysAgo', { count: diffDay }) : `${diffDay}d ago`;
   return date.toLocaleDateString();
 }
 
@@ -267,6 +317,7 @@ export const TaskDetailScreen: React.FC = () => {
   const route = useRoute<TaskDetailRouteProp>();
   const { task } = route.params;
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const toastRef = useRef<ToastRef>(null);
   const { getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
   const { user: authUser } = useAuth();
@@ -417,7 +468,7 @@ export const TaskDetailScreen: React.FC = () => {
     const text = commentText.trim();
     if (!text && pendingAttachments.length === 0) return;
     if (!task.id || !tenantId) {
-      toastRef.current?.show({ type: 'error', title: 'Error', body: 'Cannot add comment: task ID or tenant is missing.' });
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCannotAddComment') });
       return;
     }
 
@@ -441,7 +492,7 @@ export const TaskDetailScreen: React.FC = () => {
       setPendingAttachments([]);
       setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (err: any) {
-      toastRef.current?.show({ type: 'error', title: 'Error', body: err?.message || 'Failed to post comment' });
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('taskDetail.errorFailedToPostComment') });
     } finally {
       setSendingComment(false);
     }
@@ -747,66 +798,38 @@ export const TaskDetailScreen: React.FC = () => {
       {/* Metadata grid — 2 columns */}
       <View style={styles.metaGrid}>
         <View style={[styles.metaCell, { backgroundColor: secondarySurface }]}>
-          <Text style={[styles.metaCellLabel, { color: tertiaryText }]}>LOCATION</Text>
+          <Text style={[styles.metaCellLabel, { color: tertiaryText }]}>{t('taskDetail.locationLabel')}</Text>
           <Text style={[styles.metaCellValue, { color: colors.text }]} numberOfLines={2}>
             {task.spot || '—'}
           </Text>
         </View>
         <View style={[styles.metaCell, { backgroundColor: secondarySurface }]}>
-          <Text style={[styles.metaCellLabel, { color: tertiaryText }]}>CREATED</Text>
+          <Text style={[styles.metaCellLabel, { color: tertiaryText }]}>{t('taskDetail.createdLabel')}</Text>
           <Text style={[styles.metaCellValue, { color: colors.text }]}>
             {task.createdAt || '—'}
           </Text>
         </View>
       </View>
 
-      {/* GPS Map */}
+      {/* GPS Navigation Map */}
       {task.latitude != null && task.longitude != null && (
-        <>
-          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>GPS LOCATION</Text>
-          <View style={[styles.mapContainer, { backgroundColor: secondarySurface }]}>
-            <MapView
-              style={styles.miniMap}
-              initialRegion={{
-                latitude: task.latitude,
-                longitude: task.longitude,
-                latitudeDelta: 0.005,
-                longitudeDelta: 0.005,
-              }}
-              scrollEnabled={false}
-              zoomEnabled={false}
-              rotateEnabled={false}
-              pitchEnabled={false}
-              toolbarEnabled={false}
-              liteMode={Platform.OS === 'android'}
-            >
-              <Marker
-                coordinate={{ latitude: task.latitude, longitude: task.longitude }}
-                title={task.title}
-                description={task.spot || undefined}
-              />
-            </MapView>
-            <TouchableOpacity
-              style={styles.mapOpenButton}
-              activeOpacity={0.7}
-              onPress={() => {
-                const scheme = Platform.select({ ios: 'maps:', android: 'geo:' });
-                const url = Platform.select({
-                  ios: `${scheme}${task.latitude},${task.longitude}?q=${task.latitude},${task.longitude}`,
-                  android: `${scheme}${task.latitude},${task.longitude}?q=${task.latitude},${task.longitude}`,
-                });
-                if (url) Linking.openURL(url).catch(() => {});
-              }}
-            >
-              <MaterialIcons name="open-in-new" size={14} color={primaryColor} />
-              <Text style={[styles.mapOpenText, { color: primaryColor }]}>Open in Maps</Text>
-            </TouchableOpacity>
-          </View>
-        </>
+        <TaskNavigationMapSafe
+          taskLatitude={task.latitude}
+          taskLongitude={task.longitude}
+          taskTitle={task.title}
+          spotName={task.spot}
+          isDarkMode={isDarkMode}
+          secondarySurface={secondarySurface}
+          tertiaryText={tertiaryText}
+          sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
+          sectionLabelText={t('taskDetail.gpsLocationLabel')}
+          primaryColor={primaryColor}
+          openInMapsText={t('taskDetail.openInMaps')}
+        />
       )}
 
       {/* Assignees section */}
-      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>ASSIGNEES</Text>
+      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.assigneesLabel')}</Text>
       {task.assignees.length > 0 ? (
         <View style={styles.assigneeList}>
           {task.assignees.map((assignee, index) => (
@@ -826,14 +849,14 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       ) : (
         <View style={[styles.assigneeEmpty, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
-          <Text style={[styles.assigneeEmptyText, { color: tertiaryText }]}>Tap to assign</Text>
+          <Text style={[styles.assigneeEmptyText, { color: tertiaryText }]}>{t('taskDetail.tapToAssign')}</Text>
         </View>
       )}
 
       {/* Tags */}
       {task.tags.length > 0 && (
         <>
-          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>TAGS</Text>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.tagsLabel')}</Text>
           <View style={styles.tagsWrap}>
             {task.tags.map((tag, index) => {
               const info = tagInfoMap.get(tag);
@@ -855,11 +878,11 @@ export const TaskDetailScreen: React.FC = () => {
       )}
 
       {/* Seen by */}
-      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>SEEN BY</Text>
+      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.seenByLabel')}</Text>
       {taskViewsLoading ? (
         <View style={styles.seenLoadingRow}>
           <ActivityIndicator size="small" color={tertiaryText} />
-          <Text style={[styles.seenLoadingText, { color: tertiaryText }]}>Loading…</Text>
+          <Text style={[styles.seenLoadingText, { color: tertiaryText }]}>{t('taskDetail.seenByLoading')}</Text>
         </View>
       ) : viewersForDisplay.length > 0 ? (
         <View style={styles.seenList}>
@@ -879,7 +902,7 @@ export const TaskDetailScreen: React.FC = () => {
                   {viewer.isSelf ? 'You' : viewer.name}
                 </Text>
                 <Text style={[styles.seenTime, { color: tertiaryText }]}>
-                  {timeAgo(viewer.viewedAt)}
+                  {timeAgo(viewer.viewedAt, t)}
                 </Text>
               </View>
               <MaterialIcons name="visibility" size={14} color={isDarkMode ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'} />
@@ -889,7 +912,7 @@ export const TaskDetailScreen: React.FC = () => {
       ) : (
         <View style={[styles.seenEmptyRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
           <MaterialIcons name="visibility-off" size={16} color={tertiaryText} />
-          <Text style={[styles.seenEmptyText, { color: tertiaryText }]}>No one has viewed this task yet</Text>
+          <Text style={[styles.seenEmptyText, { color: tertiaryText }]}>{t('taskDetail.noOneViewed')}</Text>
         </View>
       )}
     </ScrollView>
@@ -904,19 +927,19 @@ export const TaskDetailScreen: React.FC = () => {
           {formSaveStatus === 'saving' && (
             <View style={styles.formSaveRow}>
               <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={[styles.formSaveText, { color: colors.textSecondary }]}>Saving…</Text>
+              <Text style={[styles.formSaveText, { color: colors.textSecondary }]}>{t('taskDetail.formSaving')}</Text>
             </View>
           )}
           {formSaveStatus === 'saved' && (
             <View style={styles.formSaveRow}>
               <MaterialIcons name="cloud-done" size={14} color="#22C55E" />
-              <Text style={[styles.formSaveText, { color: '#22C55E' }]}>Saved</Text>
+              <Text style={[styles.formSaveText, { color: '#22C55E' }]}>{t('taskDetail.formSaved')}</Text>
             </View>
           )}
           {formSaveStatus === 'error' && (
             <View style={styles.formSaveRow}>
               <MaterialIcons name="cloud-off" size={14} color="#EF4444" />
-              <Text style={[styles.formSaveText, { color: '#EF4444' }]}>Save failed</Text>
+              <Text style={[styles.formSaveText, { color: '#EF4444' }]}>{t('taskDetail.formSaveFailed')}</Text>
             </View>
           )}
         </View>
@@ -942,17 +965,17 @@ export const TaskDetailScreen: React.FC = () => {
         <View style={styles.commentsCenter}>
           <ActivityIndicator size="large" color={primaryColor} />
           <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
-            Loading comments...
+            {t('taskDetail.loadingComments')}
           </Text>
         </View>
       ) : notes.length === 0 ? (
         <View style={styles.commentsCenter}>
           <MaterialIcons name="chat-bubble-outline" size={48} color="#E0E0E0" />
           <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
-            No comments yet
+            {t('taskDetail.noCommentsYet')}
           </Text>
           <Text style={[styles.commentsCenterHint, { color: colors.textSecondary }]}>
-            Be the first to add a comment
+            {t('taskDetail.beFirstToComment')}
           </Text>
         </View>
       ) : (
@@ -985,7 +1008,7 @@ export const TaskDetailScreen: React.FC = () => {
                       {authorName}
                     </Text>
                     <Text style={[styles.commentTime, { color: colors.textSecondary }]}>
-                      {timeAgo(note.created_at!)}
+                      {timeAgo(note.created_at!, t)}
                     </Text>
                   </View>
                   <View
@@ -1057,7 +1080,7 @@ export const TaskDetailScreen: React.FC = () => {
               color: colors.text,
             },
           ]}
-          placeholder="Add a comment..."
+          placeholder={t('taskDetail.addCommentPlaceholder')}
           placeholderTextColor={colors.textSecondary}
           value={commentText}
           onChangeText={setCommentText}
@@ -1100,7 +1123,7 @@ export const TaskDetailScreen: React.FC = () => {
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <MaterialIcons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Task Details</Text>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{t('taskDetail.headerTitle')}</Text>
           <TouchableOpacity>
             <MaterialIcons name="more-vert" size={24} color={colors.text} />
           </TouchableOpacity>
@@ -1124,10 +1147,12 @@ export const TaskDetailScreen: React.FC = () => {
                 ]}
               >
                 {tab === 'form'
-                  ? 'Form'
+                  ? t('taskDetail.tabForm')
                   : tab === 'comments' && notes.length > 0
-                    ? `Comments (${notes.length})`
-                    : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    ? t('taskDetail.tabCommentsWithCount', { count: notes.length })
+                    : tab === 'comments'
+                      ? t('taskDetail.tabComments')
+                      : t('taskDetail.tabDetails')}
               </Text>
             </TouchableOpacity>
           ))}
@@ -1157,7 +1182,7 @@ export const TaskDetailScreen: React.FC = () => {
               onPress={() => setStatusPickerVisible(true)}
             >
               <MaterialIcons name="swap-horiz" size={16} color={isDarkMode ? '#1A1A1A' : '#FFFFFF'} />
-              <Text style={[styles.actionButtonText, { color: isDarkMode ? '#1A1A1A' : '#FFFFFF' }]}>Change Status</Text>
+              <Text style={[styles.actionButtonText, { color: isDarkMode ? '#1A1A1A' : '#FFFFFF' }]}>{t('taskDetail.changeStatus')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -1186,7 +1211,7 @@ export const TaskDetailScreen: React.FC = () => {
           >
             <View style={styles.statusPickerHandle} />
             <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              Change Status
+              {t('taskDetail.changeStatus')}
             </Text>
             <View style={styles.statusPickerList}>
               {getAllowedStatuses(currentTask).map((s) => {
@@ -1255,7 +1280,7 @@ export const TaskDetailScreen: React.FC = () => {
             onPress={() => {
               if (imageViewerUri) {
                 Linking.openURL(imageViewerUri).catch(() =>
-                  toastRef.current?.show({ type: 'error', title: 'Error', body: 'Could not open this file.' })
+                  toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCouldNotOpenFile') })
                 );
               }
             }}
@@ -1405,28 +1430,6 @@ const styles = StyleSheet.create({
   },
   metaCellValue: {
     fontSize: 13,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-
-  /* ── GPS Map ── */
-  mapContainer: {
-    borderRadius: 10,
-    overflow: 'hidden',
-    marginBottom: 4,
-  },
-  miniMap: {
-    width: '100%',
-    height: 160,
-  },
-  mapOpenButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    gap: 4,
-  },
-  mapOpenText: {
-    fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
   },
 

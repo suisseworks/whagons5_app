@@ -14,6 +14,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useQuery, useMutation, useConvexAuth } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useNotifications, AppNotification, getNotificationMeta } from '../context/NotificationContext';
 import { useTasks } from '../context/TaskContext';
 import { useTenant } from '../hooks/useTenant';
@@ -48,6 +49,7 @@ type NavProp = NativeStackNavigationProp<RootStackParamList>;
 export const NotificationsScreen: React.FC = () => {
   const navigation = useNavigation<NavProp>();
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { tenantId } = useTenant();
   const { tasks } = useTasks();
   const { isAuthenticated } = useConvexAuth();
@@ -185,12 +187,12 @@ export const NotificationsScreen: React.FC = () => {
 
   const handleClearAll = () => {
     Alert.alert(
-      'Clear All',
-      'Remove all notifications?',
+      t('notifications.clearAllTitle'),
+      t('notifications.clearAllMessage'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Clear',
+          text: t('notifications.clearButton'),
           style: 'destructive',
           onPress: () => {
             clearAll();
@@ -207,10 +209,17 @@ export const NotificationsScreen: React.FC = () => {
   // Renderers
   // ---------------------------------------------------------------------------
 
+  const sectionTitleMap: Record<string, string> = {
+    'Today': t('notifications.sectionToday'),
+    'Yesterday': t('notifications.sectionYesterday'),
+    'This Week': t('notifications.sectionThisWeek'),
+    'Earlier': t('notifications.sectionEarlier'),
+  };
+
   const renderSectionHeader = ({ section }: { section: { title: string } }) => (
     <View style={styles.sectionHeaderContainer}>
       <Text style={[styles.sectionHeaderText, { color: colors.textSecondary }]}>
-        {section.title}
+        {sectionTitleMap[section.title] ?? section.title}
       </Text>
     </View>
   );
@@ -281,12 +290,12 @@ export const NotificationsScreen: React.FC = () => {
         />
       </View>
       <Text style={[styles.emptyTitle, { color: colors.text }]}>
-        {hasPermission ? 'All caught up!' : 'Notifications disabled'}
+        {hasPermission ? t('notifications.emptyTitleAllCaughtUp') : t('notifications.emptyTitleDisabled')}
       </Text>
       <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
         {hasPermission
-          ? 'When something needs your attention, it will show up here.'
-          : 'Enable notifications in Settings to receive alerts.'}
+          ? t('notifications.emptySubtitleEnabled')
+          : t('notifications.emptySubtitleDisabled')}
       </Text>
     </View>
   );
@@ -308,7 +317,7 @@ export const NotificationsScreen: React.FC = () => {
         >
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Notifications</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('notifications.title')}</Text>
         <View style={styles.headerActions}>
           {unreadCount > 0 && (
             <TouchableOpacity

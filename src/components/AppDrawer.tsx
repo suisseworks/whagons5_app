@@ -20,6 +20,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList, CardDensity } from '../models/types';
 import { DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -30,6 +31,7 @@ interface AppDrawerProps {
 export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
+  const { t } = useLanguage();
   const { cardDensity, setCardDensity, selectedWorkspace, setSelectedWorkspace, workspaceObjects, totalTaskCount } = useTasks();
   const { logout, user, subdomain } = useAuth();
   const { data } = useData();
@@ -71,7 +73,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
 
   const orgName = subdomain
     ? subdomain.charAt(0).toUpperCase() + subdomain.slice(1)
-    : 'Whagons';
+    : t('component.appDrawer.defaultOrgName');
 
   const userInitial = user?.name?.charAt(0).toUpperCase() ?? '?';
 
@@ -88,7 +90,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
             <View style={styles.orgInfo}>
               <Text style={[styles.orgName, { color: colors.text }]}>{orgName}</Text>
               <Text style={[styles.orgTagline, { color: textTertiary }]}>
-                Operational Intelligence
+                {t('component.appDrawer.operationalIntelligence')}
               </Text>
             </View>
           </View>
@@ -102,14 +104,14 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
                 {user.name ?? user.email}
               </Text>
               <View style={[styles.rolePill, { backgroundColor: `${primaryColor}15` }]}>
-                <Text style={[styles.roleText, { color: primaryColor }]}>Member</Text>
+                <Text style={[styles.roleText, { color: primaryColor }]}>{t('component.appDrawer.roleMember')}</Text>
               </View>
             </View>
           )}
         </View>
 
         {/* ── Workspaces section ───────────────────────────────────── */}
-        <Text style={[styles.sectionHeader, { color: textTertiary }]}>WORKSPACES</Text>
+        <Text style={[styles.sectionHeader, { color: textTertiary }]}>{t('component.appDrawer.sectionWorkspaces')}</Text>
 
         {/* Everything */}
         <TouchableOpacity
@@ -129,7 +131,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
             ]}
             numberOfLines={1}
           >
-            Everything
+            {t('component.appDrawer.workspaceEverything')}
           </Text>
           <Text style={[styles.workspaceCount, { color: textTertiary }]}>{totalTaskCount}</Text>
         </TouchableOpacity>
@@ -167,16 +169,16 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         <View style={[styles.sectionDivider, { borderColor: borderTertiary }]} />
 
         {/* ── General section ──────────────────────────────────────── */}
-        <Text style={[styles.sectionHeader, { color: textTertiary }]}>GENERAL</Text>
+        <Text style={[styles.sectionHeader, { color: textTertiary }]}>{t('component.appDrawer.sectionGeneral')}</Text>
 
         {/* Notifications */}
         <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Notifications')} activeOpacity={0.6}>
           <MaterialIcons name="notifications-none" size={20} color={colors.textSecondary} />
-          <Text style={[styles.menuLabel, { color: colors.text }]}>Notifications</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuNotifications')}</Text>
           {notificationCount > 0 && (
             <View style={styles.notifBadge}>
               <Text style={styles.notifBadgeText}>
-                {notificationCount > 99 ? '99+' : notificationCount}
+                {notificationCount > 99 ? t('component.appDrawer.notifBadgeOverflow') : notificationCount}
               </Text>
             </View>
           )}
@@ -185,21 +187,21 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         {/* Profile */}
         <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Settings')} activeOpacity={0.6}>
           <MaterialIcons name="person-outline" size={20} color={colors.textSecondary} />
-          <Text style={[styles.menuLabel, { color: colors.text }]}>Profile</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuProfile')}</Text>
           <MaterialIcons name="chevron-right" size={14} color={textTertiary} />
         </TouchableOpacity>
 
         {/* Settings */}
         <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Settings')} activeOpacity={0.6}>
           <MaterialIcons name="settings" size={20} color={colors.textSecondary} />
-          <Text style={[styles.menuLabel, { color: colors.text }]}>Settings</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuSettings')}</Text>
           <MaterialIcons name="chevron-right" size={14} color={textTertiary} />
         </TouchableOpacity>
 
         <View style={[styles.sectionDivider, { borderColor: borderTertiary }]} />
 
         {/* ── Preferences section ──────────────────────────────────── */}
-        <Text style={[styles.sectionHeader, { color: textTertiary }]}>PREFERENCES</Text>
+        <Text style={[styles.sectionHeader, { color: textTertiary }]}>{t('component.appDrawer.sectionPreferences')}</Text>
 
         {/* Dark mode */}
         <View style={styles.menuRow}>
@@ -208,7 +210,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
             size={20}
             color={colors.textSecondary}
           />
-          <Text style={[styles.menuLabel, { color: colors.text }]}>Dark Mode</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuDarkMode')}</Text>
           <Switch
             value={isDarkMode}
             onValueChange={toggleDarkMode}
@@ -225,7 +227,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
             size={20}
             color={colors.textSecondary}
           />
-          <Text style={[styles.menuLabel, { color: colors.text }]}>Card Density</Text>
+          <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuCardDensity')}</Text>
         </View>
         <View style={styles.densityPills}>
           {(['compact', 'normal', 'detailed'] as CardDensity[]).map((d) => {
@@ -264,7 +266,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         {/* ── Log out ──────────────────────────────────────────────── */}
         <TouchableOpacity style={styles.menuRow} onPress={handleLogout} activeOpacity={0.6}>
           <MaterialIcons name="logout" size={20} color="#DC2626" />
-          <Text style={[styles.menuLabel, { color: '#DC2626' }]}>Log out</Text>
+          <Text style={[styles.menuLabel, { color: '#DC2626' }]}>{t('component.appDrawer.menuLogout')}</Text>
         </TouchableOpacity>
 
         <View style={{ height: 32 }} />

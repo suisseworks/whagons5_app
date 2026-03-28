@@ -10,18 +10,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useData } from '../context/DataContext';
 import { useTasks } from '../context/TaskContext';
 import { fontFamilies } from '../config/designTokens';
 
 type TimePeriod = 'today' | 'week' | 'month' | 'all';
 
-const PERIODS: { key: TimePeriod; label: string }[] = [
-  { key: 'today', label: 'Today' },
-  { key: 'week', label: 'This week' },
-  { key: 'month', label: 'This month' },
-  { key: 'all', label: 'All time' },
-];
+const PERIOD_KEYS: TimePeriod[] = ['today', 'week', 'month', 'all'];
 
 function startOfDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -65,10 +61,10 @@ function getPreviousPeriodRange(period: TimePeriod): { start: Date; end: Date } 
   return { start: prevMonthStart, end: thisMonthStart };
 }
 
-function periodLabel(period: TimePeriod): string {
-  if (period === 'today') return 'vs yesterday';
-  if (period === 'week') return 'vs last week';
-  if (period === 'month') return 'vs last month';
+function periodLabelKey(period: TimePeriod): string {
+  if (period === 'today') return 'stats.trendVsYesterday';
+  if (period === 'week') return 'stats.trendVsLastWeek';
+  if (period === 'month') return 'stats.trendVsLastMonth';
   return '';
 }
 
@@ -113,6 +109,7 @@ function computeTrend(
 export const StatsScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { data } = useData();
   const { tasks, availableStatuses } = useTasks();
 
@@ -212,7 +209,8 @@ export const StatsScreen: React.FC = () => {
     return { total: prevTotalCount, completionRate: prevCompletionRate, blocked: prevBlocked, overdue: prevOverdue };
   }, [previousRaw, data.statuses, finalStatusIds]);
 
-  const trendSuffix = periodLabel(period);
+  const trendKey = periodLabelKey(period);
+  const trendSuffix = trendKey ? t(trendKey) : '';
   const totalTrend = computeTrend(totalCount, prevCounts.total, trendSuffix, false, false);
   const rateTrend = computeTrend(completionRate, prevCounts.completionRate, trendSuffix, true, false);
   const overdueTrend = computeTrend(overdueCount, prevCounts.overdue, trendSuffix, false, true);
@@ -286,18 +284,24 @@ export const StatsScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Stats</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('stats.headerTitle')}</Text>
         <View style={styles.backBtn} />
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
         {/* Time period selector */}
         <View style={styles.periodRow}>
-          {PERIODS.map((p) => {
-            const active = period === p.key;
+          {PERIOD_KEYS.map((key) => {
+            const active = period === key;
+            const periodLabels: Record<TimePeriod, string> = {
+              today: t('stats.periodToday'),
+              week: t('stats.periodThisWeek'),
+              month: t('stats.periodThisMonth'),
+              all: t('stats.periodAllTime'),
+            };
             return (
               <TouchableOpacity
-                key={p.key}
+                key={key}
                 style={[
                   styles.periodPill,
                   {
@@ -305,7 +309,7 @@ export const StatsScreen: React.FC = () => {
                     borderColor: active ? borderColor : 'transparent',
                   },
                 ]}
-                onPress={() => setPeriod(p.key)}
+                onPress={() => setPeriod(key)}
               >
                 <Text
                   style={[
@@ -314,7 +318,7 @@ export const StatsScreen: React.FC = () => {
                     active && styles.periodLabelActive,
                   ]}
                 >
-                  {p.label}
+                  {periodLabels[key]}
                 </Text>
               </TouchableOpacity>
             );
@@ -324,24 +328,24 @@ export const StatsScreen: React.FC = () => {
         {/* KPI grid 2×2 */}
         <View style={styles.kpiGrid}>
           <View style={[styles.kpiCard, { backgroundColor: secondarySurface }]}>
-            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>TOTAL TASKS</Text>
+            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>{t('stats.kpiTotalTasks')}</Text>
             <Text style={[styles.kpiValue, { color: colors.text }]}>{totalCount}</Text>
             {renderTrend(totalTrend)}
           </View>
           <View style={[styles.kpiCard, { backgroundColor: secondarySurface }]}>
-            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>COMPLETION RATE</Text>
+            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>{t('stats.kpiCompletionRate')}</Text>
             <Text style={[styles.kpiValue, { color: colors.text }]}>{completionRate}%</Text>
             {renderTrend(rateTrend)}
           </View>
           <View style={[styles.kpiCard, { backgroundColor: secondarySurface }]}>
-            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>OVERDUE</Text>
+            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>{t('stats.kpiOverdue')}</Text>
             <Text style={[styles.kpiValue, { color: overdueCount > 0 ? '#A32D2D' : colors.text }]}>
               {overdueCount}
             </Text>
             {renderTrend(overdueTrend)}
           </View>
           <View style={[styles.kpiCard, { backgroundColor: secondarySurface }]}>
-            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>BLOCKED</Text>
+            <Text style={[styles.kpiLabel, { color: tertiaryText }]}>{t('stats.kpiBlocked')}</Text>
             <Text style={[styles.kpiValue, { color: blockedCount > 0 ? '#A32D2D' : colors.text }]}>
               {blockedCount}
             </Text>
@@ -350,7 +354,7 @@ export const StatsScreen: React.FC = () => {
         </View>
 
         {/* Status breakdown */}
-        <Text style={[styles.sectionTitle, { color: tertiaryText }]}>BY STATUS</Text>
+        <Text style={[styles.sectionTitle, { color: tertiaryText }]}>{t('stats.sectionByStatus')}</Text>
         <View style={styles.statusBars}>
           {statusBars.map((bar) => (
             <View key={bar.name} style={styles.statusBarRow}>
@@ -374,7 +378,7 @@ export const StatsScreen: React.FC = () => {
         </View>
 
         {/* 7-day creation chart */}
-        <Text style={[styles.sectionTitle, { color: tertiaryText }]}>TASKS CREATED (7 DAYS)</Text>
+        <Text style={[styles.sectionTitle, { color: tertiaryText }]}>{t('stats.sectionTasksCreated7Days')}</Text>
         <View style={[styles.chartContainer, { backgroundColor: secondarySurface }]}>
           <View style={styles.chartBars}>
             {dailyCounts.map((day, i) => {
@@ -412,7 +416,7 @@ export const StatsScreen: React.FC = () => {
         {/* Top locations */}
         {topLocations.length > 0 && (
           <>
-            <Text style={[styles.sectionTitle, { color: tertiaryText }]}>TOP LOCATIONS</Text>
+            <Text style={[styles.sectionTitle, { color: tertiaryText }]}>{t('stats.sectionTopLocations')}</Text>
             <View style={styles.locationsContainer}>
               {topLocations.map((loc, i) => (
                 <View

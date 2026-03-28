@@ -7,7 +7,7 @@ import {
 
 import App from './App';
 
-LogBox.ignoreAllLogs();
+// LogBox.ignoreAllLogs(); // Temporarily disabled for debugging
 
 // Register background message handlers BEFORE registerRootComponent.
 // These must be at the top level so they execute even when the app

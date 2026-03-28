@@ -17,6 +17,7 @@ import { StatusOption } from '../context/TaskContext';
 import { statusColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -45,6 +46,7 @@ const TaskRow: React.FC<{
   colors: ReturnType<typeof useTheme>['colors'];
   isDarkMode: boolean;
 }> = ({ task, doneLabel, onDone, onRemove, onPress, onCheckPress, primaryColor, colors, isDarkMode }) => {
+  const { t } = useLanguage();
   const sColor = statusColor(task.status, task.statusColor);
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)';
 
@@ -88,7 +90,7 @@ const TaskRow: React.FC<{
                        task.priority === 'Medium' ? '#F59E0B' : colors.textSecondary,
               },
             ]}>
-              {task.priority === 'High' ? '↑ Alta' : task.priority === 'Medium' ? '→ Media' : '↓ Baja'}
+              {task.priority === 'High' ? t('component.activeTaskStrip.priorityHigh') : task.priority === 'Medium' ? t('component.activeTaskStrip.priorityMedium') : t('component.activeTaskStrip.priorityLow')}
             </Text>
           ) : null}
         </View>
@@ -116,6 +118,7 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
   onStatusChange,
 }) => {
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const slideAnim = useRef(new Animated.Value(0)).current;
   const chevronAnim = useRef(new Animated.Value(0)).current;
   const [expanded, setExpanded] = useState(false);
@@ -220,7 +223,7 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
           <MaterialIcons name="play-circle-fill" size={22} color={primaryColor} />
           <View style={styles.singleContent}>
             <Text style={[styles.singleLabel, { color: colors.textSecondary }]}>
-              Working on
+              {t('component.activeTaskStrip.workingOnLabel')}
             </Text>
             <Text style={[styles.singleTitle, { color: colors.text }]} numberOfLines={1}>
               {tasks[0].title}
@@ -248,7 +251,7 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
                            tasks[0].priority === 'Medium' ? '#F59E0B' : colors.textSecondary,
                   },
                 ]}>
-                  {tasks[0].priority === 'High' ? '↑ Alta' : tasks[0].priority === 'Medium' ? '→ Media' : '↓ Baja'}
+                  {tasks[0].priority === 'High' ? t('component.activeTaskStrip.priorityHigh') : tasks[0].priority === 'Medium' ? t('component.activeTaskStrip.priorityMedium') : t('component.activeTaskStrip.priorityLow')}
                 </Text>
               ) : null}
             </View>
@@ -277,10 +280,10 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
             <MaterialIcons name="play-circle-fill" size={22} color={primaryColor} />
             <View style={styles.summaryContent}>
               <Text style={[styles.singleLabel, { color: colors.textSecondary }]}>
-                Working on
+                {t('component.activeTaskStrip.workingOnLabel')}
               </Text>
               <Text style={[styles.singleTitle, { color: colors.text }]}>
-                {tasks.length} tasks
+                {t('component.activeTaskStrip.multiTaskCount', { count: tasks.length })}
               </Text>
             </View>
             <Animated.View style={{ transform: [{ rotate: chevronRotation }] }}>
@@ -327,7 +330,7 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
         >
           <View style={[styles.modalContent, { backgroundColor: colors.surface }]}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>
-              Marcar como
+              {t('component.activeTaskStrip.statusPickerTitle')}
             </Text>
             {finalStatuses.map((status) => (
               <TouchableOpacity
@@ -352,7 +355,7 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
               onPress={() => setStatusPickerTask(null)}
             >
               <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>
-                Cancelar
+                {t('component.activeTaskStrip.cancelButton')}
               </Text>
             </TouchableOpacity>
           </View>

@@ -10,6 +10,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { fontFamilies, radius, shadows } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 function hexToRgba(hex: string, alpha: number): string {
   const c = hex.replace('#', '');
@@ -157,6 +158,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
   const effectiveDensity: CardDensity = density ?? (compact ? 'compact' : 'normal');
 
   const { colors, isDarkMode } = useTheme();
+  const { t } = useLanguage();
   const { tagInfoMap, isTaskWorking } = useTasks();
   const { user: authUser } = useAuth();
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
@@ -319,19 +321,19 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         {task.approvalStatus === 'pending' && (
           <View style={[styles.approvalPill, { backgroundColor: '#FFF7ED' }]}>
             <MaterialCommunityIcons name="clock-outline" size={11} color="#EA580C" />
-            <Text style={[styles.approvalPillText, { color: '#EA580C' }]}>Pending</Text>
+            <Text style={[styles.approvalPillText, { color: '#EA580C' }]}>{t('component.taskCard.approvalPending')}</Text>
           </View>
         )}
         {task.approvalStatus === 'approved' && (
           <View style={[styles.approvalPill, { backgroundColor: '#F0FDF4' }]}>
             <MaterialCommunityIcons name="check-circle-outline" size={11} color="#16A34A" />
-            <Text style={[styles.approvalPillText, { color: '#16A34A' }]}>Approved</Text>
+            <Text style={[styles.approvalPillText, { color: '#16A34A' }]}>{t('component.taskCard.approvalApproved')}</Text>
           </View>
         )}
         {task.approvalStatus === 'rejected' && (
           <View style={[styles.approvalPill, { backgroundColor: '#FEF2F2' }]}>
             <MaterialCommunityIcons name="close-circle-outline" size={11} color="#DC2626" />
-            <Text style={[styles.approvalPillText, { color: '#DC2626' }]}>Rejected</Text>
+            <Text style={[styles.approvalPillText, { color: '#DC2626' }]}>{t('component.taskCard.approvalRejected')}</Text>
           </View>
         )}
         {(task.ackTotal ?? 0) > 0 && (

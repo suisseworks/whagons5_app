@@ -24,6 +24,7 @@ import { RootStackParamList } from '../models/types';
 import { useAuth, TenantChoiceRequired } from '../context/AuthContext';
 import Svg, { Path, Rect, G, Defs, ClipPath } from 'react-native-svg';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
@@ -48,6 +49,7 @@ export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const { width, height } = useWindowDimensions();
   const { signInWithGoogle, signInWithEmail, token, pendingTenants } = useAuth();
+  const { t } = useLanguage();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -118,11 +120,11 @@ export const LoginScreen: React.FC = () => {
       await signInWithGoogle();
       // Navigation handled by effect above when auth resolves
     } catch (err: any) {
-      const msg = err?.message || 'Google sign-in failed. Please try again.';
+      const msg = err?.message || t('login.googleSignInFailed');
       if (msg.includes('CANCELED') || msg.includes('cancelled')) {
         // User cancelled
       } else {
-        Alert.alert('Sign-In Failed', msg);
+        Alert.alert(t('login.signInFailedTitle'), msg);
       }
     } finally {
       setIsGoogleLoading(false);
@@ -131,11 +133,11 @@ export const LoginScreen: React.FC = () => {
 
   const handleEmailSignIn = async () => {
     if (!email.trim()) {
-      Alert.alert('Error', 'Please enter your email');
+      Alert.alert(t('common.error'), t('login.emailRequired'));
       return;
     }
     if (!password) {
-      Alert.alert('Error', 'Please enter your password');
+      Alert.alert(t('common.error'), t('login.passwordRequired'));
       return;
     }
 
@@ -144,17 +146,17 @@ export const LoginScreen: React.FC = () => {
       await signInWithEmail({ email: email.trim(), password });
       // Navigation handled by effect above when auth resolves
     } catch (err: any) {
-      let msg = err?.message || 'Unable to log in. Please try again.';
+      let msg = err?.message || t('login.unableToLogin');
       if (msg.includes('wrong-password') || msg.includes('invalid-credential')) {
-        msg = 'Incorrect email or password.';
+        msg = t('login.incorrectCredentials');
       } else if (msg.includes('user-not-found')) {
-        msg = 'No account found with this email.';
+        msg = t('login.noAccountFound');
       } else if (msg.includes('too-many-requests')) {
-        msg = 'Too many attempts. Please try again later.';
+        msg = t('login.tooManyAttempts');
       } else if (msg.includes('not associated with any company')) {
-        msg = 'Your account is not associated with any company. Please contact your administrator.';
+        msg = t('login.notAssociatedWithCompany');
       }
-      Alert.alert('Login Failed', msg);
+      Alert.alert(t('login.loginFailedTitle'), msg);
     } finally {
       setIsLoading(false);
     }
@@ -173,7 +175,7 @@ export const LoginScreen: React.FC = () => {
         <MaterialIcons name="email" size={20} color="#A8A8A0" style={styles.inputIcon} />
         <TextInput
           style={styles.input}
-          placeholder="Email"
+          placeholder={t('login.emailPlaceholder')}
           placeholderTextColor="#B0B0A8"
           value={email}
           onChangeText={setEmail}
@@ -188,7 +190,7 @@ export const LoginScreen: React.FC = () => {
         <MaterialIcons name="lock" size={20} color="#A8A8A0" style={styles.inputIcon} />
         <TextInput
           style={[styles.input, { flex: 1 }]}
-          placeholder="Password"
+          placeholder={t('login.passwordPlaceholder')}
           placeholderTextColor="#B0B0A8"
           value={password}
           onChangeText={setPassword}
@@ -216,14 +218,14 @@ export const LoginScreen: React.FC = () => {
         {isLoading ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
-          <Text style={styles.loginButtonText}>Sign In</Text>
+          <Text style={styles.loginButtonText}>{t('login.signInButton')}</Text>
         )}
       </TouchableOpacity>
 
       {/* Divider */}
       <View style={styles.dividerRow}>
         <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>or</Text>
+        <Text style={styles.dividerText}>{t('login.dividerOr')}</Text>
         <View style={styles.dividerLine} />
       </View>
 
@@ -239,7 +241,7 @@ export const LoginScreen: React.FC = () => {
         ) : (
           <View style={styles.googleButtonContent}>
             <GoogleLogo />
-            <Text style={styles.googleButtonText}>Continue with Google</Text>
+            <Text style={styles.googleButtonText}>{t('login.continueWithGoogle')}</Text>
           </View>
         )}
       </TouchableOpacity>
@@ -254,8 +256,8 @@ export const LoginScreen: React.FC = () => {
           <View style={styles.formSection}>
             <View style={styles.logoArea}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
-              <Text style={styles.brandName}>Whagons</Text>
-              <Text style={styles.tagline}>Operational Intelligence in Action.</Text>
+              <Text style={styles.brandName}>{t('login.brandName')}</Text>
+              <Text style={styles.tagline}>{t('login.tagline')}</Text>
             </View>
             <LoginForm />
           </View>
@@ -282,7 +284,7 @@ export const LoginScreen: React.FC = () => {
           >
             <View style={styles.keyboardHeader}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMarkSmall} />
-              <Text style={styles.brandNameSmall}>Whagons</Text>
+              <Text style={styles.brandNameSmall}>{t('login.brandName')}</Text>
             </View>
             <LoginForm />
           </ScrollView>
@@ -291,8 +293,8 @@ export const LoginScreen: React.FC = () => {
             {/* Top: Logo area */}
             <Animated.View style={[styles.logoSection, { opacity: logoFade }]}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
-              <Text style={styles.brandName}>Whagons</Text>
-              <Text style={styles.tagline}>Operational Intelligence in Action.</Text>
+              <Text style={styles.brandName}>{t('login.brandName')}</Text>
+              <Text style={styles.tagline}>{t('login.tagline')}</Text>
             </Animated.View>
 
             {/* Bottom: Form */}
@@ -300,7 +302,7 @@ export const LoginScreen: React.FC = () => {
 
             {/* Footer */}
             <View style={styles.footer}>
-              <Text style={styles.footerText}>Operational Intelligence in Action.</Text>
+              <Text style={styles.footerText}>{t('login.tagline')}</Text>
             </View>
           </View>
         )}

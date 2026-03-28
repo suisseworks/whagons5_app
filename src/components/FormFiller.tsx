@@ -29,6 +29,7 @@ import RenderHtml from 'react-native-render-html';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { SignaturePad } from './SignaturePad';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 /** Fix self-hosted Convex storage URLs (dashboard domain → backend domain) */
 function fixConvexStorageUrl(url: string): string {
@@ -108,6 +109,8 @@ export const FormFiller: React.FC<FormFillerProps> = ({
   primaryColor,
   isDarkMode,
 }) => {
+  const { t } = useLanguage();
+
   const handleFieldChange = (fieldId: number, value: unknown) => {
     onChange({ ...values, [fieldId]: value });
   };
@@ -126,7 +129,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
           <View style={styles.labelRow}>
             <RenderHtml
               contentWidth={descriptionWidth}
-              source={{ html: field.label || 'Untitled field' }}
+              source={{ html: field.label || t('component.formFiller.untitledField') }}
               baseStyle={{
                 fontSize: fontSizes.sm,
                 fontFamily: fontFamilies.bodySemibold,
@@ -151,7 +154,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
 
         {/* Validation error */}
         {hasError && (
-          <Text style={styles.errorText}>This field is required</Text>
+          <Text style={styles.errorText}>{t('component.formFiller.requiredFieldError')}</Text>
         )}
       </View>
     );
@@ -191,7 +194,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
             style={[styles.textInput, styles.textArea, { backgroundColor: inputBg, color: colors.text, borderColor }]}
             value={String(value ?? '')}
             onChangeText={(v) => handleFieldChange(field.id, v)}
-            placeholder={field.placeholder || 'Enter text...'}
+            placeholder={field.placeholder || t('component.formFiller.textareaPlaceholder')}
             placeholderTextColor={colors.textSecondary}
             multiline
             numberOfLines={4}
@@ -245,7 +248,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
       case 'single-checkbox':
         return (
           <SingleCheckboxInput
-            label={field.label || 'Untitled field'}
+            label={field.label || t('component.formFiller.untitledField')}
             required={field.required}
             value={!!value}
             onChange={(v) => handleFieldChange(field.id, v)}
@@ -349,7 +352,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
               color={colors.textSecondary}
             />
             <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
-              {field.type === 'image' ? 'Image upload' : 'Image'} — upload on web
+              {field.type === 'image' ? t('component.formFiller.imageUploadPlaceholder') : t('component.formFiller.imagePlaceholder')}
             </Text>
           </View>
         );
@@ -358,7 +361,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
       default:
         return (
           <Text style={{ color: colors.textSecondary, fontSize: fontSizes.sm }}>
-            Unsupported field type: {field.type}
+            {t('component.formFiller.unsupportedFieldType', { type: field.type })}
           </Text>
         );
     }
@@ -423,7 +426,7 @@ export const FormFiller: React.FC<FormFillerProps> = ({
         <View style={styles.emptyState}>
           <MaterialIcons name="description" size={48} color={colors.textSecondary} />
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            No fields in this form
+            {t('component.formFiller.noFields')}
           </Text>
         </View>
       )}
@@ -446,6 +449,7 @@ const NumberFieldInput: React.FC<{
   secondaryColor: string;
   primaryColor: string;
 }> = ({ value, onChange, readOnly, allowDecimals, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
+  const { t } = useLanguage();
   const [textValue, setTextValue] = useState(value != null && value !== 0 ? String(value) : '');
 
   // Sync text display when value prop changes (e.g. loading saved data)
@@ -477,7 +481,7 @@ const NumberFieldInput: React.FC<{
         onChangeText={handleChange}
         keyboardType={allowDecimals ? 'decimal-pad' : 'number-pad'}
         editable={!readOnly}
-        placeholder="0"
+        placeholder={t('component.formFiller.numberPlaceholder')}
         placeholderTextColor={secondaryColor}
         textAlign="center"
       />
@@ -629,10 +633,11 @@ const DateFieldInput: React.FC<{
   secondaryColor: string;
   primaryColor: string;
 }> = ({ value, onChange, mode, readOnly, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
+  const { t } = useLanguage();
   const placeholder =
-    mode === 'date' ? 'YYYY-MM-DD' :
-    mode === 'time' ? 'HH:MM' :
-    'YYYY-MM-DD HH:MM';
+    mode === 'date' ? t('component.formFiller.datePlaceholder') :
+    mode === 'time' ? t('component.formFiller.timePlaceholder') :
+    t('component.formFiller.dateTimePlaceholder');
 
   const iconName = mode === 'time' ? 'schedule' : 'calendar-today';
 
@@ -665,7 +670,7 @@ const DateFieldInput: React.FC<{
           style={[styles.nowButton, { borderColor: primaryColor }]}
           onPress={setNow}
         >
-          <Text style={[styles.nowButtonText, { color: primaryColor }]}>Now</Text>
+          <Text style={[styles.nowButtonText, { color: primaryColor }]}>{t('component.formFiller.nowButton')}</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -683,6 +688,7 @@ const BarcodeFieldInput: React.FC<{
   secondaryColor: string;
   primaryColor: string;
 }> = ({ value, onChange, readOnly, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
+  const { t } = useLanguage();
   const [scannerOpen, setScannerOpen] = useState(false);
 
   return (
@@ -692,7 +698,7 @@ const BarcodeFieldInput: React.FC<{
           style={[styles.textInput, styles.barcodeInput, { backgroundColor: inputBg, color: textColor, borderColor }]}
           value={value}
           onChangeText={onChange}
-          placeholder="Scan or enter barcode"
+          placeholder={t('component.formFiller.barcodePlaceholder')}
           placeholderTextColor={secondaryColor}
           editable={!readOnly}
         />
@@ -772,6 +778,7 @@ const ListFieldInput: React.FC<{
   secondaryColor: string;
   primaryColor: string;
 }> = ({ value, onChange, itemType, readOnly, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
+  const { t } = useLanguage();
   const handleItemChange = (index: number, text: string) => {
     const newValue = [...value];
     newValue[index] = text;
@@ -800,7 +807,7 @@ const ListFieldInput: React.FC<{
               <BarcodeListItem
                 value={String(item)}
                 onChange={(v) => handleItemChange(index, v)}
-                placeholder={`Scan barcode ${index + 1}`}
+                placeholder={t('component.formFiller.barcodeListPlaceholder', { index: index + 1 })}
                 readOnly={readOnly}
                 inputBg={inputBg}
                 borderColor={borderColor}
@@ -814,7 +821,7 @@ const ListFieldInput: React.FC<{
               style={[styles.textInput, styles.listItemInput, { backgroundColor: inputBg, color: textColor, borderColor }]}
               value={String(item)}
               onChangeText={(v) => handleItemChange(index, v)}
-              placeholder={`Item ${index + 1}`}
+              placeholder={t('component.formFiller.listItemPlaceholder', { index: index + 1 })}
               placeholderTextColor={secondaryColor}
               keyboardType={keyboardType}
               editable={!readOnly}
@@ -830,7 +837,7 @@ const ListFieldInput: React.FC<{
       {!readOnly && (
         <TouchableOpacity style={[styles.listAddButton, { borderColor: primaryColor }]} onPress={addItem}>
           <MaterialIcons name="add" size={18} color={primaryColor} />
-          <Text style={[styles.listAddText, { color: primaryColor }]}>Add item</Text>
+          <Text style={[styles.listAddText, { color: primaryColor }]}>{t('component.formFiller.addItemButton')}</Text>
         </TouchableOpacity>
       )}
     </View>
