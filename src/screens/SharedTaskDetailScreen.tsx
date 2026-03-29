@@ -248,7 +248,11 @@ export const SharedTaskDetailScreen: React.FC = () => {
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -538,7 +542,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     gap: 12,
   },
-  backBtn: { padding: 4 },
+  backBtn: { padding: 8 },
   headerCenter: { flex: 1 },
   headerTitle: { fontSize: 16, fontFamily: fontFamilies.bodySemibold },
   headerSubtitle: { fontSize: 12, fontFamily: fontFamilies.bodyRegular, marginTop: 1 },
