@@ -38,7 +38,7 @@ import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { useTenant } from '../hooks/useTenant';
-import { RootStackParamList } from '../models/types';
+import { RootStackParamList, TaskItem } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import TaskNavigationMap from '../components/TaskNavigationMap';
 import { FormFiller } from '../components/FormFiller';
@@ -319,7 +319,7 @@ export const TaskDetailScreen: React.FC = () => {
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const toastRef = useRef<ToastRef>(null);
-  const { getAllowedStatuses, changeTaskStatus, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
+  const { getAllowedStatuses, changeTaskStatus, changeTaskPriority, assignTaskToUser, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
@@ -359,6 +359,29 @@ export const TaskDetailScreen: React.FC = () => {
   const [currentStatusId, setCurrentStatusId] = useState(task.statusId);
   const [currentStatusIcon, setCurrentStatusIcon] = useState(task.statusIcon ?? null);
   const [currentStatusAction, setCurrentStatusAction] = useState(task.statusAction ?? null);
+
+  // Priority picker state
+  const [priorityPickerVisible, setPriorityPickerVisible] = useState(false);
+  const [currentPriority, setCurrentPriority] = useState(task.priority);
+  const [currentPriorityId, setCurrentPriorityId] = useState(task.priorityId ?? null);
+
+  // Assignee picker state
+  const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
+  const [assigneeSearch, setAssigneeSearch] = useState('');
+
+  const sortedUsers = useMemo(() => {
+    const currentUserId = authUser?.id ?? 0;
+    let users = [...data.users];
+    if (assigneeSearch.trim()) {
+      const q = assigneeSearch.trim().toLowerCase();
+      users = users.filter((u) => u.name.toLowerCase().includes(q));
+    }
+    return users.sort((a, b) => {
+      if (a.id === currentUserId) return -1;
+      if (b.id === currentUserId) return 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [data.users, authUser, assigneeSearch]);
 
   const currentTask = useMemo(
     () => ({ ...task, status: currentStatus, statusColor: currentStatusColor, statusId: currentStatusId }),
@@ -462,6 +485,31 @@ export const TaskDetailScreen: React.FC = () => {
     setCurrentStatusIcon(status.icon ?? null);
     setCurrentStatusAction(status.action ?? null);
     setStatusPickerVisible(false);
+  };
+
+  const handlePriorityChange = (priority: { id: any; name: string }) => {
+    changeTaskPriority(task.id || '', priority.id);
+    const name = priority.name.toLowerCase();
+    const mapped: TaskItem['priority'] = name.includes('high') || name.includes('alta')
+      ? 'High'
+      : name.includes('low') || name.includes('baja')
+        ? 'Low'
+        : 'Medium';
+    setCurrentPriority(mapped);
+    setCurrentPriorityId(priority.id);
+    setPriorityPickerVisible(false);
+  };
+
+  const handleAssigneeSelect = (user: { id: number; name: string }) => {
+    if (task.id) {
+      if (task.assignees.some((a) => a.name === user.name)) {
+        // Already assigned — just close
+      } else {
+        assignTaskToUser(task.id, user.id, user.name);
+      }
+    }
+    setAssigneePickerVisible(false);
+    setAssigneeSearch('');
   };
 
   const handleAddComment = async () => {
@@ -781,7 +829,9 @@ export const TaskDetailScreen: React.FC = () => {
             </TouchableOpacity>
           );
         })()}
-        <CustomChip label={task.priority} color={priorityColor(task.priority)} />
+        <TouchableOpacity onPress={() => setPriorityPickerVisible(true)} activeOpacity={0.7}>
+          <CustomChip label={currentPriority} color={priorityColor(currentPriority)} />
+        </TouchableOpacity>
         {task.approval && (
           <CustomChip label={task.approval} color="#BBDEFB" textColor="#0D47A1" compact />
         )}
@@ -829,7 +879,16 @@ export const TaskDetailScreen: React.FC = () => {
       )}
 
       {/* Assignees section */}
-      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.assigneesLabel')}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.assigneesLabel')}</Text>
+        <TouchableOpacity
+          onPress={() => setAssigneePickerVisible(true)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name="person-add" size={20} color={primaryColor} />
+        </TouchableOpacity>
+      </View>
       {task.assignees.length > 0 ? (
         <View style={styles.assigneeList}>
           {task.assignees.map((assignee, index) => (
@@ -848,9 +907,11 @@ export const TaskDetailScreen: React.FC = () => {
           ))}
         </View>
       ) : (
-        <View style={[styles.assigneeEmpty, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
-          <Text style={[styles.assigneeEmptyText, { color: tertiaryText }]}>{t('taskDetail.tapToAssign')}</Text>
-        </View>
+        <TouchableOpacity onPress={() => setAssigneePickerVisible(true)} activeOpacity={0.7}>
+          <View style={[styles.assigneeEmpty, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+            <Text style={[styles.assigneeEmptyText, { color: tertiaryText }]}>{t('taskDetail.tapToAssign')}</Text>
+          </View>
+        </TouchableOpacity>
       )}
 
       {/* Tags */}
@@ -1257,6 +1318,199 @@ export const TaskDetailScreen: React.FC = () => {
                 );
               })}
             </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Priority Picker Modal */}
+      <Modal
+        visible={priorityPickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setPriorityPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setPriorityPickerVisible(false)}
+        >
+          <View
+            style={[
+              styles.statusPickerSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: cardBorder,
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
+              {t('taskDetail.changePriority', 'Change Priority')}
+            </Text>
+            <View style={styles.statusPickerList}>
+              {data.priorities.map((p) => {
+                const isCurrentPriority = String(p.id) === String(currentPriorityId);
+                const pColor = p.color || priorityColor(p.name as any) || '#9E9E9E';
+                return (
+                  <TouchableOpacity
+                    key={String(p.id)}
+                    style={[
+                      styles.statusPickerItem,
+                      {
+                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0,0,0,0.04)',
+                      },
+                      isCurrentPriority && {
+                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                      },
+                    ]}
+                    onPress={() => handlePriorityChange({ id: p.id, name: p.name })}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.statusPickerDot,
+                        { backgroundColor: pColor },
+                      ]}
+                    />
+                    <Text
+                      style={[
+                        styles.statusPickerItemText,
+                        { color: colors.text },
+                        isCurrentPriority && { fontFamily: fontFamilies.bodySemibold },
+                      ]}
+                    >
+                      {p.name}
+                    </Text>
+                    {isCurrentPriority && (
+                      <MaterialIcons name="check" size={20} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Assignee Picker Modal */}
+      <Modal
+        visible={assigneePickerVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => {
+          setAssigneePickerVisible(false);
+          setAssigneeSearch('');
+        }}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            setAssigneePickerVisible(false);
+            setAssigneeSearch('');
+          }}
+        >
+          <View
+            style={[
+              styles.statusPickerSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: cardBorder,
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
+              {t('common.assignTo', 'Assign To')}
+            </Text>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+                borderWidth: 1,
+                borderRadius: radius.md,
+                paddingHorizontal: 12,
+                paddingVertical: 8,
+                marginBottom: 12,
+              }}
+            >
+              <MaterialIcons
+                name="search"
+                size={20}
+                color={colors.textSecondary}
+                style={{ marginRight: 8 }}
+              />
+              <TextInput
+                style={{ flex: 1, fontSize: fontSizes.md, fontFamily: fontFamilies.bodyRegular, color: colors.text, padding: 0 }}
+                placeholder={t('common.searchUsers', 'Search users...')}
+                placeholderTextColor={colors.textSecondary}
+                value={assigneeSearch}
+                onChangeText={setAssigneeSearch}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              {assigneeSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setAssigneeSearch('')}>
+                  <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
+            </View>
+            <ScrollView style={{ maxHeight: 300 }} bounces={false} keyboardShouldPersistTaps="handled">
+              <View style={styles.statusPickerList}>
+                {sortedUsers.map((u) => {
+                  const isAssigned = task.assignees.some((a) => a.name === u.name);
+                  const isCurrentUser = u.id === (authUser?.id ?? 0);
+                  return (
+                    <TouchableOpacity
+                      key={String(u.id)}
+                      style={[
+                        styles.statusPickerItem,
+                        {
+                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+                        },
+                        isAssigned && {
+                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                        },
+                      ]}
+                      onPress={() => handleAssigneeSelect({ id: u.id as number, name: u.name })}
+                      activeOpacity={0.7}
+                    >
+                      <View
+                        style={{
+                          width: 28,
+                          height: 28,
+                          borderRadius: 14,
+                          backgroundColor: primaryColor,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          marginRight: 12,
+                        }}
+                      >
+                        <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
+                          {u.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text
+                        style={[
+                          styles.statusPickerItemText,
+                          { color: colors.text },
+                          isAssigned && { fontFamily: fontFamilies.bodySemibold },
+                        ]}
+                      >
+                        {u.name}{isCurrentUser ? ` (${t('common.you', 'You')})` : ''}
+                      </Text>
+                      {isAssigned && (
+                        <MaterialIcons name="check" size={20} color={primaryColor} />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
           </View>
         </TouchableOpacity>
       </Modal>

@@ -111,6 +111,7 @@ function mapTaskToItem(
     description: (task as any).description || null,
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
     priority: mapPriority(task.priority_id, priorityMap),
+    priorityId: task.priority_id ?? null,
     status: status.name,
     statusColor: status.color,
     statusId: task.status_id ?? null,
@@ -263,6 +264,7 @@ interface TaskContextType {
   availableTags: string[];
   tagInfoMap: Map<string, { color: string | null; icon: string | null }>;
   changeTaskStatus: (taskId: string, status: StatusOption) => void;
+  changeTaskPriority: (taskId: string, priorityId: AnyId) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
   assignTaskToUser: (taskId: string, userId: number, userName: string) => void;
@@ -337,6 +339,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     for (const s of data.statuses) m.set(s.id, (s as any)._id);
     return m;
   }, [data.statuses]);
+
+  // Reverse lookup: resolved pgId → Convex _id for priorities
+  const priorityConvexIdMap = useMemo(() => {
+    const m = new Map<AnyId, string>();
+    for (const p of data.priorities) m.set(p.id, (p as any)._id);
+    return m;
+  }, [data.priorities]);
 
   const userMap = useMemo(() => {
     const m = new Map<AnyId, string>();
@@ -1072,6 +1081,29 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
 
+  const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
+    const priorityInfo = priorityMap.get(priorityId);
+    if (priorityInfo) {
+      setTimedOverride(taskId, { priority: mapPriority(priorityId, priorityMap), priorityId });
+    }
+
+    if (tenantId) {
+      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
+      const priorityConvexId = priorityConvexIdMap.get(priorityId);
+      if (taskConvexId && priorityConvexId) {
+        patchTaskMutation({
+          tenantId,
+          id: taskConvexId as any,
+          priorityId: priorityConvexId as any,
+        }).catch((err: any) => {
+          console.warn('[TaskContext] Failed to change priority:', err);
+        });
+      } else {
+        console.warn('[TaskContext] Could not resolve Convex IDs for priority change', { taskId, taskConvexId, priorityId, priorityConvexId });
+      }
+    }
+  }, [priorityMap, tenantId, patchTaskMutation, allMappedTaskMap, priorityConvexIdMap]);
+
   const markTaskDone = useCallback((taskId: string) => {
     if (!finalStatus) return;
     const finalStatusObj = data.statuses.find((s) => s.final);
@@ -1265,6 +1297,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       availableTags,
       tagInfoMap,
       changeTaskStatus,
+      changeTaskPriority,
       markTaskDone,
       assignTaskToYou,
       assignTaskToUser,
@@ -1304,6 +1337,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       availableTags,
       tagInfoMap,
       changeTaskStatus,
+      changeTaskPriority,
       markTaskDone,
       assignTaskToUser,
       getFormSchema,

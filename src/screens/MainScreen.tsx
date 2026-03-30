@@ -23,7 +23,7 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -321,22 +321,27 @@ export const MainScreen: React.FC = () => {
     }
   }, [route.params]);
 
-  // Handle hardware back button when inside a workspace or workspaces list
-  useEffect(() => {
-    if (tasksTab === 'everything') return;
-    const handler = () => {
-      if (tasksTab === 'workspace') {
-        setTasksTab('workspaces');
-        setSelectedWorkspace('Everything');
-      } else if (tasksTab === 'workspaces') {
-        setTasksTab('everything');
-        setSelectedWorkspace('Everything');
-      }
-      return true; // prevent default back behaviour
-    };
-    const sub = BackHandler.addEventListener('hardwareBackPress', handler);
-    return () => sub.remove();
-  }, [tasksTab, setSelectedWorkspace]);
+  // Handle back navigation when inside a workspace or workspaces list.
+  // useFocusEffect ensures the handler is only active when MainScreen is the
+  // focused screen — so it won't swallow back presses meant for TaskDetail etc.
+  useFocusEffect(
+    useCallback(() => {
+      if (tasksTab === 'everything') return;
+
+      const handler = () => {
+        if (tasksTab === 'workspace') {
+          setTasksTab('workspaces');
+          setSelectedWorkspace('Everything');
+        } else if (tasksTab === 'workspaces') {
+          setTasksTab('everything');
+          setSelectedWorkspace('Everything');
+        }
+        return true; // prevent default back behaviour
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', handler);
+      return () => sub.remove();
+    }, [tasksTab, setSelectedWorkspace]),
+  );
 
   useEffect(() => {
     if (selectedNav >= navItems.length) {
@@ -897,7 +902,7 @@ export const MainScreen: React.FC = () => {
         }
         renderItem={({ item: ws }) => {
           const wsColor = ws.color || primaryColor;
-          const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(ws.icon);
+          const mciIcon = getMciIconName(ws.icon);
           const wsTaskCount = taskCountsByWorkspace.get(ws.id) || 0;
           const wsDescription = (ws as any).description;
           const wsType = (ws as any).type;
@@ -917,14 +922,14 @@ export const MainScreen: React.FC = () => {
               }}
             >
               <View style={[styles.workspaceListIcon, { backgroundColor: wsColor }]}>
-                <FaIcon name={iconName} size={16} color="#FFFFFF" solid={solid} brand={wsBrand} />
+                <MaterialCommunityIcons name={mciIcon as any} size={20} color="#FFFFFF" />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
                   {ws.name}
                 </Text>
                 <Text style={[styles.workspaceListType, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {wsType === 'PROJECT' ? 'Project' : 'Workspace'}
+                  {wsTaskCount} {wsTaskCount === 1 ? 'task' : 'tasks'}
                   {wsDescription ? ` · ${wsDescription}` : ''}
                 </Text>
               </View>
@@ -1190,7 +1195,7 @@ export const MainScreen: React.FC = () => {
       {selectedNav === 0 && tasksTab === 'workspace' && (() => {
         const currentWs = workspaceObjects.find((w) => w.name === selectedWorkspace);
         const wsColor = currentWs?.color || primaryColor;
-        const { name: iconName, solid, brand: wsBrand } = parseWorkspaceIcon(currentWs?.icon);
+        const wsMciIcon = getMciIconName(currentWs?.icon);
         return (
           <View
             style={[
@@ -1211,7 +1216,7 @@ export const MainScreen: React.FC = () => {
               <MaterialIcons name="arrow-back" size={20} color={colors.text} />
             </TouchableOpacity>
             <View style={[styles.workspaceTitleIcon, { backgroundColor: wsColor }]}>
-              <FaIcon name={iconName} size={12} color="#FFFFFF" solid={solid} brand={wsBrand} />
+              <MaterialCommunityIcons name={wsMciIcon as any} size={14} color="#FFFFFF" />
             </View>
             <Text
               style={[styles.workspaceTitleText, { color: colors.text }]}
