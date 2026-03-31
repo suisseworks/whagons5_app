@@ -188,7 +188,7 @@ export interface FormSchemaField {
   id: number;
   type: 'text' | 'textarea' | 'select' | 'checkbox' | 'date' | 'number'
        | 'time' | 'datetime' | 'signature' | 'image' | 'fixed-image'
-       | 'barcode' | 'list' | 'single-checkbox';
+       | 'barcode' | 'list' | 'single-checkbox' | 'section';
   label: string;
   placeholder?: string;
   required?: boolean;
@@ -1170,21 +1170,38 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     assignTaskToUser(taskId, authUser.id, authUser.name);
   }, [authUser, assignTaskToUser]);
 
-  // Form version map
-  const formVersionMap = useMemo(() => {
+  // Form version maps
+  // formVersionMap: formId → current version (for new/unfilled forms)
+  // formVersionByIdMap: versionId → version (for looking up specific versions from submissions)
+  const { formVersionMap, formVersionByIdMap } = useMemo(() => {
+    // Build form → currentVersionId map, keyed by BOTH pgId and Convex _id
+    // so lookups by either ID type succeed.
     const formToCurrentVersion = new Map<AnyId, AnyId>();
     for (const f of data.forms) {
-      if (f.current_version_id) formToCurrentVersion.set(f.id, f.current_version_id);
-    }
-
-    const m = new Map<AnyId, SyncedFormVersion>();
-    for (const fv of data.formVersions) {
-      const currentVersionId = formToCurrentVersion.get(fv.form_id);
-      if (currentVersionId === fv.id) {
-        m.set(fv.form_id, fv);
+      if (!f.current_version_id) continue;
+      formToCurrentVersion.set(f.id, f.current_version_id);
+      // f.id prefers pgId; also store under Convex _id for cross-type lookups
+      if ((f as any)._id && (f as any)._id !== f.id) {
+        formToCurrentVersion.set((f as any)._id, f.current_version_id);
       }
     }
-    return m;
+
+    const byFormId = new Map<AnyId, SyncedFormVersion>();
+    const byId = new Map<AnyId, SyncedFormVersion>();
+    for (const fv of data.formVersions) {
+      // Index every version by its own ID (pgId AND Convex _id)
+      byId.set(fv.id, fv);
+      if ((fv as any)._id) byId.set((fv as any)._id, fv);
+
+      // Check if this version is the current one for its form.
+      // current_version_id may be a Convex ID while fv.id may be a pgId,
+      // so compare against both.
+      const currentVersionId = formToCurrentVersion.get(fv.form_id);
+      if (currentVersionId && (currentVersionId === fv.id || currentVersionId === (fv as any)._id)) {
+        byFormId.set(fv.form_id, fv);
+      }
+    }
+    return { formVersionMap: byFormId, formVersionByIdMap: byId };
   }, [data.forms, data.formVersions]);
 
   const taskFormMap = useMemo(() => {
@@ -1217,7 +1234,34 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const getFormSchema = useCallback((task: TaskItem): FormSchema | null => {
     if (!task.formId) return null;
 
-    const fv = formVersionMap.get(task.formId);
+    // Check if there's an existing submission whose form_version belongs to
+    // a DIFFERENT form than the task's current formId (i.e. the template was
+    // switched to a completely different form). In that case, show the old
+    // form so the filled data still maps correctly.
+    //
+    // If the submission's form version belongs to the SAME form, always use
+    // the current version so newly added fields are visible.
+    const tf = taskFormMap.get(task.id) ?? taskFormMap.get(Number(task.id));
+    let fv: SyncedFormVersion | undefined;
+
+    if (tf?.form_version_id) {
+      const submissionVersion = formVersionByIdMap.get(tf.form_version_id);
+      if (submissionVersion) {
+        const submissionFormId = String(submissionVersion.form_id);
+        const taskFormId = String(task.formId);
+        // Template was switched to a different form entirely — use the
+        // CURRENT version of the submission's original form (not the exact
+        // old version) so newly added fields are still visible.
+        if (submissionFormId !== taskFormId) {
+          fv = formVersionMap.get(submissionVersion.form_id) ?? submissionVersion;
+        }
+      }
+    }
+
+    // Default: use the current version of the task's form
+    if (!fv) {
+      fv = formVersionMap.get(task.formId);
+    }
     if (!fv || !fv.fields) return null;
 
     try {
@@ -1230,7 +1274,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch {
       return null;
     }
-  }, [formVersionMap]);
+  }, [formVersionMap, formVersionByIdMap, taskFormMap]);
 
   const getFormVersionId = useCallback((formId: AnyId): AnyId | null => {
     const fv = formVersionMap.get(formId);

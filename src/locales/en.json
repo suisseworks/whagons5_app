@@ -517,10 +517,13 @@
       "barcodeListPlaceholder": "Scan barcode %{index}",
       "listItemPlaceholder": "Item %{index}",
       "addItemButton": "Add item",
-      "imageUploadPlaceholder": "Image upload — upload on web",
+      "imageUploadPlaceholder": "No image uploaded",
       "imagePlaceholder": "Image — upload on web",
+      "tapToUploadImage": "Tap to upload image",
       "unsupportedFieldType": "Unsupported field type: %{type}",
-      "noFields": "No fields in this form"
+      "noFields": "No fields in this form",
+      "untitledSection": "Section",
+      "fieldsFilled": "fields filled"
     },
     "activeTaskBanner": {
       "workingOnLabel": "Working on"

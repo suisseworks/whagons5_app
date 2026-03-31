@@ -7,10 +7,10 @@
  * Supported field types:
  *   text, textarea, select, checkbox, date, number, time, datetime,
  *   single-checkbox, list, barcode (with camera scanner),
- *   signature (drawable pad), image/fixed-image (display-only placeholders)
+ *   signature (drawable pad), image (uploadable), fixed-image (display-only from template)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,8 @@ import {
   Image,
   ActivityIndicator,
   useWindowDimensions,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useQuery } from 'convex/react';
@@ -30,6 +32,7 @@ import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { SignaturePad } from './SignaturePad';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
+import { useConvexUpload } from '../hooks/useConvexUpload';
 
 /** Fix self-hosted Convex storage URLs (dashboard domain → backend domain) */
 function fixConvexStorageUrl(url: string): string {
@@ -117,6 +120,44 @@ export const FormFiller: React.FC<FormFillerProps> = ({
 
   const inputBg = isDarkMode ? 'rgba(31, 36, 34, 0.7)' : '#F3EEE4';
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.12)' : '#E6E1D7';
+
+  // Group fields into sections: fields before the first section are "ungrouped",
+  // then each section field starts a new group containing fields until the next section.
+  type SectionGroup = {
+    section: FormSchemaField | null; // null = ungrouped (fields before first section)
+    fields: FormSchemaField[];
+  };
+  const sectionGroups = useMemo((): SectionGroup[] => {
+    const groups: SectionGroup[] = [];
+    let current: SectionGroup = { section: null, fields: [] };
+    for (const field of schema.fields) {
+      if (field.type === 'section') {
+        if (current.section || current.fields.length > 0) groups.push(current);
+        current = { section: field, fields: [] };
+      } else {
+        current.fields.push(field);
+      }
+    }
+    if (current.section || current.fields.length > 0) groups.push(current);
+    return groups;
+  }, [schema.fields]);
+
+  // Which section is currently open in the detail modal (null = none)
+  const [openSectionId, setOpenSectionId] = useState<number | null>(null);
+  const openGroup = useMemo(
+    () => sectionGroups.find(g => g.section && g.section.id === openSectionId) ?? null,
+    [sectionGroups, openSectionId],
+  );
+
+  // Non-fillable field types (display-only)
+  const isDisplayOnly = (f: FormSchemaField) => f.type === 'fixed-image';
+
+  // Count how many fillable fields in a section have values filled
+  const sectionFillableFields = (fields: FormSchemaField[]): FormSchemaField[] =>
+    fields.filter(f => !isDisplayOnly(f));
+
+  const sectionFilledCount = (fields: FormSchemaField[]): number =>
+    sectionFillableFields(fields).filter(f => !isFieldEmpty(f, values[f.id])).length;
 
   const renderField = (field: FormSchemaField) => {
     const fieldValue = values[field.id];
@@ -330,8 +371,35 @@ export const FormFiller: React.FC<FormFillerProps> = ({
           />
         );
 
-      case 'image':
       case 'fixed-image': {
+        // Fixed images are display-only — the image comes from the field
+        // definition (set by the form designer), not from user-submitted values.
+        const fixedImageId = field.properties?.imageId as string | undefined;
+        const fixedImageUrl = field.properties?.imageUrl as string | undefined;
+        const fixedSrc = fixedImageId || fixedImageUrl;
+        if (fixedSrc) {
+          return (
+            <View style={{ borderRadius: radius.md, overflow: 'hidden' }}>
+              <ConvexImage
+                storageId={fixedSrc}
+                style={{ width: '100%', height: 200, borderRadius: radius.md }}
+                resizeMode="contain"
+              />
+            </View>
+          );
+        }
+        return (
+          <View style={[styles.placeholderField, { borderColor }]}>
+            <MaterialIcons name="image" size={24} color={colors.textSecondary} />
+            <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
+              {t('component.formFiller.imagePlaceholder')}
+            </Text>
+          </View>
+        );
+      }
+
+      case 'image': {
+        // User-uploadable image field — value is a Convex storageId
         const imageVal = value as string | undefined;
         if (imageVal) {
           return (
@@ -341,20 +409,34 @@ export const FormFiller: React.FC<FormFillerProps> = ({
                 style={{ width: '100%', height: 200, borderRadius: radius.md }}
                 resizeMode="contain"
               />
+              {!readOnly && (
+                <TouchableOpacity
+                  style={[styles.imageReplaceButton, { backgroundColor: primaryColor }]}
+                  onPress={() => handleFieldChange(field.id, undefined)}
+                >
+                  <MaterialIcons name="close" size={16} color="#FFFFFF" />
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        }
+        if (readOnly) {
+          return (
+            <View style={[styles.placeholderField, { borderColor }]}>
+              <MaterialIcons name="image" size={24} color={colors.textSecondary} />
+              <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
+                {t('component.formFiller.imageUploadPlaceholder')}
+              </Text>
             </View>
           );
         }
         return (
-          <View style={[styles.placeholderField, { borderColor }]}>
-            <MaterialIcons
-              name="image"
-              size={24}
-              color={colors.textSecondary}
-            />
-            <Text style={[styles.placeholderText, { color: colors.textSecondary }]}>
-              {field.type === 'image' ? t('component.formFiller.imageUploadPlaceholder') : t('component.formFiller.imagePlaceholder')}
-            </Text>
-          </View>
+          <ImageUploadField
+            onUploaded={(storageId) => handleFieldChange(field.id, storageId)}
+            borderColor={borderColor}
+            textColor={colors.textSecondary}
+            primaryColor={primaryColor}
+          />
         );
       }
 
@@ -418,8 +500,75 @@ export const FormFiller: React.FC<FormFillerProps> = ({
         </View>
       )}
 
-      {/* Fields */}
-      {schema.fields.map(renderField)}
+      {/* Fields: ungrouped fields render inline, sections render as tappable cards */}
+      {sectionGroups.map((group, gi) => {
+        // Ungrouped fields (before the first section) — render inline
+        if (!group.section) {
+          return (
+            <View key={`sg-ungrouped-${gi}`}>
+              {group.fields.map(renderField)}
+            </View>
+          );
+        }
+
+        // Section → tappable list item that opens a detail view
+        const filled = sectionFilledCount(group.fields);
+        const total = sectionFillableFields(group.fields).length;
+        const sectionLabel = group.section.label?.replace(/<[^>]*>/g, '') || t('component.formFiller.untitledSection', 'Section');
+
+        return (
+          <TouchableOpacity
+            key={`sg-${group.section.id}`}
+            style={[styles.sectionCard, { backgroundColor: inputBg, borderColor }]}
+            onPress={() => setOpenSectionId(group.section!.id)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.sectionCardContent}>
+              <Text style={[styles.sectionCardTitle, { color: colors.text }]} numberOfLines={1}>
+                {sectionLabel}
+              </Text>
+              <Text style={[styles.sectionCardSubtitle, { color: colors.textSecondary }]}>
+                {filled}/{total} {t('component.formFiller.fieldsFilled', 'fields filled')}
+              </Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
+          </TouchableOpacity>
+        );
+      })}
+
+      {/* Section detail modal */}
+      <Modal
+        visible={openSectionId !== null}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setOpenSectionId(null)}
+      >
+        <View style={[styles.sectionModalContainer, { backgroundColor: colors.background }]}>
+          {/* Modal header */}
+          <View style={[styles.sectionModalHeader, { borderBottomColor: borderColor }]}>
+            <TouchableOpacity
+              onPress={() => setOpenSectionId(null)}
+              style={styles.sectionModalBackButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <MaterialIcons name="arrow-back" size={24} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={[styles.sectionModalTitle, { color: colors.text }]} numberOfLines={1}>
+              {openGroup?.section?.label?.replace(/<[^>]*>/g, '') || t('component.formFiller.untitledSection', 'Section')}
+            </Text>
+            <View style={{ width: 40 }} />
+          </View>
+
+          {/* Modal fields */}
+          <ScrollView
+            style={styles.sectionModalScroll}
+            contentContainerStyle={styles.sectionModalContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {openGroup?.fields.map(renderField)}
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* Empty state */}
       {schema.fields.length === 0 && (
@@ -643,12 +792,17 @@ const DateFieldInput: React.FC<{
 
   const setNow = () => {
     const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
     if (mode === 'date') {
-      onChange(now.toISOString().split('T')[0]);
+      onChange(`${year}-${month}-${day}`);
     } else if (mode === 'time') {
-      onChange(now.toTimeString().slice(0, 5));
+      onChange(`${hours}:${minutes}`);
     } else {
-      onChange(`${now.toISOString().split('T')[0]} ${now.toTimeString().slice(0, 5)}`);
+      onChange(`${year}-${month}-${day}T${hours}:${minutes}`);
     }
   };
 
@@ -764,6 +918,44 @@ const BarcodeListItem: React.FC<{
         }}
       />
     </View>
+  );
+};
+
+/** Image upload field – lets the user pick/take a photo and uploads to Convex */
+const ImageUploadField: React.FC<{
+  onUploaded: (storageId: string) => void;
+  borderColor: string;
+  textColor: string;
+  primaryColor: string;
+}> = ({ onUploaded, borderColor, textColor, primaryColor }) => {
+  const { t } = useLanguage();
+  const { pickAndUpload, uploading } = useConvexUpload();
+
+  const handlePress = async () => {
+    const attachments = await pickAndUpload();
+    if (attachments.length > 0) {
+      onUploaded(attachments[0].storageId);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      style={[styles.placeholderField, styles.imageUploadField, { borderColor }]}
+      onPress={handlePress}
+      disabled={uploading}
+      activeOpacity={0.7}
+    >
+      {uploading ? (
+        <ActivityIndicator size="small" color={primaryColor} />
+      ) : (
+        <>
+          <MaterialIcons name="add-a-photo" size={28} color={primaryColor} />
+          <Text style={[styles.placeholderText, { color: textColor, marginTop: 8 }]}>
+            {t('component.formFiller.tapToUploadImage', 'Tap to upload image')}
+          </Text>
+        </>
+      )}
+    </TouchableOpacity>
   );
 };
 
@@ -1003,6 +1195,72 @@ const styles = StyleSheet.create({
     marginLeft: 10,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  sectionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderRadius: radius.md,
+    marginBottom: 12,
+  },
+  sectionCardContent: {
+    flex: 1,
+    marginRight: 8,
+  },
+  sectionCardTitle: {
+    fontSize: fontSizes.base,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  sectionCardSubtitle: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
+  },
+  sectionModalContainer: {
+    flex: 1,
+  },
+  sectionModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    paddingTop: 50,
+  },
+  sectionModalBackButton: {
+    width: 40,
+    alignItems: 'flex-start',
+  },
+  sectionModalTitle: {
+    flex: 1,
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.bodySemibold,
+    textAlign: 'center',
+  },
+  sectionModalScroll: {
+    flex: 1,
+  },
+  sectionModalContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  imageUploadField: {
+    flexDirection: 'column',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 120,
+  },
+  imageReplaceButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   // List
   listItemRow: {

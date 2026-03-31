@@ -517,10 +517,13 @@
       "barcodeListPlaceholder": "Escanea código de barras %{index}",
       "listItemPlaceholder": "Elemento %{index}",
       "addItemButton": "Agregar elemento",
-      "imageUploadPlaceholder": "Subir imagen — sube en la web",
+      "imageUploadPlaceholder": "Sin imagen subida",
       "imagePlaceholder": "Imagen — sube en la web",
+      "tapToUploadImage": "Toca para subir imagen",
       "unsupportedFieldType": "Tipo de campo no soportado: %{type}",
-      "noFields": "No hay campos en este formulario"
+      "noFields": "No hay campos en este formulario",
+      "untitledSection": "Sección",
+      "fieldsFilled": "campos llenados"
     },
     "activeTaskBanner": {
       "workingOnLabel": "Trabajando en"
