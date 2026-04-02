@@ -267,7 +267,7 @@ interface TaskContextType {
   changeTaskPriority: (taskId: string, priorityId: AnyId) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
-  assignTaskToUser: (taskId: string, userId: number, userName: string) => void;
+  assignTaskToUser: (taskId: string, userId: AnyId, userName: string) => void;
   getFormSchema: (task: TaskItem) => FormSchema | null;
   getTaskFormSubmission: (taskId: string) => { id: AnyId; formVersionId: AnyId; data: Record<string, unknown> } | null;
   getFormVersionId: (formId: AnyId) => AnyId | null;
@@ -374,7 +374,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [data.tags]);
 
   const userPictureMap = useMemo(() => {
-    const m = new Map<number, string | null>();
+    const m = new Map<AnyId, string | null>();
     for (const u of data.users) m.set(u.id, u.url_picture ?? null);
     return m;
   }, [data.users]);
@@ -1013,28 +1013,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (args.priorityConvexId) mutationArgs.priorityId = args.priorityConvexId;
     if (args.dueDate) mutationArgs.dueDate = args.dueDate;
     if (args.startDate) mutationArgs.startDate = args.startDate;
-    if (args.attachments?.length) mutationArgs.attachments = args.attachments;
     if (args.latitude != null) mutationArgs.latitude = args.latitude;
     if (args.longitude != null) mutationArgs.longitude = args.longitude;
+    if (args.userConvexIds?.length) mutationArgs.assigneeUserIds = args.userConvexIds;
 
     const result = await createTaskMutation(mutationArgs as any);
-    const taskConvexId = (result as any)?._id ?? String(result);
-
-    // Assign selected users to the newly created task
-    if (args.userConvexIds?.length) {
-      await Promise.all(
-        args.userConvexIds.map(userId =>
-          assignUserMutation({
-            tenantId,
-            taskId: taskConvexId as any,
-            userId: userId as any,
-          }).catch(err => console.warn('[TaskContext] Failed to assign user:', err))
-        )
-      );
-    }
-
     return String(result);
-  }, [tenantId, createTaskMutation, assignUserMutation]);
+  }, [tenantId, createTaskMutation]);
 
   const addTask = (_task: TaskItem) => {
     // Legacy stub - use createTask instead
@@ -1128,7 +1113,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [finalStatus, data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
 
-  const assignTaskToUser = useCallback((taskId: string, userId: number, userName: string) => {
+  const assignTaskToUser = useCallback((taskId: string, userId: AnyId, userName: string) => {
     const task = filteredTasks.find((t) => t.id === taskId);
     if (task && !task.assignees.some((a) => a.name === userName)) {
       setPendingAssigns((prev) => {

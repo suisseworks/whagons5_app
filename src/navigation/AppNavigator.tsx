@@ -21,6 +21,7 @@ import { SpotsMapScreen } from '../screens/SpotsMapScreen';
 import { GamificationScreen } from '../screens/GamificationScreen';
 import { PointHistoryScreen } from '../screens/PointHistoryScreen';
 import { StatsScreen } from '../screens/StatsScreen';
+import { VoiceTaskReviewScreen } from '../screens/VoiceTaskReviewScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
@@ -64,6 +65,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="TaskDetail" component={TaskDetailScreen} />
         <Stack.Screen name="SharedTaskDetail" component={SharedTaskDetailScreen} />
         <Stack.Screen name="CreateTask" component={CreateTaskScreen} />
+        <Stack.Screen name="VoiceTaskReview" component={VoiceTaskReviewScreen} />
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
         <Stack.Screen name="Themes" component={ThemesScreen} />

@@ -19,6 +19,7 @@ import {
 } from 'react-native-gesture-handler';
 import { MaterialIcons } from '@expo/vector-icons';
 import { radius, fontFamilies, fontSizes } from '../config/designTokens';
+import { useTheme } from '../context/ThemeContext';
 
 interface SignaturePadProps {
   value?: string | null;
@@ -75,15 +76,21 @@ function buildSvgDataUri(
 }
 
 /** Renders a saved signature from its data URI (base64 SVG or PNG) */
-const ExistingSignature: React.FC<{ value: string; style?: any }> = ({ value, style }) => {
+const ExistingSignature: React.FC<{ value: string; style?: any; strokeColor?: string }> = ({
+  value,
+  style,
+  strokeColor,
+}) => {
   const svgXml = useMemo(() => {
     if (value.startsWith('data:image/svg+xml;base64,')) {
       try {
-        return atob(value.slice('data:image/svg+xml;base64,'.length));
+        const decoded = atob(value.slice('data:image/svg+xml;base64,'.length));
+        if (!strokeColor) return decoded;
+        return decoded.replace(/stroke="[^"]*"/g, `stroke="${strokeColor}"`);
       } catch { return null; }
     }
     return null;
-  }, [value]);
+  }, [strokeColor, value]);
 
   if (svgXml) {
     return (
@@ -108,6 +115,7 @@ const SignatureEditorModal: React.FC<{
   strokeColor: string;
   initialValue?: string | null;
 }> = ({ visible, onClose, onSave, strokeColor }) => {
+  const { colors, primaryColor, isDarkMode } = useTheme();
   // Use refs for paths to avoid stale closures in gesture callbacks
   const pathsRef = useRef<string[]>([]);
   const [pathsState, setPathsState] = useState<string[]>([]);
@@ -193,7 +201,7 @@ const SignatureEditorModal: React.FC<{
             position: 'absolute',
             top: (screenH - landscapeH) / 2,
             left: (screenW - landscapeW) / 2,
-            backgroundColor: '#FFFFFF',
+            backgroundColor: colors.background,
             paddingLeft: 44,
             paddingRight: 44,
             paddingTop: 8,
@@ -201,22 +209,38 @@ const SignatureEditorModal: React.FC<{
           }}
         >
           {/* Top bar: Cancel — title — Done */}
-          <View style={styles.modalHeader}>
+          <View style={[styles.modalHeader, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E5E5E5' }]}>
             <TouchableOpacity onPress={onClose} style={styles.modalHeaderButton}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
+              <Text style={[styles.modalCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Sign</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Sign</Text>
             <TouchableOpacity
               onPress={handleSave}
               style={[styles.modalHeaderButton, !hasDrawing && { opacity: 0.4 }]}
               disabled={!hasDrawing}
             >
-              <Text style={[styles.modalSaveText, { color: hasDrawing ? '#007AFF' : '#999' }]}>Done</Text>
+              <Text
+                style={[
+                  styles.modalSaveText,
+                  { color: hasDrawing ? primaryColor : colors.textSecondary },
+                ]}
+              >
+                Done
+              </Text>
             </TouchableOpacity>
           </View>
 
           {/* Canvas */}
-          <View style={styles.modalCanvasWrapper} onLayout={onLayout}>
+          <View
+            style={[
+              styles.modalCanvasWrapper,
+              {
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E5E5E5',
+                backgroundColor: colors.surface,
+              },
+            ]}
+            onLayout={onLayout}
+          >
             <GestureDetector gesture={pan}>
               <View style={styles.modalCanvas}>
                 <Svg style={StyleSheet.absoluteFill}>
@@ -244,7 +268,12 @@ const SignatureEditorModal: React.FC<{
                 </Svg>
 
                 {/* Signature line hint */}
-                <View style={styles.signatureLine} />
+                <View
+                  style={[
+                    styles.signatureLine,
+                    { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.18)' : '#D1D5DB' },
+                  ]}
+                />
               </View>
             </GestureDetector>
           </View>
@@ -253,7 +282,14 @@ const SignatureEditorModal: React.FC<{
           <View style={styles.modalFooter}>
             <TouchableOpacity
               onPress={clear}
-              style={[styles.modalClearButton, !hasDrawing && { opacity: 0.4 }]}
+              style={[
+                styles.modalClearButton,
+                {
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E5E5E5',
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#FFFFFF',
+                },
+                !hasDrawing && { opacity: 0.4 },
+              ]}
               disabled={!hasDrawing}
             >
               <MaterialIcons name="delete-outline" size={20} color="#F44336" />
@@ -279,6 +315,7 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
   backgroundColor = 'transparent',
   height = 150,
 }) => {
+  const { isDarkMode, colors } = useTheme();
   const [editorVisible, setEditorVisible] = useState(false);
   const hasValue = !!value;
 
@@ -296,10 +333,10 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
     return (
       <View style={[styles.container, { borderColor, backgroundColor, height }]}>
         {hasValue ? (
-          <ExistingSignature value={value!} />
+          <ExistingSignature value={value!} strokeColor={strokeColor} />
         ) : (
           <View style={styles.emptyState}>
-            <MaterialIcons name="draw" size={24} color="#9E9E9E" />
+            <MaterialIcons name="draw" size={24} color={colors.textSecondary} />
           </View>
         )}
       </View>
@@ -311,15 +348,15 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
       {/* Display area */}
       <View style={[styles.container, { borderColor, backgroundColor, height }]}>
         {hasValue ? (
-          <ExistingSignature value={value!} />
+          <ExistingSignature value={value!} strokeColor={strokeColor} />
         ) : (
           <TouchableOpacity
             style={styles.emptyTappable}
             onPress={() => setEditorVisible(true)}
             activeOpacity={0.7}
           >
-            <MaterialIcons name="draw" size={28} color="#9E9E9E" />
-            <Text style={styles.emptyText}>Tap to sign</Text>
+            <MaterialIcons name="draw" size={28} color={colors.textSecondary} />
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Tap to sign</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -328,18 +365,30 @@ export const SignaturePad: React.FC<SignaturePadProps> = ({
       {hasValue && (
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={[styles.actionButton, { borderColor }]}
+            style={[
+              styles.actionButton,
+              {
+                borderColor,
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(255, 255, 255, 0.9)',
+              },
+            ]}
             onPress={handleClear}
             activeOpacity={0.7}
           >
             <MaterialIcons name="delete-outline" size={16} color="#F44336" />
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.actionButton, { borderColor }]}
+            style={[
+              styles.actionButton,
+              {
+                borderColor,
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(255, 255, 255, 0.9)',
+              },
+            ]}
             onPress={() => setEditorVisible(true)}
             activeOpacity={0.7}
           >
-            <MaterialIcons name="edit" size={16} color="#666" />
+            <MaterialIcons name="edit" size={16} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
       )}
@@ -394,7 +443,6 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: 'rgba(255, 255, 255, 0.9)',
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',

@@ -265,6 +265,7 @@ export type RootStackParamList = {
   TaskDetail: { task: TaskItem };
   SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;
+  VoiceTaskReview: { draftId: string };
   Notifications: undefined;
   Settings: undefined;
   Themes: undefined;
