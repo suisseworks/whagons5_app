@@ -10,6 +10,7 @@ import React, {
 import {
   Alert,
   Modal,
+  PanResponder,
   Pressable,
   StyleSheet,
   Text,
@@ -117,29 +118,30 @@ function ControlButton({
   label,
   onPress,
   labelColor,
-  active = false,
-  destructive = false,
+  iconColor,
+  buttonColor,
+  borderColor,
 }: {
   icon: keyof typeof MaterialIcons.glyphMap;
   label: string;
   onPress: () => void;
   labelColor: string;
-  active?: boolean;
-  destructive?: boolean;
+  iconColor: string;
+  buttonColor: string;
+  borderColor?: string;
 }) {
   return (
     <TouchableOpacity onPress={onPress} style={styles.controlWrap} activeOpacity={0.85}>
       <View
         style={[
           styles.controlButton,
-          destructive
-            ? { backgroundColor: '#C73A4D' }
-            : active
-              ? { backgroundColor: '#0F7B6C' }
-              : { backgroundColor: 'rgba(255,255,255,0.14)' },
+          {
+            backgroundColor: buttonColor,
+            borderColor: borderColor ?? 'transparent',
+          },
         ]}
       >
-        <MaterialIcons name={icon} size={22} color="#FFFFFF" />
+        <MaterialIcons name={icon} size={22} color={iconColor} />
       </View>
       <Text style={[styles.controlLabel, { color: labelColor }]}>{label}</Text>
     </TouchableOpacity>
@@ -153,6 +155,9 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [incomingCall, setIncomingCall] = useState<IncomingMobileCall | null>(null);
   const [presentation, setPresentation] = useState<CallPresentation | null>(null);
   const [revision, setRevision] = useState(0);
+  const [isPrimaryLocal, setIsPrimaryLocal] = useState(false);
+  const [previewPosition, setPreviewPosition] = useState<{ x: number; y: number } | null>(null);
+  const [callBodySize, setCallBodySize] = useState({ width: 0, height: 0 });
   const serviceInitialized = useRef(false);
   const processedSignalIds = useRef(new Set<string>());
   const outgoingToneRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
@@ -278,16 +283,18 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const acknowledgedIds: any[] = [];
 
       for (const doc of freshDocs) {
+        const operation = doc.operation as MobileCallSignal['operation'];
+        const callMode = (doc.callMode || 'audio') as MobileCallSignal['callMode'];
         const signal: MobileCallSignal = {
           type: 'webrtc',
-          operation: doc.operation,
+          operation,
           workspaceId: doc.workspaceId ? String(doc.workspaceId) : undefined,
           conversationId: doc.conversationId ? String(doc.conversationId) : undefined,
           fromUserId: String(doc.senderId),
           fromUserName: doc.senderName || '',
           fromUserPicture: doc.senderPicture || undefined,
           toUserId: doc.toUserId ? String(doc.toUserId) : undefined,
-          callMode: doc.callMode || 'audio',
+          callMode,
           payload: doc.payload,
         };
 
@@ -495,16 +502,88 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [stopTone]);
 
   const remotePrimary = activeCall.remoteParticipants[0];
+  const participantCount = Math.max(1, activeCall.remoteParticipants.length + (activeCall.localParticipant ? 1 : 0));
+  const callModeLabel = activeCall.mode === 'video' ? 'Video call' : 'Audio call';
   const remoteVideo = activeCall.remoteParticipants.find(
     (participant) =>
       participant.stream &&
       participant.videoEnabled &&
-      participant.stream.getVideoTracks().length > 0,
+      participant.stream.getVideoTracks().some(
+        (track: any) => track.readyState === 'live' && !track.muted && track.enabled,
+      ),
   );
   const localVideoReady = !!(
     activeCall.localParticipant?.stream &&
     activeCall.localParticipant.videoEnabled &&
-    activeCall.localParticipant.stream.getVideoTracks().length > 0
+    activeCall.localParticipant.stream.getVideoTracks().some(
+      (track: any) => track.readyState === 'live' && !track.muted && track.enabled,
+    )
+  );
+  const previewWidth = 108;
+  const previewHeight = 148;
+  const previewMargin = spacing.md;
+  const canSwapVideo = !!(remoteVideo?.stream && localVideoReady && activeCall.localParticipant?.stream);
+  const showLocalPrimary = canSwapVideo && isPrimaryLocal;
+  const primaryVideoParticipant = showLocalPrimary
+    ? activeCall.localParticipant
+    : remoteVideo ?? (activeCall.remoteParticipants.length === 0 && localVideoReady ? activeCall.localParticipant : null);
+  const previewVideoParticipant = canSwapVideo
+    ? showLocalPrimary
+      ? remoteVideo
+      : activeCall.localParticipant
+    : null;
+  const primaryVideoMirror = primaryVideoParticipant?.userId === activeCall.localParticipant?.userId;
+  const previewVideoMirror = previewVideoParticipant?.userId === activeCall.localParticipant?.userId;
+  const previewPanStart = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!activeCall.visible) {
+      setIsPrimaryLocal(false);
+      setPreviewPosition(null);
+      setCallBodySize({ width: 0, height: 0 });
+      return;
+    }
+
+    if (!canSwapVideo && isPrimaryLocal) {
+      setIsPrimaryLocal(false);
+    }
+  }, [activeCall.visible, canSwapVideo, isPrimaryLocal]);
+
+  useEffect(() => {
+    if (!callBodySize.width || !callBodySize.height) return;
+    const maxX = Math.max(0, callBodySize.width - previewWidth - previewMargin);
+    const maxY = Math.max(0, callBodySize.height - previewHeight - previewMargin);
+
+    setPreviewPosition((current) => {
+      if (!current) {
+        return { x: maxX, y: maxY };
+      }
+      return {
+        x: Math.min(Math.max(0, current.x), maxX),
+        y: Math.min(Math.max(0, current.y), maxY),
+      };
+    });
+  }, [callBodySize.height, callBodySize.width]);
+
+  const previewPanResponder = useMemo(
+    () => PanResponder.create({
+      onStartShouldSetPanResponder: () => !!previewVideoParticipant,
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        !!previewVideoParticipant && (Math.abs(gesture.dx) > 3 || Math.abs(gesture.dy) > 3),
+      onPanResponderGrant: () => {
+        previewPanStart.current = previewPosition ?? { x: 0, y: 0 };
+      },
+      onPanResponderMove: (_, gesture) => {
+        const start = previewPanStart.current ?? previewPosition ?? { x: 0, y: 0 };
+        const maxX = Math.max(0, callBodySize.width - previewWidth - previewMargin);
+        const maxY = Math.max(0, callBodySize.height - previewHeight - previewMargin);
+        setPreviewPosition({
+          x: Math.min(Math.max(0, start.x + gesture.dx), maxX),
+          y: Math.min(Math.max(0, start.y + gesture.dy), maxY),
+        });
+      },
+    }),
+    [callBodySize.height, callBodySize.width, previewPosition, previewVideoParticipant],
   );
 
   return (
@@ -571,14 +650,30 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
         presentationStyle="fullScreen"
         onRequestClose={() => getMobileCallService().hangUp()}
       >
-        <SafeAreaView style={[styles.callScreen, { backgroundColor: surfaceColor }]}>
+        <SafeAreaView style={[styles.callScreen, { backgroundColor: surfaceColor }]}> 
+          <View pointerEvents="none" style={styles.callBackdropLayerTop} />
+          <View pointerEvents="none" style={styles.callBackdropLayerBottom} />
+
           <View style={styles.callHeader}>
-            <View>
+            <View style={styles.callHeaderMeta}>
+              <View
+                style={[
+                  styles.callMetaChip,
+                  { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.72)' },
+                ]}
+              >
+                <MaterialIcons
+                  name={activeCall.mode === 'video' ? 'videocam' : 'call'}
+                  size={14}
+                  color={primaryColor}
+                />
+                <Text style={[styles.callMetaChipText, { color: colors.textSecondary }]}>{callModeLabel}</Text>
+              </View>
               <Text style={[styles.callTitle, { color: colors.text }]} numberOfLines={1}>
                 {activeCall.title}
               </Text>
               {!!activeCall.statusText && (
-                <Text style={[styles.callStatus, { color: colors.textSecondary }]}>
+                <Text style={[styles.callStatus, { color: colors.textSecondary }]}> 
                   {activeCall.statusText}
                 </Text>
               )}
@@ -591,13 +686,59 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             </Pressable>
           </View>
 
-          <View style={styles.callBody}>
-            {activeCall.mode === 'video' && remoteVideo?.stream ? (
-              <RTCView
-                streamURL={remoteVideo.stream.toURL()}
-                style={styles.remoteVideo}
-                objectFit="cover"
-              />
+          <View
+            style={styles.callBody}
+            onLayout={(event) => {
+              const { width, height } = event.nativeEvent.layout;
+              setCallBodySize({ width, height });
+            }}
+          >
+            <View
+              style={[
+                styles.callInfoStrip,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.72)',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
+                },
+              ]}
+            >
+              <View style={styles.callInfoItem}>
+                <Text style={[styles.callInfoEyebrow, { color: colors.textSecondary }]}>Mode</Text>
+                <Text style={[styles.callInfoValue, { color: colors.text }]}>{callModeLabel}</Text>
+              </View>
+              <View style={styles.callInfoDivider} />
+              <View style={styles.callInfoItem}>
+                <Text style={[styles.callInfoEyebrow, { color: colors.textSecondary }]}>People</Text>
+                <Text style={[styles.callInfoValue, { color: colors.text }]}>{participantCount}</Text>
+              </View>
+            </View>
+
+            {primaryVideoParticipant?.stream ? (
+              <View style={styles.remoteVideoFrame}>
+                <RTCView
+                  streamURL={primaryVideoParticipant.stream.toURL()}
+                  style={styles.remoteVideo}
+                  objectFit="cover"
+                  mirror={primaryVideoMirror}
+                />
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.remoteVideoOutline,
+                    {
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
+                    },
+                  ]}
+                />
+                <View style={styles.videoStatusPill}>
+                  <MaterialIcons
+                    name={activeCall.mode === 'video' ? 'videocam' : 'call'}
+                    size={14}
+                    color="#FFFFFF"
+                  />
+                  <Text style={styles.videoStatusPillText}>{activeCall.statusText || 'Live'}</Text>
+                </View>
+              </View>
             ) : (
               <View
                 style={[
@@ -617,9 +758,22 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 <Text style={[styles.audioHeroName, { color: colors.text }]}>
                   {remotePrimary?.userName || activeCall.title}
                 </Text>
-                <Text style={[styles.audioHeroSub, { color: colors.textSecondary }]}>
+                <Text style={[styles.audioHeroSub, { color: colors.textSecondary }]}> 
                   {activeCall.statusText || 'In call'}
                 </Text>
+                <View
+                  style={[
+                    styles.audioHeroBadge,
+                    { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.78)' },
+                  ]}
+                >
+                  <MaterialIcons
+                    name={activeCall.mode === 'video' ? 'videocam' : 'call'}
+                    size={14}
+                    color={primaryColor}
+                  />
+                  <Text style={[styles.audioHeroBadgeText, { color: colors.textSecondary }]}>{callModeLabel}</Text>
+                </View>
               </View>
             )}
 
@@ -650,15 +804,32 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
               </View>
             )}
 
-            {activeCall.mode === 'video' && localVideoReady && activeCall.localParticipant?.stream && (
-              <View style={styles.localPreviewWrap}>
+            {previewVideoParticipant?.stream && previewPosition && (
+              <Pressable
+                onPress={() => {
+                  if (canSwapVideo) {
+                    setIsPrimaryLocal((current) => !current);
+                  }
+                }}
+                style={[
+                  styles.localPreviewWrap,
+                  {
+                    left: previewPosition.x,
+                    top: previewPosition.y,
+                    right: undefined,
+                    bottom: undefined,
+                  },
+                ]}
+                {...previewPanResponder.panHandlers}
+              >
                 <RTCView
-                  streamURL={activeCall.localParticipant.stream.toURL()}
+                  streamURL={previewVideoParticipant.stream.toURL()}
                   style={styles.localPreview}
                   objectFit="cover"
-                  mirror
+                  mirror={previewVideoMirror}
+                  zOrder={2}
                 />
-              </View>
+              </Pressable>
             )}
           </View>
 
@@ -666,7 +837,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
             style={[
               styles.controlsBar,
               {
-                backgroundColor: isDarkMode ? 'rgba(11,17,16,0.9)' : 'rgba(255,255,255,0.88)',
+                backgroundColor: isDarkMode ? 'rgba(8,13,13,0.94)' : 'rgba(255,255,255,0.94)',
                 borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)',
               },
             ]}
@@ -675,30 +846,47 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
               icon={activeCall.localParticipant?.audioEnabled === false ? 'mic-off' : 'mic'}
               label={activeCall.localParticipant?.audioEnabled === false ? 'Muted' : 'Mic'}
               labelColor={colors.text}
+              iconColor={activeCall.localParticipant?.audioEnabled === false ? '#F59E0B' : '#E7FFF7'}
+              buttonColor={activeCall.localParticipant?.audioEnabled === false ? '#3B2A10' : '#0F7B6C'}
+              borderColor={activeCall.localParticipant?.audioEnabled === false ? 'rgba(245,158,11,0.22)' : 'rgba(15,123,108,0.28)'}
               onPress={() => {
                 getMobileCallService().toggleAudio();
                 bumpRevision();
               }}
-              active={activeCall.localParticipant?.audioEnabled !== false}
             />
-            {activeCall.mode === 'video' && (
+            <ControlButton
+              icon={activeCall.localParticipant?.videoEnabled === false ? 'videocam-off' : 'videocam'}
+              label={activeCall.localParticipant?.videoEnabled === false ? 'Camera off' : 'Camera'}
+              labelColor={colors.text}
+              iconColor={activeCall.localParticipant?.videoEnabled === false ? '#F4D27A' : '#F4F8FF'}
+              buttonColor={activeCall.localParticipant?.videoEnabled === false ? '#332A17' : '#425E96'}
+              borderColor={activeCall.localParticipant?.videoEnabled === false ? 'rgba(244,210,122,0.22)' : 'rgba(66,94,150,0.28)'}
+              onPress={() => {
+                void getMobileCallService().toggleVideo().finally(() => bumpRevision());
+              }}
+            />
+            {localVideoReady && (
               <ControlButton
-                icon={activeCall.localParticipant?.videoEnabled === false ? 'videocam-off' : 'videocam'}
-                label={activeCall.localParticipant?.videoEnabled === false ? 'Camera off' : 'Camera'}
+                icon="cameraswitch"
+                label="Flip"
                 labelColor={colors.text}
+                iconColor={isDarkMode ? '#F4F8FF' : '#203A59'}
+                buttonColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#E7EDF8'}
+                borderColor={isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(66,94,150,0.14)'}
                 onPress={() => {
-                  getMobileCallService().toggleVideo();
+                  getMobileCallService().switchCamera();
                   bumpRevision();
                 }}
-                active={activeCall.localParticipant?.videoEnabled !== false}
               />
             )}
             <ControlButton
               icon="call-end"
               label="Hang up"
               labelColor={colors.text}
+              iconColor="#FFFFFF"
+              buttonColor="#C73A4D"
+              borderColor="rgba(199,58,77,0.34)"
               onPress={() => getMobileCallService().hangUp()}
-              destructive
             />
           </View>
         </SafeAreaView>
@@ -771,6 +959,25 @@ const styles = StyleSheet.create({
   },
   callScreen: {
     flex: 1,
+    overflow: 'hidden',
+  },
+  callBackdropLayerTop: {
+    position: 'absolute',
+    top: -120,
+    left: -60,
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    backgroundColor: 'rgba(20,138,84,0.12)',
+  },
+  callBackdropLayerBottom: {
+    position: 'absolute',
+    right: -80,
+    bottom: 120,
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: 'rgba(66,94,150,0.12)',
   },
   callHeader: {
     flexDirection: 'row',
@@ -778,14 +985,33 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
+  },
+  callHeaderMeta: {
+    flex: 1,
+    paddingRight: spacing.md,
+  },
+  callMetaChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    marginBottom: 10,
+  },
+  callMetaChipText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyMedium,
   },
   callTitle: {
-    fontSize: fontSizes.lg,
-    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 28,
+    fontFamily: fontFamilies.bodyBold,
   },
   callStatus: {
     marginTop: 4,
-    fontSize: fontSizes.sm,
+    fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyRegular,
   },
   closeButton: {
@@ -801,31 +1027,105 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
+    gap: spacing.md,
     justifyContent: 'center',
+  },
+  callInfoStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    borderWidth: 1,
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  callInfoItem: {
+    minWidth: 88,
+    alignItems: 'center',
+  },
+  callInfoEyebrow: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  callInfoValue: {
+    marginTop: 2,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyBold,
+  },
+  callInfoDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    marginHorizontal: 12,
+    backgroundColor: 'rgba(148,163,184,0.22)',
+  },
+  remoteVideoFrame: {
+    flex: 1,
+    position: 'relative',
+    borderRadius: 30,
+    backgroundColor: '#000000',
+    overflow: 'hidden',
+    ...shadows.lifted,
   },
   remoteVideo: {
     flex: 1,
-    borderRadius: radius.xl,
-    overflow: 'hidden',
     backgroundColor: '#000000',
+  },
+  remoteVideoOutline: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 30,
+    borderWidth: 1,
+  },
+  videoStatusPill: {
+    position: 'absolute',
+    left: 14,
+    bottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(5,9,12,0.55)',
+  },
+  videoStatusPillText: {
+    color: '#FFFFFF',
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
   },
   audioHero: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.xl,
+    borderRadius: 32,
     borderWidth: 1,
-    padding: spacing.xl,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.xl + spacing.md,
     minHeight: 320,
+    ...shadows.lifted,
   },
   audioHeroName: {
     marginTop: spacing.md,
-    fontSize: 28,
-    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 32,
+    fontFamily: fontFamilies.bodyBold,
   },
   audioHeroSub: {
     marginTop: 6,
-    fontSize: fontSizes.sm,
+    fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyRegular,
+  },
+  audioHeroBadge: {
+    marginTop: spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  audioHeroBadgeText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodySemibold,
   },
   participantRow: {
     position: 'absolute',
@@ -855,9 +1155,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.md,
     bottom: spacing.lg,
-    borderRadius: radius.lg,
+    borderRadius: 22,
     overflow: 'hidden',
     backgroundColor: '#000000',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.22)',
     ...shadows.lifted,
   },
   localPreview: {
@@ -868,24 +1170,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 18,
     borderTopWidth: 1,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: 28,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
+    ...shadows.lifted,
   },
   controlWrap: {
     alignItems: 'center',
-    minWidth: 74,
+    minWidth: 78,
   },
   controlButton: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 64,
+    height: 64,
+    borderRadius: 24,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   controlLabel: {
-    marginTop: 8,
+    marginTop: 10,
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
   },

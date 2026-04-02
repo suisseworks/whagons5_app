@@ -310,18 +310,26 @@ export class MobileCallService {
     return audioTrack.enabled;
   }
 
-  toggleVideo() {
+  async toggleVideo() {
     if (!this.localStream) return false;
-    const videoTrack = this.localStream.getVideoTracks()[0];
-    if (!videoTrack) return false;
 
-    videoTrack.enabled = !videoTrack.enabled;
-    const self = this._participants.get(this._userId);
-    if (self) {
-      self.videoEnabled = videoTrack.enabled;
+    const existingTrack = this.localStream.getVideoTracks()[0];
+    if (existingTrack) {
+      await this.disableVideo();
+      return false;
     }
+
+    const videoTrack = await this.ensureVideoTrack();
+    return !!videoTrack?.enabled;
+  }
+
+  switchCamera() {
+    const videoTrack = this.localStream?.getVideoTracks?.()[0] as any;
+    if (!videoTrack || typeof videoTrack._switchCamera !== 'function') return false;
+
+    videoTrack._switchCamera();
     this.emit('participants:updated', { participants: this.getParticipantList() });
-    return videoTrack.enabled;
+    return true;
   }
 
   async receiveSignal(signal: MobileCallSignal) {
@@ -592,11 +600,36 @@ export class MobileCallService {
       }
 
       this.remoteStreams.set(remoteUserId, stream);
+
+      const syncParticipantMediaState = () => {
+        const trackedStream = this.remoteStreams.get(remoteUserId) ?? stream;
+        const participant = this._participants.get(remoteUserId);
+        if (!participant) return;
+
+        const audioTracks = trackedStream.getAudioTracks().filter((track: any) => track.readyState === 'live');
+        const videoTracks = trackedStream.getVideoTracks().filter(
+          (track: any) => track.readyState === 'live' && !track.muted && track.enabled,
+        );
+
+        participant.stream = new MediaStream([...audioTracks, ...videoTracks]);
+        participant.videoEnabled = videoTracks.length > 0;
+        this.emit('participants:updated', { participants: this.getParticipantList() });
+      };
+
       const participant = this._participants.get(remoteUserId);
       if (participant) {
-        participant.stream = stream;
-        participant.videoEnabled = stream.getVideoTracks().some((track: any) => track.enabled);
+        participant.stream = new MediaStream(stream.getTracks());
+        participant.videoEnabled = stream.getVideoTracks().some(
+          (track: any) => track.readyState === 'live' && !track.muted && track.enabled,
+        );
       }
+
+      if (event.track?.kind === 'video') {
+        event.track.onmute = syncParticipantMediaState;
+        event.track.onunmute = syncParticipantMediaState;
+        event.track.onended = syncParticipantMediaState;
+      }
+
       this.emit('participants:updated', { participants: this.getParticipantList() });
     };
 
@@ -634,6 +667,100 @@ export class MobileCallService {
     }
 
     return pc;
+  }
+
+  private async ensureVideoTrack() {
+    if (!this.localStream) return null;
+
+    const existingTrack = this.localStream.getVideoTracks()[0];
+    if (existingTrack) {
+      return existingTrack;
+    }
+
+    try {
+      const videoStream = await mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          frameRate: 24,
+          facingMode: 'user',
+          width: 640,
+          height: 480,
+        },
+      });
+      const newTrack = videoStream.getVideoTracks()[0];
+      if (!newTrack) return null;
+
+      this.localStream.addTrack(newTrack);
+      const self = this._participants.get(this._userId);
+      if (self) {
+        self.stream = this.localStream;
+        self.videoEnabled = newTrack.enabled;
+      }
+
+      for (const [remoteUserId, pc] of this.peers.entries()) {
+        const existingSender = pc.getSenders().find((sender) => sender.track?.kind === 'video');
+        if (existingSender) {
+          await existingSender.replaceTrack(newTrack);
+        } else {
+          pc.addTrack(newTrack, this.localStream);
+        }
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await this.sendSignal({
+          operation: 'offer',
+          workspaceId: this._workspaceId ?? undefined,
+          conversationId: this._conversationId ?? undefined,
+          toUserId: remoteUserId,
+          callMode: 'video',
+          payload: pc.localDescription?.toJSON(),
+        });
+      }
+
+      this._callMode = 'video';
+      this.emit('participants:updated', { participants: this.getParticipantList() });
+      return newTrack;
+    } catch (error) {
+      this.emit('call:error', { error: 'Camera access is blocked for Whagons.' });
+      return null;
+    }
+  }
+
+  private async disableVideo() {
+    if (!this.localStream) return;
+
+    const videoTracks = this.localStream.getVideoTracks();
+    if (!videoTracks.length) return;
+
+    for (const track of videoTracks) {
+      track.stop();
+      this.localStream.removeTrack(track);
+    }
+
+    for (const [remoteUserId, pc] of this.peers.entries()) {
+      const videoSender = pc.getSenders().find((sender) => sender.track?.kind === 'video');
+      if (videoSender) {
+        await videoSender.replaceTrack(null);
+      }
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await this.sendSignal({
+        operation: 'offer',
+        workspaceId: this._workspaceId ?? undefined,
+        conversationId: this._conversationId ?? undefined,
+        toUserId: remoteUserId,
+        callMode: 'audio',
+        payload: pc.localDescription?.toJSON(),
+      });
+    }
+
+    this._callMode = 'audio';
+    const self = this._participants.get(this._userId);
+    if (self) {
+      self.stream = this.localStream;
+      self.videoEnabled = false;
+    }
+    this.emit('participants:updated', { participants: this.getParticipantList() });
   }
 
   private removePeer(userId: string) {

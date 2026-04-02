@@ -212,6 +212,13 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     }
   }, [availableTemplates, selectedTemplateId]);
 
+  useEffect(() => {
+    if (!selectedTemplate?.workspaceId) return;
+    if (selectedTemplate.workspaceId !== selectedWorkspaceId) {
+      setSelectedWorkspaceId(selectedTemplate.workspaceId);
+    }
+  }, [selectedTemplate, selectedWorkspaceId]);
+
   const selectedWorkspace = context?.workspaces.find((workspace: DraftWorkspace) => workspace.id === selectedWorkspaceId) ?? null;
   const selectedTemplate = availableTemplates.find((template: DraftTemplate) => template.id === selectedTemplateId) ?? null;
   const selectedSpot = context?.spots.find((spot: DraftSpot) => spot.id === selectedSpotId) ?? null;
@@ -219,7 +226,18 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   const selectedAssignees = context?.users.filter((user: DraftUser) => selectedAssigneeIds.includes(user.id)) ?? [];
 
   const liveMissingFields = useMemo(() => {
-    const missing = new Set<string>((draft?.missingFields ?? []) as string[]);
+    const normalizedMissing = ((draft?.missingFields ?? []) as string[])
+      .map((field) => {
+        if (field === 'workspaceKey') return 'workspace';
+        if (field === 'templateKey') return 'template';
+        if (field === 'spotKey') return 'spot';
+        if (field === 'priorityKey') return 'priority';
+        if (field === 'assigneeKeys') return 'assignees';
+        return field;
+      })
+      .filter((field) => ['workspace', 'template', 'taskName', 'spot', 'priority', 'assignees'].includes(field));
+
+    const missing = new Set<string>(normalizedMissing);
     if (selectedWorkspaceId) {
       missing.delete('workspace');
     } else {
@@ -237,8 +255,26 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     if (effectiveTaskName) missing.delete('taskName');
     else missing.add('taskName');
 
+    const effectiveSpotId = selectedSpotId || selectedTemplate?.defaultSpotId || null;
+    if (!selectedTemplate || selectedTemplate.spotsNotApplicable || effectiveSpotId) missing.delete('spot');
+
+    const effectivePriorityId = selectedPriorityId || selectedTemplate?.priorityId || null;
+    if (effectivePriorityId) missing.delete('priority');
+
+    if (selectedAssigneeIds.length > 0) missing.delete('assignees');
+
     return Array.from(missing);
-  }, [availableTemplates.length, draft?.missingFields, selectedTemplate, selectedTemplateId, selectedWorkspaceId, taskName]);
+  }, [
+    availableTemplates.length,
+    draft?.missingFields,
+    selectedAssigneeIds.length,
+    selectedPriorityId,
+    selectedSpotId,
+    selectedTemplate,
+    selectedTemplateId,
+    selectedWorkspaceId,
+    taskName,
+  ]);
 
   const canConfirm =
     !!draft &&
@@ -383,11 +419,19 @@ export const VoiceTaskReviewScreen: React.FC = () => {
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
           <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Workspace</Text>
-          <TouchableOpacity style={styles.selectorRow} onPress={() => setWorkspaceModalVisible(true)}>
-            <Text style={[styles.selectorValue, { color: colors.text }]}>
+          <TouchableOpacity
+            style={[styles.selectorRow, selectedTemplate ? styles.selectorRowDisabled : null]}
+            onPress={selectedTemplate ? undefined : () => setWorkspaceModalVisible(true)}
+            disabled={!!selectedTemplate}
+          >
+            <Text style={[styles.selectorValue, { color: colors.text }]}> 
               {selectedWorkspace?.name || 'Select workspace'}
             </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
+            {selectedTemplate ? (
+              <Text style={[styles.lockedHint, { color: colors.textSecondary }]}>From template</Text>
+            ) : (
+              <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
+            )}
           </TouchableOpacity>
         </View>
 
@@ -503,7 +547,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         items={templateItems}
         selectedId={selectedTemplateId}
         onSelect={(item) => {
+          const template = availableTemplates.find((entry: DraftTemplate) => entry.id === item.id) ?? null;
           setSelectedTemplateId(item.id);
+          if (template?.workspaceId) {
+            setSelectedWorkspaceId(template.workspaceId);
+          }
           setTemplateModalVisible(false);
         }}
         onClose={() => setTemplateModalVisible(false)}
@@ -606,10 +654,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.md,
   },
+  selectorRowDisabled: {
+    opacity: 0.72,
+  },
   selectorValue: {
     flex: 1,
     fontFamily: fontFamilies.bodyMedium,
     fontSize: fontSizes.md,
+  },
+  lockedHint: {
+    fontFamily: fontFamilies.bodyMedium,
+    fontSize: fontSizes.sm,
   },
   textInput: {
     borderWidth: 1,

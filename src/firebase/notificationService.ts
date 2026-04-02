@@ -24,6 +24,7 @@ import { getChannelIdForTone, getAllToneChannelConfigs } from '../utils/notifica
 // ---------------------------------------------------------------------------
 
 const CHANNEL_ID_DEFAULT = 'whagons_default';
+const CHANNEL_ID_CALLS = 'whagons_calls';
 const CHANNEL_ID_MESSAGES = 'whagons_messages';
 const CHANNEL_ID_TASKS = 'whagons_tasks';
 
@@ -50,6 +51,14 @@ export async function createNotificationChannels(): Promise<void> {
       id: CHANNEL_ID_MESSAGES,
       name: 'Messages',
       description: 'Chat and collaboration messages',
+      importance: AndroidImportance.HIGH,
+      sound: 'default',
+      vibration: true,
+    }),
+    notifee.createChannel({
+      id: CHANNEL_ID_CALLS,
+      name: 'Calls',
+      description: 'Incoming call alerts',
       importance: AndroidImportance.HIGH,
       sound: 'default',
       vibration: true,
@@ -170,7 +179,9 @@ export function setupForegroundMessageHandler(): () => void {
       // Fall back to type-based channel selection
       channelId = CHANNEL_ID_DEFAULT;
       const type = data?.type as string | undefined;
-      if (type === 'message' || type === 'chat') {
+      if (type === 'call') {
+        channelId = CHANNEL_ID_CALLS;
+      } else if (type === 'message' || type === 'chat') {
         channelId = CHANNEL_ID_MESSAGES;
       } else if (type === 'task' || type === 'sla' || type === 'assignment') {
         channelId = CHANNEL_ID_TASKS;
@@ -223,7 +234,9 @@ export function registerBackgroundMessageHandler(): void {
       } else {
         channelId = CHANNEL_ID_DEFAULT;
         const type = data?.type as string | undefined;
-        if (type === 'message' || type === 'chat') {
+        if (type === 'call') {
+          channelId = CHANNEL_ID_CALLS;
+        } else if (type === 'message' || type === 'chat') {
           channelId = CHANNEL_ID_MESSAGES;
         } else if (type === 'task' || type === 'sla' || type === 'assignment') {
           channelId = CHANNEL_ID_TASKS;
