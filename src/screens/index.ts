@@ -5,6 +5,7 @@ export { MainScreen } from './MainScreen';
 export { ColabScreen } from './ColabScreen';
 export { TaskDetailScreen } from './TaskDetailScreen';
 export { CreateTaskScreen } from './CreateTaskScreen';
+export { VoiceTaskReviewScreen } from './VoiceTaskReviewScreen';
 export { NotificationsScreen } from './NotificationsScreen';
 export { SettingsScreen } from './SettingsScreen';
 export { ThemesScreen } from './ThemesScreen';
