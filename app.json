@@ -15,18 +15,27 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.whagons.v5",
-      "googleServicesFile": "./GoogleService-Info.plist"
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Whagons to access your camera for video calls and barcode scanning.",
+        "NSMicrophoneUsageDescription": "Allow Whagons to use your microphone for voice calls, video calls, and voice task drafts."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A3B30"
       },
-      "package": "com.whagons.whagons",
+      "package": "com.whagons.v5",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "adjustResize",
-      "googleServicesFile": "./google-services.json"
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -38,11 +47,48 @@
       "./node_modules/@react-native-firebase/messaging/app.plugin.js",
       "@react-native-google-signin/google-signin",
       [
-        "expo-camera",
+        "expo-font",
         {
-          "cameraPermission": "Allow Whagons to access your camera to scan barcodes."
+          "fonts": [
+            "./assets/fonts/Montserrat_400Regular.ttf",
+            "./assets/fonts/Montserrat_500Medium.ttf",
+            "./assets/fonts/Montserrat_600SemiBold.ttf",
+            "./assets/fonts/Montserrat_700Bold.ttf",
+            "./assets/fonts/AntDesign.ttf",
+            "./assets/fonts/Entypo.ttf",
+            "./assets/fonts/EvilIcons.ttf",
+            "./assets/fonts/Feather.ttf",
+            "./assets/fonts/FontAwesome.ttf",
+            "./assets/fonts/FontAwesome5_Brands.ttf",
+            "./assets/fonts/FontAwesome5_Regular.ttf",
+            "./assets/fonts/FontAwesome5_Solid.ttf",
+            "./assets/fonts/FontAwesome6_Brands.ttf",
+            "./assets/fonts/FontAwesome6_Regular.ttf",
+            "./assets/fonts/FontAwesome6_Solid.ttf",
+            "./assets/fonts/Fontisto.ttf",
+            "./assets/fonts/Foundation.ttf",
+            "./assets/fonts/Ionicons.ttf",
+            "./assets/fonts/MaterialCommunityIcons.ttf",
+            "./assets/fonts/MaterialIcons.ttf",
+            "./assets/fonts/Octicons.ttf",
+            "./assets/fonts/SimpleLineIcons.ttf",
+            "./assets/fonts/Zocial.ttf"
+          ]
         }
       ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Whagons to use your microphone for voice calls, video calls, and voice task drafts."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Whagons to access your camera for video calls and barcode scanning."
+        }
+      ],
+      "./node_modules/@config-plugins/react-native-webrtc/app.plugin.js",
       [
         "expo-location",
         {
@@ -52,7 +98,8 @@
       ],
       "expo-video",
       "./plugins/withNotifee.js",
-      "expo-localization"
+      "expo-localization",
+      "expo-asset"
     ]
   }
 }

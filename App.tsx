@@ -1,10 +1,11 @@
-import React from 'react';
-import { View, ActivityIndicator, Text } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, ActivityIndicator } from 'react-native';
 
+import { Ionicons, MaterialCommunityIcons, MaterialIcons } from '@expo/vector-icons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { useFonts as useMontserratFonts, Montserrat_400Regular, Montserrat_500Medium, Montserrat_600SemiBold, Montserrat_700Bold } from '@expo-google-fonts/montserrat';
+import { loadAsync } from 'expo-font';
 import { ConvexClientProvider } from './src/providers/ConvexClientProvider';
 import { ThemeProvider } from './src/context/ThemeContext';
 import { LanguageProvider } from './src/context/LanguageContext';
@@ -15,6 +16,7 @@ import { NotificationProvider } from './src/context/NotificationContext';
 import { GamificationProvider } from './src/context/GamificationContext';
 import { NetworkProvider } from './src/context/NetworkContext';
 import { MutationQueueProvider } from './src/context/MutationQueueContext';
+import { CallProvider } from './src/context/CallContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
 
 class ErrorBoundary extends React.Component<
@@ -49,19 +51,46 @@ class ErrorBoundary extends React.Component<
 }
 
 export default function App() {
-  const [montserratLoaded] = useMontserratFonts({
-    Montserrat_400Regular,
-    Montserrat_500Medium,
-    Montserrat_600SemiBold,
-    Montserrat_700Bold,
-  });
+  const [fontsReady, setFontsReady] = useState(false);
+  const [fontsError, setFontsError] = useState<string | null>(null);
 
-  console.log('[App] render, fonts loaded:', montserratLoaded);
+  useEffect(() => {
+    let cancelled = false;
 
-  if (!montserratLoaded) {
+    void (async () => {
+      await loadAsync({
+        Montserrat_400Regular: require('./assets/fonts/Montserrat_400Regular.ttf'),
+        Montserrat_500Medium: require('./assets/fonts/Montserrat_500Medium.ttf'),
+        Montserrat_600SemiBold: require('./assets/fonts/Montserrat_600SemiBold.ttf'),
+        Montserrat_700Bold: require('./assets/fonts/Montserrat_700Bold.ttf'),
+        ...MaterialIcons.font,
+        ...MaterialCommunityIcons.font,
+        ...Ionicons.font,
+      });
+
+      if (!cancelled) {
+        setFontsReady(true);
+      }
+    })().catch((error: unknown) => {
+      console.error('[Fonts] Failed to load app fonts', error);
+      if (!cancelled) {
+        setFontsError('Failed to load app fonts.');
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!fontsReady) {
     return (
       <View style={{ flex: 1, backgroundColor: '#151817', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color="#C77B43" />
+        {fontsError ? (
+          <Text style={{ color: '#fff', fontSize: 14 }}>{fontsError}</Text>
+        ) : (
+          <ActivityIndicator color="#C77B43" />
+        )}
       </View>
     );
   }
@@ -81,7 +110,9 @@ export default function App() {
                     <LanguageProvider>
                       <TaskProvider>
                         <GamificationProvider>
-                          <AppNavigator />
+                          <CallProvider>
+                            <AppNavigator />
+                          </CallProvider>
                         </GamificationProvider>
                       </TaskProvider>
                     </LanguageProvider>

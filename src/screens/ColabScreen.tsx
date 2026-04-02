@@ -52,6 +52,7 @@ import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
 import { apiClient } from '../services/apiClient';
 import * as DB from '../store/database';
+import { useCall } from '../context/CallContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { getInitials } from '../utils/helpers';
 
@@ -423,6 +424,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { selectedWorkspace, workspaceObjects } = useTasks();
+  const { startConversationCall, isCallActive } = useCall();
   const markAsReadMutation = useMutation(api.chat.markAsRead);
   const cvxSendMessage = useMutation(api.chat.sendMessage);
   const cvxSendWorkspaceChat = useMutation(api.chat.sendWorkspaceChat);
@@ -880,6 +882,30 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     }
   }, [inputText, chatView, currentWorkspace, currentUserId, tenantId, data.workspaces, cvxSendWorkspaceChat]);
 
+  const handleStartConversationCall = useCallback(async (mode: 'audio' | 'video') => {
+    if (!activeConversation) return;
+
+    const isGroup = activeConversation.type === 'group';
+    const otherParticipant = !isGroup
+      ? activeParticipants.find((participant) => String(participant.user_id) !== String(currentUserId))
+      : undefined;
+    const otherUser = otherParticipant ? getUser(otherParticipant.user_id) : undefined;
+
+    await startConversationCall({
+      conversationId: activeConversation.id,
+      title: getConversationDisplayName(activeConversation),
+      picture: otherUser?.url_picture ?? null,
+      mode,
+    });
+  }, [
+    activeConversation,
+    activeParticipants,
+    currentUserId,
+    getConversationDisplayName,
+    getUser,
+    startConversationCall,
+  ]);
+
   // Edit message
   const handleStartEdit = useCallback((msgId: number, currentText: string) => {
     setEditingMessageId(msgId);
@@ -1248,8 +1274,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                             },
                       ]}
                     >
-                      {textParts.map((part, idx) => {
-                      return (
+                      {textParts.map((part, idx) => (
                         <Text
                           key={idx}
                           style={[
@@ -1257,10 +1282,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                             { color: isMe ? '#FFFFFF' : colors.text },
                           ]}
                         >
-                          {part.text}
+                          {part.type === 'text' ? part.text : part.label || part.url}
                         </Text>
-                      );
-                    })}
+                      ))}
                     </View>
                   </Pressable>
                   );
@@ -1945,6 +1969,34 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                   : t('colab.directMessage')}
               </Text>
             </View>
+            <View style={styles.chatHeaderActions}>
+              <TouchableOpacity
+                style={[
+                  styles.chatHeaderActionButton,
+                  {
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : `${primaryColor}12`,
+                    opacity: isCallActive ? 0.55 : 1,
+                  },
+                ]}
+                onPress={() => { void handleStartConversationCall('audio'); }}
+                disabled={isCallActive}
+              >
+                <MaterialIcons name="call" size={20} color={primaryColor} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.chatHeaderActionButton,
+                  {
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : `${primaryColor}12`,
+                    opacity: isCallActive ? 0.55 : 1,
+                  },
+                ]}
+                onPress={() => { void handleStartConversationCall('video'); }}
+                disabled={isCallActive}
+              >
+                <MaterialIcons name="videocam" size={20} color={primaryColor} />
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Messages */}
@@ -2156,10 +2208,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
             <View style={{ marginTop: 12 }}>
               {availableUsers.map((u) => {
-                const isSelected = selectedGroupUsers.includes(u.id);
+                const userId = Number(u.id);
+                const isSelected = selectedGroupUsers.includes(userId);
                 return (
                   <TouchableOpacity
-                    key={u.id}
+                    key={String(u.id)}
                     style={[
                       styles.userRow,
                       {
@@ -2179,9 +2232,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                     ]}
                     onPress={() => {
                       if (newChatMode === 'dm') {
-                        handleStartDm(u.id);
+                        handleStartDm(userId);
                       } else {
-                        toggleGroupUser(u.id);
+                        toggleGroupUser(userId);
                       }
                     }}
                     activeOpacity={0.7}
@@ -2466,6 +2519,19 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyRegular,
     marginTop: 1,
+  },
+  chatHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 10,
+  },
+  chatHeaderActionButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Messages

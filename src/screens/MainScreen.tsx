@@ -36,11 +36,13 @@ import { RootStackParamList, TaskItem, CardDensity } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { ActiveTaskStrip } from '../components/ActiveTaskStrip';
 import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
+import { VoiceTaskCaptureOverlay } from '../components/VoiceTaskCaptureOverlay';
 import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, getMciIconName } from '../utils/helpers';
+import { useVoiceTaskCapture } from '../hooks/useVoiceTaskCapture';
 
 // ---------------------------------------------------------------------------
 // Surface color tokens (3-level hierarchy)
@@ -250,6 +252,10 @@ export const MainScreen: React.FC = () => {
   }, [workspaceObjects]);
   const { unreadCount: notificationCount } = useNotifications();
   const { user: authUser } = useAuth();
+  const { phase: voiceCapturePhase, voiceLevel, durationMs, startCapture, stopCapture } = useVoiceTaskCapture();
+  const fabHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voiceLongPressActiveRef = useRef(false);
+  const suppressNextFabTapRef = useRef(false);
 
   // Compute total unread chat message count for the Colab tab badge
   const chatUnreadCount = useMemo(() => {
@@ -351,9 +357,50 @@ export const MainScreen: React.FC = () => {
 
   const surfaces = isDarkMode ? SURFACE.dark : SURFACE.light;
 
+  const selectedWorkspaceConvexId = useMemo(() => {
+    if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') {
+      return undefined;
+    }
+    const workspace = workspaceObjects.find((item) => item.name === selectedWorkspace);
+    return workspace ? String((workspace as any)._id ?? '') || undefined : undefined;
+  }, [selectedWorkspace, workspaceObjects]);
+
   const handleCreateTask = useCallback(() => {
+    if (suppressNextFabTapRef.current) {
+      suppressNextFabTapRef.current = false;
+      return;
+    }
     navigation.navigate('CreateTask');
   }, [navigation]);
+
+  const handleVoiceCapturePressIn = useCallback(() => {
+    if (fabHoldTimerRef.current) {
+      clearTimeout(fabHoldTimerRef.current);
+    }
+    fabHoldTimerRef.current = setTimeout(() => {
+      voiceLongPressActiveRef.current = true;
+      suppressNextFabTapRef.current = true;
+      void startCapture(selectedWorkspaceConvexId);
+    }, 180);
+  }, [selectedWorkspaceConvexId, startCapture]);
+
+  const handleVoiceCapturePressOut = useCallback(() => {
+    if (fabHoldTimerRef.current) {
+      clearTimeout(fabHoldTimerRef.current);
+      fabHoldTimerRef.current = null;
+    }
+    if (!voiceLongPressActiveRef.current) return;
+    voiceLongPressActiveRef.current = false;
+    void stopCapture('manual');
+  }, [stopCapture]);
+
+  useEffect(() => {
+    return () => {
+      if (fabHoldTimerRef.current) {
+        clearTimeout(fabHoldTimerRef.current);
+      }
+    };
+  }, []);
 
   const onRefresh = useCallback(async () => {
     await refresh();
@@ -432,7 +479,7 @@ export const MainScreen: React.FC = () => {
       data.tasks.filter((t) => String((t as any).workspace_id) === wsIdStr).map((t) => t.id),
     );
     // Collect user IDs assigned to those tasks
-    const userIds = new Set<number>();
+    const userIds = new Set<string | number>();
     for (const tu of data.taskUsers) {
       if (wsTaskIds.has(tu.task_id)) userIds.add(tu.user_id);
     }
@@ -486,7 +533,7 @@ export const MainScreen: React.FC = () => {
   );
 
   const handleAssigneeSelect = useCallback(
-    (user: { id: number; name: string }) => {
+    (user: { id: string | number; name: string }) => {
       if (assigneePickerTask?.id) {
         if (assigneePickerTask.assignees.some((a) => a.name === user.name)) {
           Alert.alert(t('main.alreadyAssignedTitle'), t('main.alreadyAssignedMessage', { name: user.name }));
@@ -1233,6 +1280,17 @@ export const MainScreen: React.FC = () => {
         {renderContent()}
       </View>
 
+      {voiceCapturePhase !== 'idle' ? (
+        <VoiceTaskCaptureOverlay
+          phase={voiceCapturePhase}
+          voiceLevel={voiceLevel}
+          durationMs={durationMs}
+          colors={colors}
+          primaryColor={primaryColor}
+          isDarkMode={isDarkMode}
+        />
+      ) : null}
+
       {/* Active Task Strip — above bottom nav, workspace-filtered */}
       {!(selectedNav === 1 && colabInChat) && workspaceFilteredWorkingTasks.length > 0 && (
         <ActiveTaskStrip
@@ -1304,6 +1362,8 @@ export const MainScreen: React.FC = () => {
           <TouchableOpacity
             style={[styles.fab, { backgroundColor: primaryColor }]}
             onPress={handleCreateTask}
+            onPressIn={handleVoiceCapturePressIn}
+            onPressOut={handleVoiceCapturePressOut}
           >
             <MaterialIcons name="add" size={28} color="#FFFFFF" />
           </TouchableOpacity>
