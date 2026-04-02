@@ -49,14 +49,14 @@ class TaskNavigationMapSafe extends React.Component<
     sectionLabelStyle: any;
     sectionLabelText: string;
     primaryColor: string;
-    openInMapsText: string;
+    actionText: string;
   },
   { hasError: boolean }
 > {
   state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
   render() {
-    const { sectionLabelStyle, sectionLabelText, primaryColor, openInMapsText,
+    const { sectionLabelStyle, sectionLabelText, primaryColor, actionText,
             taskLatitude, taskLongitude, ...mapProps } = this.props;
     if (this.state.hasError) {
       return (
@@ -72,8 +72,8 @@ class TaskNavigationMapSafe extends React.Component<
               if (url) Linking.openURL(url).catch(() => {});
             }}
           >
-            <MaterialIcons name="map" size={18} color={primaryColor} />
-            <Text style={{ color: primaryColor, fontSize: 13 }}>{openInMapsText}</Text>
+            <MaterialIcons name="directions" size={18} color={primaryColor} />
+            <Text style={{ color: primaryColor, fontSize: 13 }}>{actionText}</Text>
           </TouchableOpacity>
         </>
       );
@@ -346,6 +346,22 @@ export const TaskDetailScreen: React.FC = () => {
       (w: any) => String(w.id) === String(task.workspaceId),
     ) ?? null;
   }, [task.workspaceId, data.workspaces]);
+
+  const taskSpot = useMemo(() => {
+    if (!task.spotId) return null;
+    return data.spots.find(
+      (spot: any) =>
+        String(spot.id) === String(task.spotId) ||
+        String((spot as any)._id ?? '') === String(task.spotId),
+    ) ?? null;
+  }, [task.spotId, data.spots]);
+
+  const spotLatitude = typeof taskSpot?.latitude === 'number' ? taskSpot.latitude : null;
+  const spotLongitude = typeof taskSpot?.longitude === 'number' ? taskSpot.longitude : null;
+  const hasSpotCoordinates = spotLatitude != null && spotLongitude != null;
+  const hasCreationCoordinates = task.latitude != null && task.longitude != null;
+  const showWorkLocationCard = hasSpotCoordinates;
+  const showCreatedFromCard = hasCreationCoordinates;
 
   const formSchema = useMemo(() => getFormSchema(task), [task, getFormSchema]);
   const existingSubmission = useMemo(() => getTaskFormSubmission(task.id || ''), [task.id, getTaskFormSubmission]);
@@ -861,20 +877,40 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       </View>
 
-      {/* GPS Navigation Map */}
-      {task.latitude != null && task.longitude != null && (
+      {/* Work location */}
+      {showWorkLocationCard && (
         <TaskNavigationMapSafe
-          taskLatitude={task.latitude}
-          taskLongitude={task.longitude}
+          taskLatitude={spotLatitude!}
+          taskLongitude={spotLongitude!}
           taskTitle={task.title}
           spotName={task.spot}
+          helperText={t('taskDetail.spotSavedLocationHelper')}
           isDarkMode={isDarkMode}
           secondarySurface={secondarySurface}
           tertiaryText={tertiaryText}
           sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
-          sectionLabelText={t('taskDetail.gpsLocationLabel')}
+          sectionLabelText={t('taskDetail.workLocationLabel')}
           primaryColor={primaryColor}
-          openInMapsText={t('taskDetail.openInMaps')}
+          actionText={t('taskDetail.navigateToTask')}
+        />
+      )}
+
+      {/* Created-from GPS */}
+      {showCreatedFromCard && (
+        <TaskNavigationMapSafe
+          taskLatitude={task.latitude!}
+          taskLongitude={task.longitude!}
+          taskTitle={task.title}
+          spotName={!hasSpotCoordinates && task.spot ? task.spot : undefined}
+          helperText={t('taskDetail.creationLocationHelper')}
+          warningText={!hasSpotCoordinates && task.spot ? t('taskDetail.spotLocationFallbackHelper') : undefined}
+          isDarkMode={isDarkMode}
+          secondarySurface={secondarySurface}
+          tertiaryText={tertiaryText}
+          sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
+          sectionLabelText={!hasSpotCoordinates && task.spot ? t('taskDetail.reportedFromLabel') : t('taskDetail.createdFromLabel')}
+          primaryColor={primaryColor}
+          actionText={t('taskDetail.navigateToTask')}
         />
       )}
 
@@ -966,7 +1002,7 @@ export const TaskDetailScreen: React.FC = () => {
                   {timeAgo(viewer.viewedAt, t)}
                 </Text>
               </View>
-              <MaterialIcons name="visibility" size={14} color={isDarkMode ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'} />
+              <MaterialIcons name="visibility" size={12} color={isDarkMode ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'} />
             </View>
           ))}
         </View>
@@ -1773,61 +1809,61 @@ const styles = StyleSheet.create({
   seenLoadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 6,
+    gap: 6,
+    paddingVertical: 4,
   },
   seenLoadingText: {
-    fontSize: 12,
+    fontSize: 11,
     fontFamily: fontFamilies.bodyRegular,
   },
   seenList: {
-    gap: 6,
+    gap: 4,
   },
   seenRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
     borderRadius: 8,
   },
   seenAvatarImg: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
   },
   seenAvatarCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
   },
   seenAvatarInitial: {
-    fontSize: 11,
+    fontSize: 9,
     fontFamily: fontFamilies.bodySemibold,
   },
   seenInfo: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 8,
   },
   seenName: {
-    fontSize: 13,
-    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
   },
   seenTime: {
-    fontSize: 11,
+    fontSize: 10,
     fontFamily: fontFamilies.bodyRegular,
-    marginTop: 1,
+    marginTop: 0,
   },
   seenEmptyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
     borderWidth: 0.5,
     borderStyle: 'dashed',
     borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
   },
   seenEmptyText: {
     fontSize: 13,

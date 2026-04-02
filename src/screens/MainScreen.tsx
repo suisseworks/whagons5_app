@@ -42,6 +42,9 @@ import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, getMciIconName } from '../utils/helpers';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
+import { useTenant } from '../hooks/useTenant';
 import { useVoiceTaskCapture } from '../hooks/useVoiceTaskCapture';
 
 // ---------------------------------------------------------------------------
@@ -170,6 +173,8 @@ export const MainScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
+  const { tenantId } = useTenant();
+  const { isAuthenticated } = useConvexAuth();
   const {
     tasks,
     totalTaskCount,
@@ -197,6 +202,11 @@ export const MainScreen: React.FC = () => {
 
   const { data, isSyncing, hasEverSynced, refresh, syncError, isInitialSync } = useData();
   const { pendingCount, isReplaying } = useMutationQueue();
+  const convexNotifications = useQuery(
+    api.settings.listNotifications,
+    isAuthenticated && tenantId ? { tenantId } : 'skip',
+  );
+  const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
 
   const isCleaningEnabled = useMemo(() => {
     const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
@@ -252,6 +262,15 @@ export const MainScreen: React.FC = () => {
   }, [workspaceObjects]);
   const { unreadCount: notificationCount } = useNotifications();
   const { user: authUser } = useAuth();
+  const boardUnreadCount = useMemo(() => {
+    return (convexNotifications ?? []).filter((notification: any) => {
+      const data = notification?.data;
+      if (notification?.readAt) return false;
+      if (!data || typeof data !== 'object') return false;
+      if (notification?.type === 'board_message') return true;
+      return data.notification_kind === 'board_message' && Boolean(data.board_id);
+    }).length;
+  }, [convexNotifications]);
   const { phase: voiceCapturePhase, voiceLevel, durationMs, startCapture, stopCapture } = useVoiceTaskCapture();
   const fabHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceLongPressActiveRef = useRef(false);
@@ -354,6 +373,11 @@ export const MainScreen: React.FC = () => {
       setSelectedNav(0);
     }
   }, [navItems.length, selectedNav]);
+
+  useEffect(() => {
+    if (selectedNav !== 2 || !tenantId || boardUnreadCount === 0) return;
+    markBoardNotificationsRead({ tenantId }).catch(() => {});
+  }, [selectedNav, tenantId, boardUnreadCount, markBoardNotificationsRead]);
 
   const surfaces = isDarkMode ? SURFACE.dark : SURFACE.light;
 
@@ -538,7 +562,7 @@ export const MainScreen: React.FC = () => {
         if (assigneePickerTask.assignees.some((a) => a.name === user.name)) {
           Alert.alert(t('main.alreadyAssignedTitle'), t('main.alreadyAssignedMessage', { name: user.name }));
         } else {
-          assignTaskToUser(assigneePickerTask.id, user.id, user.name);
+          assignTaskToUser(assigneePickerTask.id, Number(user.id), user.name);
         }
       }
       setAssigneePickerVisible(false);
@@ -1339,9 +1363,9 @@ export const MainScreen: React.FC = () => {
                       </Text>
                     </View>
                   )}
-                  {index === 2 && boards.length > 0 && (
+                  {index === 2 && boardUnreadCount > 0 && (
                     <View style={[styles.boardsBadge, { borderColor: colors.surface }]}>
-                      <Text style={styles.boardsBadgeText}>{boards.length > 9 ? '9+' : boards.length}</Text>
+                      <Text style={styles.boardsBadgeText}>{boardUnreadCount > 99 ? '99+' : boardUnreadCount}</Text>
                     </View>
                   )}
                 </View>

@@ -180,6 +180,13 @@ export const NotificationsScreen: React.FC = () => {
         return;
       }
       Alert.alert(notification.title, notification.message);
+    } else if (type === 'board_message') {
+      const boardId = data.boardPgId || data.board_pg_id || data.boardId || data.board_id;
+      if (boardId) {
+        navigation.navigate('BoardDetail', { boardId });
+        return;
+      }
+      Alert.alert(notification.title, notification.message);
     } else {
       Alert.alert(notification.title, notification.message);
     }
