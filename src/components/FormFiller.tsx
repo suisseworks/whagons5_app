@@ -27,6 +27,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { FormSchema, FormSchemaField } from '../context/TaskContext';
+import { useTenant } from '../hooks/useTenant';
 import RenderHtml from 'react-native-render-html';
 import { BarcodeScannerModal } from './BarcodeScannerModal';
 import { SignaturePad } from './SignaturePad';
@@ -51,10 +52,11 @@ function fixConvexStorageUrl(url: string): string {
 
 /** Resolves a Convex storageId to a displayable image URL */
 const ConvexImage: React.FC<{ storageId: string; style?: any; resizeMode?: any }> = ({ storageId, style, resizeMode = 'contain' }) => {
+  const { tenantId } = useTenant();
   const isFullUrl = storageId.startsWith('http') || storageId.startsWith('data:');
   const rawUrl = useQuery(
-    api.taskResources.getFileUrl,
-    isFullUrl ? 'skip' : { storageId: storageId as any },
+    api.files.getFileUrl,
+    isFullUrl || !tenantId ? 'skip' : { tenantId, storageId: storageId as any },
   );
   const uri = isFullUrl ? storageId : (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
 

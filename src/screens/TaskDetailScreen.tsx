@@ -180,9 +180,13 @@ const NoteAttachmentView: React.FC<{
   isDarkMode: boolean;
   onImagePress?: (uri: string) => void;
 }> = ({ attachment, colors, isDarkMode, onImagePress }) => {
-  const rawUrl = useQuery(api.taskResources.getFileUrl, {
-    storageId: attachment.storageId as any,
-  });
+  const { tenantId } = useTenant();
+  const rawUrl = useQuery(
+    api.files.getFileUrl,
+    tenantId
+      ? { tenantId, storageId: attachment.storageId as any }
+      : 'skip'
+  );
   const url = rawUrl ? fixConvexStorageUrl(rawUrl) : null;
   const isImage = attachment.fileType.startsWith('image/');
   const isVideo = attachment.fileType.startsWith('video/');

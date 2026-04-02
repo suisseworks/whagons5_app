@@ -371,11 +371,12 @@ const ConvexFileImage = memo(({
   style?: any;
   onPress?: (url: string) => void;
 }) => {
+  const { tenantId } = useTenant();
   const cached = storageUrlCache.get(storageId);
   // Only query Convex if not cached
   const rawUrl = useQuery(
-    api.taskResources.getFileUrl,
-    cached ? 'skip' : { storageId: storageId as any },
+    api.files.getFileUrl,
+    cached || !tenantId ? 'skip' : { tenantId, storageId: storageId as any },
   );
   const url = cached ?? (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
 
