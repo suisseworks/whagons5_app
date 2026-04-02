@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -6,119 +6,61 @@ import {
   TouchableOpacity,
   Platform,
   Linking,
-  ActivityIndicator,
 } from 'react-native';
-import * as Location from 'expo-location';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { MaterialIcons } from '@expo/vector-icons';
+import MapView, { Marker, Region } from 'react-native-maps';
+
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { fontFamilies } from '../config/designTokens';
+import { MapLocationPayload, RootStackParamList } from '../models/types';
 
 interface Props {
   taskLatitude: number;
   taskLongitude: number;
   taskTitle: string;
   spotName?: string | null;
+  helperText?: string | null;
+  warningText?: string | null;
   isDarkMode: boolean;
   secondarySurface: string;
   tertiaryText: string;
 }
 
-function haversineDistance(
-  lat1: number, lon1: number,
-  lat2: number, lon2: number,
-): number {
-  const R = 6371000;
-  const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function formatDistance(meters: number): string {
-  if (meters < 1000) return `${Math.round(meters)} m`;
-  return `${(meters / 1000).toFixed(1)} km`;
-}
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export default function TaskNavigationMap({
   taskLatitude,
   taskLongitude,
   taskTitle,
   spotName,
+  helperText,
+  warningText,
   isDarkMode,
   secondarySurface,
   tertiaryText,
 }: Props) {
   const { primaryColor, colors } = useTheme();
   const { t } = useLanguage();
+  const navigation = useNavigation<NavigationProp>();
 
-  const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [permissionDenied, setPermissionDenied] = useState(false);
-  const [tracking, setTracking] = useState(false);
-  const watchRef = useRef<Location.LocationSubscription | null>(null);
-  const mountedRef = useRef(true);
+  const locationPayload: MapLocationPayload = {
+    latitude: taskLatitude,
+    longitude: taskLongitude,
+    title: spotName || taskTitle,
+    subtitle: `${taskLatitude.toFixed(6)}, ${taskLongitude.toFixed(6)}`,
+    helperText,
+    warningText,
+  };
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => { mountedRef.current = false; };
-  }, []);
-
-  const startTracking = useCallback(async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (!mountedRef.current) return;
-      if (status !== 'granted') {
-        setPermissionDenied(true);
-        return;
-      }
-      setPermissionDenied(false);
-      setTracking(true);
-
-      const sub = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 3000,
-          distanceInterval: 5,
-        },
-        (loc) => {
-          if (mountedRef.current) {
-            setUserLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-          }
-        },
-      );
-      if (mountedRef.current) {
-        watchRef.current = sub;
-      } else {
-        sub.remove();
-      }
-    } catch {
-      if (mountedRef.current) setPermissionDenied(true);
-    }
-  }, []);
-
-  const stopTracking = useCallback(() => {
-    watchRef.current?.remove();
-    watchRef.current = null;
-    if (mountedRef.current) {
-      setTracking(false);
-      setUserLocation(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      watchRef.current?.remove();
-      watchRef.current = null;
-    };
-  }, []);
-
-  const distance =
-    userLocation
-      ? haversineDistance(userLocation.latitude, userLocation.longitude, taskLatitude, taskLongitude)
-      : null;
+  const previewRegion: Region = {
+    latitude: taskLatitude,
+    longitude: taskLongitude,
+    latitudeDelta: 0.0045,
+    longitudeDelta: 0.0045,
+  };
 
   const openNativeDirections = () => {
     const url = Platform.select({
@@ -133,95 +75,82 @@ export default function TaskNavigationMap({
     }
   };
 
-  const openMap = () => {
-    const url = Platform.select({
-      ios: `maps:${taskLatitude},${taskLongitude}?q=${taskLatitude},${taskLongitude}`,
-      android: `geo:${taskLatitude},${taskLongitude}?q=${taskLatitude},${taskLongitude}(${encodeURIComponent(taskTitle)})`,
-    });
-    if (url) Linking.openURL(url).catch(() => {});
+  const openInAppMap = () => {
+    navigation.navigate('SpotsMap', { location: locationPayload });
   };
-
-  const isTracking = tracking && !permissionDenied;
 
   return (
     <View style={[styles.container, { backgroundColor: secondarySurface }]}>
-      {/* Coordinates + spot */}
-      <View style={styles.coordsRow}>
+      <View style={styles.headerRow}>
         <MaterialIcons name="place" size={20} color="#EF4444" />
-        <View style={styles.coordsText}>
+        <View style={styles.headerText}>
           {spotName ? (
-            <Text style={[styles.spotName, { color: colors.text }]} numberOfLines={1}>{spotName}</Text>
+            <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
+              {spotName}
+            </Text>
           ) : null}
           <Text style={[styles.coords, { color: tertiaryText }]}>
-            {taskLatitude.toFixed(6)}, {taskLongitude.toFixed(6)}
+            {locationPayload.subtitle}
           </Text>
         </View>
       </View>
 
-      {/* Live distance tracker */}
-      {isTracking && (
-        <View style={[styles.distanceRow, { borderTopColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]}>
-          {userLocation ? (
-            <>
-              <View style={[styles.liveDot, { backgroundColor: '#22C55E' }]} />
-              <Text style={[styles.distanceLabel, { color: colors.text }]}>
-                {formatDistance(distance!)}
-              </Text>
-              <Text style={[styles.distanceAway, { color: tertiaryText }]}>
-                {t('taskDetail.distanceAway', { distance: formatDistance(distance!) })}
-              </Text>
-            </>
-          ) : (
-            <>
-              <ActivityIndicator size="small" color={primaryColor} style={{ marginRight: 8 }} />
-              <Text style={[styles.distanceLabel, { color: tertiaryText }]}>
-                {t('taskDetail.trackingYou')}
-              </Text>
-            </>
-          )}
+      <TouchableOpacity style={styles.previewTouch} activeOpacity={0.92} onPress={openInAppMap}>
+        <View style={styles.previewFrame}>
+          <MapView
+            style={styles.mapPreview}
+            initialRegion={previewRegion}
+            region={previewRegion}
+            pointerEvents="none"
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+            toolbarEnabled={false}
+            liteMode={Platform.OS === 'android'}
+          >
+            <Marker
+              coordinate={{ latitude: taskLatitude, longitude: taskLongitude }}
+              title={locationPayload.title}
+              description={locationPayload.subtitle ?? undefined}
+            />
+          </MapView>
+
+          <View style={styles.previewHint}>
+            <MaterialIcons name="open-in-full" size={12} color="#FFFFFF" />
+            <Text style={styles.previewHintText}>{t('spotsMap.tapToExpand')}</Text>
+          </View>
         </View>
-      )}
+      </TouchableOpacity>
 
-      {/* Permission denied */}
-      {permissionDenied && (
-        <View style={[styles.distanceRow, { borderTopColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]}>
-          <MaterialIcons name="location-off" size={16} color={tertiaryText} />
-          <Text style={[styles.permissionText, { color: tertiaryText }]} numberOfLines={2}>
-            {t('taskDetail.locationPermissionDenied')}
-          </Text>
+      {(helperText || warningText) ? (
+        <View style={styles.messageBlock}>
+          {helperText ? (
+            <Text style={[styles.helperText, { color: tertiaryText }]} numberOfLines={2}>
+              {helperText}
+            </Text>
+          ) : null}
+          {warningText ? (
+            <Text style={styles.warningText} numberOfLines={2}>
+              {warningText}
+            </Text>
+          ) : null}
         </View>
-      )}
+      ) : null}
 
-      {/* Action buttons */}
-      <View style={[styles.actionBar, { borderTopColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }]}>
-        {!isTracking ? (
-          <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7} onPress={startTracking}>
-            <MaterialIcons name="my-location" size={18} color={primaryColor} />
-            <Text style={[styles.actionBtnText, { color: primaryColor }]}>
-              {t('taskDetail.trackingYou').replace('…', '').trim()}
-            </Text>
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7} onPress={stopTracking}>
-            <MaterialIcons name="location-off" size={18} color={tertiaryText} />
-            <Text style={[styles.actionBtnText, { color: tertiaryText }]}>
-              {t('common.close')}
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7} onPress={openNativeDirections}>
-          <MaterialIcons name="directions" size={18} color={primaryColor} />
-          <Text style={[styles.actionBtnText, { color: primaryColor }]}>
-            {t('taskDetail.navigateToTask')}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.actionBtn} activeOpacity={0.7} onPress={openMap}>
-          <MaterialIcons name="map" size={18} color={primaryColor} />
-          <Text style={[styles.actionBtnText, { color: primaryColor }]}>
-            {t('taskDetail.openInMaps')}
-          </Text>
+      <View
+        style={[
+          styles.actionBar,
+          { borderTopColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' },
+        ]}
+      >
+        <TouchableOpacity
+          style={[styles.primaryActionBtn, { backgroundColor: primaryColor }]}
+          activeOpacity={0.85}
+          onPress={openNativeDirections}
+        >
+          <MaterialIcons name="directions" size={18} color="#FFFFFF" />
+          <Text style={styles.primaryActionText}>{t('taskDetail.navigateToTask')}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -234,7 +163,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: 4,
   },
-  coordsRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
@@ -242,10 +171,10 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     gap: 10,
   },
-  coordsText: {
+  headerText: {
     flex: 1,
   },
-  spotName: {
+  title: {
     fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
     marginBottom: 2,
@@ -254,48 +183,70 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: fontFamilies.bodyRegular,
   },
-  distanceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    gap: 8,
+  previewTouch: {
+    marginHorizontal: 12,
+    marginTop: 2,
   },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+  previewFrame: {
+    height: 148,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#DCE7E2',
   },
-  distanceLabel: {
-    fontSize: 15,
-    fontFamily: fontFamilies.bodySemibold,
-  },
-  distanceAway: {
-    fontSize: 12,
-    fontFamily: fontFamilies.bodyRegular,
-    display: 'none',
-  },
-  permissionText: {
-    fontSize: 11,
-    fontFamily: fontFamilies.bodyRegular,
+  mapPreview: {
     flex: 1,
   },
-  actionBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  actionBtn: {
+  previewHint: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(17,24,39,0.72)',
   },
-  actionBtnText: {
-    fontSize: 12,
+  previewHintText: {
+    fontSize: 10,
     fontFamily: fontFamilies.bodySemibold,
+    color: '#FFFFFF',
+  },
+  messageBlock: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 2,
+  },
+  helperText: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    lineHeight: 16,
+  },
+  warningText: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#D97706',
+    lineHeight: 16,
+    marginTop: 6,
+  },
+  actionBar: {
+    padding: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  primaryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    minHeight: 42,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  primaryActionText: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#FFFFFF',
   },
 });

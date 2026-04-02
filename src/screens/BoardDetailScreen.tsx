@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -43,6 +43,7 @@ export const BoardDetailScreen: React.FC = () => {
   const { token, subdomain } = useAuth();
   const { tenantId } = useTenant();
   const createBoardMessage = useMutation(api.boards.createMessage);
+  const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
   const { pickAndUpload, uploading: uploadingAttachment } = useConvexUpload();
 
   const { boardId } = route.params;
@@ -53,13 +54,25 @@ export const BoardDetailScreen: React.FC = () => {
 
   // Find the board
   const board = useMemo(() => {
-    return data.boards.find(b => b.id === boardId);
+    return data.boards.find(
+      b => String(b.id) === String(boardId) || String((b as any)._id) === String(boardId),
+    );
   }, [data.boards, boardId]);
+  const activeBoardId = board?.id ?? boardId;
+
+  useEffect(() => {
+    const convexBoardId = (board as any)?._id;
+    if (!tenantId || !convexBoardId) return;
+    markBoardNotificationsRead({
+      tenantId,
+      boardId: convexBoardId as any,
+    }).catch(() => {});
+  }, [tenantId, board, markBoardNotificationsRead]);
 
   // Get messages for this board, sorted: pinned first, then newest first
   const messages = useMemo(() => {
     return data.boardMessages
-      .filter(m => m.board_id === boardId && !m.deleted_at)
+      .filter(m => String(m.board_id) === String(activeBoardId) && !m.deleted_at)
       .sort((a, b) => {
         // Pinned messages first
         if (a.is_pinned && !b.is_pinned) return -1;
@@ -69,19 +82,19 @@ export const BoardDetailScreen: React.FC = () => {
         const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
         return dateB - dateA;
       });
-  }, [data.boardMessages, boardId]);
+  }, [data.boardMessages, activeBoardId]);
 
   // Build user lookup
   const userMap = useMemo(() => {
-    const map = new Map<number, { name: string; email?: string }>();
+    const map = new Map<number | string, { name: string; email?: string }>();
     data.users.forEach(u => map.set(u.id, { name: u.name, email: u.email }));
     return map;
   }, [data.users]);
 
   // Get members count
   const memberCount = useMemo(() => {
-    return data.boardMembers.filter(m => m.board_id === boardId).length;
-  }, [data.boardMembers, boardId]);
+    return data.boardMembers.filter(m => String(m.board_id) === String(activeBoardId)).length;
+  }, [data.boardMembers, activeBoardId]);
 
   const formatMessageTime = (dateStr?: string | null) => {
     if (!dateStr) return '';
@@ -105,7 +118,6 @@ export const BoardDetailScreen: React.FC = () => {
     setIsSending(true);
     try {
       // Find the Convex _id for this board
-      const board = data.boards.find(b => b.id === boardId);
       const convexBoardId = (board as any)?._id;
       if (!convexBoardId) throw new Error('Board not found');
 
@@ -120,14 +132,13 @@ export const BoardDetailScreen: React.FC = () => {
     } finally {
       setIsSending(false);
     }
-  }, [messageInput, isSending, boardId, tenantId, data.boards, createBoardMessage]);
+  }, [messageInput, isSending, tenantId, board, createBoardMessage]);
 
   const handleAttachFile = useCallback(async () => {
     if (!tenantId) return;
     const attachments = await pickAndUpload();
     if (attachments.length === 0) return;
 
-    const board = data.boards.find(b => b.id === boardId);
     const convexBoardId = (board as any)?._id;
     if (!convexBoardId) return;
 
@@ -145,7 +156,7 @@ export const BoardDetailScreen: React.FC = () => {
         Alert.alert('Error', t('boardDetail.failedToSendFile', { fileName: a.fileName }));
       }
     }
-  }, [tenantId, boardId, data.boards, createBoardMessage, pickAndUpload]);
+  }, [tenantId, board, createBoardMessage, pickAndUpload]);
 
   const onRefresh = useCallback(async () => {
     await refresh();

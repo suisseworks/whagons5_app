@@ -27,6 +27,55 @@ const CHANNEL_ID_DEFAULT = 'whagons_default';
 const CHANNEL_ID_CALLS = 'whagons_calls';
 const CHANNEL_ID_MESSAGES = 'whagons_messages';
 const CHANNEL_ID_TASKS = 'whagons_tasks';
+const ANDROID_SMALL_ICON = 'ic_launcher';
+
+const MESSAGE_NOTIFICATION_TYPES = new Set([
+  'message',
+  'chat',
+  'mention',
+  'task_comment',
+  'comment',
+  'board_message',
+]);
+
+const TASK_NOTIFICATION_TYPES = new Set([
+  'task',
+  'sla',
+  'assignment',
+  'task_assigned',
+  'task_created_unassigned',
+  'task_shared',
+  'task_unassigned',
+  'task_updated',
+  'reported_task_seen',
+]);
+
+function resolveNotificationChannelId(
+  notificationType?: string,
+  notificationTone?: string,
+): string {
+  if (notificationTone) {
+    return getChannelIdForTone(notificationTone);
+  }
+
+  if (!notificationType) {
+    return CHANNEL_ID_DEFAULT;
+  }
+
+  if (notificationType === 'call') {
+    return CHANNEL_ID_CALLS;
+  }
+
+  if (MESSAGE_NOTIFICATION_TYPES.has(notificationType)) {
+    return CHANNEL_ID_MESSAGES;
+  }
+
+  if (TASK_NOTIFICATION_TYPES.has(notificationType)) {
+    return CHANNEL_ID_TASKS;
+  }
+
+  return CHANNEL_ID_DEFAULT;
+}
 
 // ---------------------------------------------------------------------------
 // Channel setup (Android)
@@ -45,7 +94,9 @@ export async function createNotificationChannels(): Promise<void> {
       id: CHANNEL_ID_DEFAULT,
       name: 'General',
       description: 'General notifications',
-      importance: AndroidImportance.DEFAULT,
+      importance: AndroidImportance.HIGH,
+      sound: 'default',
+      vibration: true,
     }),
     notifee.createChannel({
       id: CHANNEL_ID_MESSAGES,
@@ -170,38 +221,34 @@ export function setupForegroundMessageHandler(): () => void {
     // Determine which channel to use.
     // Priority: category notification_tone → message-type channel → default
     const notificationTone = data?.notification_tone as string | undefined;
-    let channelId: string;
+    const type = data?.type as string | undefined;
+    const channelId = resolveNotificationChannelId(type, notificationTone);
 
-    if (notificationTone) {
-      // Use tone-specific channel when the category has a tone configured
-      channelId = getChannelIdForTone(notificationTone);
-    } else {
-      // Fall back to type-based channel selection
-      channelId = CHANNEL_ID_DEFAULT;
-      const type = data?.type as string | undefined;
-      if (type === 'call') {
-        channelId = CHANNEL_ID_CALLS;
-      } else if (type === 'message' || type === 'chat') {
-        channelId = CHANNEL_ID_MESSAGES;
-      } else if (type === 'task' || type === 'sla' || type === 'assignment') {
-        channelId = CHANNEL_ID_TASKS;
-      }
-    }
-
-    // Display with Notifee
-    await notifee.displayNotification({
-      title: notification?.title || data?.title as string || 'Whagons',
-      body: notification?.body || data?.body as string || '',
-      data: data as Record<string, string> | undefined,
-      android: {
-        channelId,
-        smallIcon: 'ic_notification', // falls back to app icon if not found
-        pressAction: {
-          id: 'default',
+    try {
+      await notifee.displayNotification({
+        title: notification?.title || data?.title as string || 'Whagons',
+        body: notification?.body || data?.body as string || '',
+        data: data as Record<string, string> | undefined,
+        android: {
+          channelId,
+          smallIcon: ANDROID_SMALL_ICON,
+          pressAction: {
+            id: 'default',
+          },
+          importance: AndroidImportance.HIGH,
         },
-        importance: AndroidImportance.HIGH,
-      },
-    });
+        ios: {
+          sound: 'default',
+          foregroundPresentationOptions: {
+            alert: true,
+            badge: true,
+            sound: true,
+          },
+        },
+      });
+    } catch (err) {
+      console.error('[Notifications] Failed to display foreground notification:', err);
+    }
   });
 }
 
@@ -227,34 +274,28 @@ export function registerBackgroundMessageHandler(): void {
 
       // Determine channel: category tone → type-based → default
       const notificationTone = data?.notification_tone as string | undefined;
-      let channelId: string;
+      const type = data?.type as string | undefined;
+      const channelId = resolveNotificationChannelId(type, notificationTone);
 
-      if (notificationTone) {
-        channelId = getChannelIdForTone(notificationTone);
-      } else {
-        channelId = CHANNEL_ID_DEFAULT;
-        const type = data?.type as string | undefined;
-        if (type === 'call') {
-          channelId = CHANNEL_ID_CALLS;
-        } else if (type === 'message' || type === 'chat') {
-          channelId = CHANNEL_ID_MESSAGES;
-        } else if (type === 'task' || type === 'sla' || type === 'assignment') {
-          channelId = CHANNEL_ID_TASKS;
-        }
-      }
-
-      await notifee.displayNotification({
-        title: data?.title as string || 'Whagons',
-        body: data?.body as string || '',
-        data: data as Record<string, string> | undefined,
-        android: {
-          channelId,
-          smallIcon: 'ic_notification',
-          pressAction: {
-            id: 'default',
+      try {
+        await notifee.displayNotification({
+          title: data?.title as string || 'Whagons',
+          body: data?.body as string || '',
+          data: data as Record<string, string> | undefined,
+          android: {
+            channelId,
+            smallIcon: ANDROID_SMALL_ICON,
+            pressAction: {
+              id: 'default',
+            },
           },
-        },
-      });
+          ios: {
+            sound: 'default',
+          },
+        });
+      } catch (err) {
+        console.error('[Notifications] Failed to display background data notification:', err);
+      }
     }
   });
 }
@@ -268,6 +309,8 @@ export interface NotificationTapPayload {
   taskId?: string;
   chatId?: string;
   spaceId?: string;
+  boardId?: string;
+  boardPgId?: string;
   userId?: string;
   [key: string]: string | undefined;
 }

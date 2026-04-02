@@ -122,6 +122,8 @@ export function getNotificationMeta(type?: string): { icon: string; color: strin
     case 'message':
     case 'chat':
       return { icon: 'chat', color: '#9C27B0' };
+    case 'board_message':
+      return { icon: 'campaign', color: '#F97316' };
     case 'call':
       return { icon: 'call', color: '#2E7D32' };
     case 'comment':
