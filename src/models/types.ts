@@ -18,6 +18,7 @@ export interface TaskItem {
   title: string;
   description?: string | null;
   spot: string;
+  spotId?: number | string | null;
   priority: 'Low' | 'Medium' | 'High';
   status: string;
   statusColor?: string | null;
@@ -256,6 +257,15 @@ export interface KpiComputedCard {
   trendData?: number[];
 }
 
+export interface MapLocationPayload {
+  latitude: number;
+  longitude: number;
+  title: string;
+  subtitle?: string | null;
+  helperText?: string | null;
+  warningText?: string | null;
+}
+
 // Navigation param types
 export type RootStackParamList = {
   Splash: undefined;
@@ -269,7 +279,7 @@ export type RootStackParamList = {
   Settings: undefined;
   Themes: undefined;
   BoardDetail: { boardId: string | number };
-  SpotsMap: { focusSpotId?: number } | undefined;
+  SpotsMap: { location: MapLocationPayload };
   Gamification: undefined;
   PointHistory: undefined;
   Stats: undefined;

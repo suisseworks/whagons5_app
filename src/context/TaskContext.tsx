@@ -110,6 +110,7 @@ function mapTaskToItem(
     title: task.name || 'Untitled',
     description: (task as any).description || null,
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
+    spotId: task.spot_id ?? null,
     priority: mapPriority(task.priority_id, priorityMap),
     priorityId: task.priority_id ?? null,
     status: status.name,

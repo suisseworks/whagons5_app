@@ -41,6 +41,9 @@ import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, getMciIconName } from '../utils/helpers';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
+import { useTenant } from '../hooks/useTenant';
 
 // ---------------------------------------------------------------------------
 // Surface color tokens (3-level hierarchy)
@@ -168,6 +171,8 @@ export const MainScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
+  const { tenantId } = useTenant();
+  const { isAuthenticated } = useConvexAuth();
   const {
     tasks,
     totalTaskCount,
@@ -195,6 +200,11 @@ export const MainScreen: React.FC = () => {
 
   const { data, isSyncing, hasEverSynced, refresh, syncError, isInitialSync } = useData();
   const { pendingCount, isReplaying } = useMutationQueue();
+  const convexNotifications = useQuery(
+    api.settings.listNotifications,
+    isAuthenticated && tenantId ? { tenantId } : 'skip',
+  );
+  const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
 
   const isCleaningEnabled = useMemo(() => {
     const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
@@ -250,6 +260,15 @@ export const MainScreen: React.FC = () => {
   }, [workspaceObjects]);
   const { unreadCount: notificationCount } = useNotifications();
   const { user: authUser } = useAuth();
+  const boardUnreadCount = useMemo(() => {
+    return (convexNotifications ?? []).filter((notification: any) => {
+      const data = notification?.data;
+      if (notification?.readAt) return false;
+      if (!data || typeof data !== 'object') return false;
+      if (notification?.type === 'board_message') return true;
+      return data.notification_kind === 'board_message' && Boolean(data.board_id);
+    }).length;
+  }, [convexNotifications]);
 
   // Compute total unread chat message count for the Colab tab badge
   const chatUnreadCount = useMemo(() => {
@@ -349,6 +368,11 @@ export const MainScreen: React.FC = () => {
     }
   }, [navItems.length, selectedNav]);
 
+  useEffect(() => {
+    if (selectedNav !== 2 || !tenantId || boardUnreadCount === 0) return;
+    markBoardNotificationsRead({ tenantId }).catch(() => {});
+  }, [selectedNav, tenantId, boardUnreadCount, markBoardNotificationsRead]);
+
   const surfaces = isDarkMode ? SURFACE.dark : SURFACE.light;
 
   const handleCreateTask = useCallback(() => {
@@ -432,7 +456,7 @@ export const MainScreen: React.FC = () => {
       data.tasks.filter((t) => String((t as any).workspace_id) === wsIdStr).map((t) => t.id),
     );
     // Collect user IDs assigned to those tasks
-    const userIds = new Set<number>();
+    const userIds = new Set<number | string>();
     for (const tu of data.taskUsers) {
       if (wsTaskIds.has(tu.task_id)) userIds.add(tu.user_id);
     }
@@ -486,12 +510,12 @@ export const MainScreen: React.FC = () => {
   );
 
   const handleAssigneeSelect = useCallback(
-    (user: { id: number; name: string }) => {
+    (user: { id: number | string; name: string }) => {
       if (assigneePickerTask?.id) {
         if (assigneePickerTask.assignees.some((a) => a.name === user.name)) {
           Alert.alert(t('main.alreadyAssignedTitle'), t('main.alreadyAssignedMessage', { name: user.name }));
         } else {
-          assignTaskToUser(assigneePickerTask.id, user.id, user.name);
+          assignTaskToUser(assigneePickerTask.id, Number(user.id), user.name);
         }
       }
       setAssigneePickerVisible(false);
@@ -1281,9 +1305,9 @@ export const MainScreen: React.FC = () => {
                       </Text>
                     </View>
                   )}
-                  {index === 2 && boards.length > 0 && (
+                  {index === 2 && boardUnreadCount > 0 && (
                     <View style={[styles.boardsBadge, { borderColor: colors.surface }]}>
-                      <Text style={styles.boardsBadgeText}>{boards.length > 9 ? '9+' : boards.length}</Text>
+                      <Text style={styles.boardsBadgeText}>{boardUnreadCount > 99 ? '99+' : boardUnreadCount}</Text>
                     </View>
                   )}
                 </View>
