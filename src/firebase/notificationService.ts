@@ -10,7 +10,7 @@
  */
 
 import { Platform, PermissionsAndroid } from 'react-native';
-import { getMessaging, getToken, onMessage, onTokenRefresh } from '@react-native-firebase/messaging';
+import { getInitialNotification as getMessagingInitialNotification, getMessaging, getToken, onMessage, onTokenRefresh } from '@react-native-firebase/messaging';
 import notifee, {
   AndroidImportance,
   AndroidStyle,
@@ -354,7 +354,7 @@ export function registerBackgroundNotifeeHandler(): void {
 export async function getInitialNotification(): Promise<NotificationTapPayload | null> {
   try {
     const messaging = getMessaging(getApp());
-    const remoteMessage = await messaging.getInitialNotification();
+    const remoteMessage = await getMessagingInitialNotification(messaging);
     if (remoteMessage?.data) {
       return remoteMessage.data as NotificationTapPayload;
     }

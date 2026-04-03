@@ -20,57 +20,6 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-
-const FA_TO_MCI: Record<string, string> = {
-  'bullhorn': 'bullhorn',
-  'store': 'store',
-  'users': 'account-group',
-  'wrench': 'wrench',
-  'shield-alt': 'shield-alert',
-  'shield-halved': 'shield-half-full',
-  'clipboard-check': 'clipboard-check',
-  'truck': 'truck',
-  'broom': 'broom',
-  'tools': 'tools',
-  'cogs': 'cog',
-  'heart': 'heart',
-  'calendar-check': 'calendar-check',
-  'snowflake': 'snowflake',
-  'chart-line': 'chart-line-variant',
-  'bug': 'bug',
-  'certificate': 'certificate',
-  'thermometer-half': 'thermometer',
-  'handshake': 'handshake',
-  'exchange-alt': 'swap-horizontal',
-  'dolly': 'dolly',
-  'tag': 'tag',
-  'search': 'magnify',
-  'boxes': 'package-variant-closed',
-  'money-bill': 'cash',
-  'user-times': 'account-remove',
-  'user-secret': 'account-eye',
-  'video': 'video',
-  'info-circle': 'information',
-  'folder': 'folder',
-  'tasks': 'format-list-checks',
-  'file-alt': 'file-document',
-  'clipboard-list': 'clipboard-list',
-  'building': 'office-building',
-  'bell': 'bell',
-  'eye': 'eye',
-  'play': 'play',
-  'hand': 'hand-back-right',
-  'flag-checkered': 'flag-checkered',
-  'ban': 'cancel',
-  'inbox': 'inbox',
-};
-
-function getMciIcon(faName: string | null | undefined): string {
-  if (!faName) return 'folder';
-  const clean = faName.startsWith('fa-') ? faName.slice(3) : faName;
-  return FA_TO_MCI[clean] ?? 'folder';
-}
-
 /** Maps flag color names (from backend) to hex values */
 const FLAG_HEX: Record<string, string> = {
   red: '#ef4444',
@@ -250,10 +199,10 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
       <View style={styles.titleRow}>
         {task.categoryColor && (() => {
           const catColor = task.categoryColor!;
-          const mciName = getMciIcon(task.categoryIcon);
+          const categoryIcon = parseWorkspaceIcon(task.categoryIcon);
           return (
-            <View style={[styles.typeIcon, { backgroundColor: hexToRgba(catColor, 0.15) }]}>
-              <MaterialCommunityIcons name={mciName as any} size={14} color={catColor} />
+            <View style={[styles.typeIcon, { backgroundColor: hexToRgba(catColor, 0.15) }]}> 
+              <FaIcon name={categoryIcon.name} size={12} color={catColor} solid={categoryIcon.solid} brand={categoryIcon.brand} />
             </View>
           );
         })()}

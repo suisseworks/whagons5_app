@@ -22,7 +22,6 @@ import {
 const SCREEN_WIDTH = Dimensions.get('window').width;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { FaIcon } from '../components/FaIcon';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
@@ -41,7 +40,7 @@ import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
-import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, getMciIconName } from '../utils/helpers';
+import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
@@ -973,7 +972,7 @@ export const MainScreen: React.FC = () => {
         }
         renderItem={({ item: ws }) => {
           const wsColor = ws.color || primaryColor;
-          const mciIcon = getMciIconName(ws.icon);
+          const workspaceIcon = parseWorkspaceIcon(ws.icon);
           const wsTaskCount = taskCountsByWorkspace.get(ws.id) || 0;
           const wsDescription = (ws as any).description;
           const wsType = (ws as any).type;
@@ -992,8 +991,8 @@ export const MainScreen: React.FC = () => {
                 setTasksTab('workspace');
               }}
             >
-              <View style={[styles.workspaceListIcon, { backgroundColor: wsColor }]}>
-                <MaterialCommunityIcons name={mciIcon as any} size={20} color="#FFFFFF" />
+              <View style={[styles.workspaceListIcon, { backgroundColor: wsColor }]}> 
+                <FaIcon name={workspaceIcon.name} size={16} color="#FFFFFF" solid={workspaceIcon.solid} brand={workspaceIcon.brand} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={[styles.workspaceListName, { color: colors.text }]} numberOfLines={1}>
@@ -1266,7 +1265,7 @@ export const MainScreen: React.FC = () => {
       {selectedNav === 0 && tasksTab === 'workspace' && (() => {
         const currentWs = workspaceObjects.find((w) => w.name === selectedWorkspace);
         const wsColor = currentWs?.color || primaryColor;
-        const wsMciIcon = getMciIconName(currentWs?.icon);
+        const wsIcon = parseWorkspaceIcon(currentWs?.icon);
         return (
           <View
             style={[
@@ -1286,8 +1285,8 @@ export const MainScreen: React.FC = () => {
             >
               <MaterialIcons name="arrow-back" size={20} color={colors.text} />
             </TouchableOpacity>
-            <View style={[styles.workspaceTitleIcon, { backgroundColor: wsColor }]}>
-              <MaterialCommunityIcons name={wsMciIcon as any} size={14} color="#FFFFFF" />
+            <View style={[styles.workspaceTitleIcon, { backgroundColor: wsColor }]}> 
+              <FaIcon name={wsIcon.name} size={12} color="#FFFFFF" solid={wsIcon.solid} brand={wsIcon.brand} />
             </View>
             <Text
               style={[styles.workspaceTitleText, { color: colors.text }]}
