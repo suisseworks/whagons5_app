@@ -33,6 +33,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import { RootStackParamList, TaskItem, CardDensity } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
+import { FaIcon } from '../components/FaIcon';
 import { ActiveTaskStrip } from '../components/ActiveTaskStrip';
 import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
 import { VoiceTaskCaptureOverlay } from '../components/VoiceTaskCaptureOverlay';
@@ -1161,7 +1162,7 @@ export const MainScreen: React.FC = () => {
             {hasActiveFilters && (
               <View style={[styles.filterCountBadge, { backgroundColor: primaryColor }]}>
                 <Text style={styles.filterCountBadgeText}>
-                  {filters.statuses.length + filters.priorities.length + filters.assignees.length + filters.flagColors.length + filters.tags.length}
+                  {filters.categoryIds.length + filters.statuses.length + filters.priorities.length + filters.assignees.length + filters.flagColors.length + filters.tags.length}
                 </Text>
               </View>
             )}

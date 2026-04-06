@@ -164,6 +164,7 @@ export interface CategoryOption {
 }
 
 export interface TaskFilters {
+  categoryIds: AnyId[];
   statuses: string[];
   priorities: string[];
   assignees: string[];
@@ -172,6 +173,7 @@ export interface TaskFilters {
 }
 
 export const emptyFilters: TaskFilters = {
+  categoryIds: [],
   statuses: [],
   priorities: [],
   assignees: [],
@@ -691,7 +693,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
   // Filter + paginate
   // ---------------------------------------------------------------------------
-  const hasActiveFilters = filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0 || filters.tags.length > 0;
+  const hasActiveFilters = filters.categoryIds.length > 0 || filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0 || filters.tags.length > 0;
 
   const filteredTasks = useMemo(() => {
     if (allMappedTasks.length === 0) return EMPTY_TASKS;
@@ -735,6 +737,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     if (hasActiveFilters) {
+      const categoryIdSet = filters.categoryIds.length > 0 ? new Set(filters.categoryIds.map(String)) : null;
       const statusSet = filters.statuses.length > 0 ? new Set(filters.statuses) : null;
       const prioritySet = filters.priorities.length > 0 ? new Set(filters.priorities) : null;
       const assigneeSet = filters.assignees.length > 0 ? new Set(filters.assignees) : null;
@@ -742,6 +745,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const tagSet = filters.tags.length > 0 ? new Set(filters.tags) : null;
 
       result = result.filter((t) => {
+        if (categoryIdSet && (!t.categoryId || !categoryIdSet.has(String(t.categoryId)))) return false;
         if (statusSet && !statusSet.has(t.status)) return false;
         if (prioritySet && !prioritySet.has(t.priority)) return false;
         if (assigneeSet && !t.assignees.some((a) => assigneeSet.has(a.name))) return false;

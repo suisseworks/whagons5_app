@@ -152,6 +152,26 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   const [lastTapPayload, setLastTapPayload] = useState<NotificationTapPayload | null>(null);
 
   const cleanupRefs = useRef<(() => void)[]>([]);
+  const tenantIdRef = useRef(tenantId);
+  const fcmTokenRef = useRef<string | null>(null);
+  const registerTokenMutationRef = useRef(registerTokenMutation);
+  const unregisterTokenMutationRef = useRef(unregisterTokenMutation);
+
+  useEffect(() => {
+    tenantIdRef.current = tenantId;
+  }, [tenantId]);
+
+  useEffect(() => {
+    fcmTokenRef.current = fcmToken;
+  }, [fcmToken]);
+
+  useEffect(() => {
+    registerTokenMutationRef.current = registerTokenMutation;
+  }, [registerTokenMutation]);
+
+  useEffect(() => {
+    unregisterTokenMutationRef.current = unregisterTokenMutation;
+  }, [unregisterTokenMutation]);
 
   // -----------------------------------------------------------------------
   // Restore persisted preferences + notifications
@@ -184,14 +204,15 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   // -----------------------------------------------------------------------
   const registerTokenWithBackend = useCallback(
     async (deviceToken: string) => {
-      if (!tenantId) {
+      const currentTenantId = tenantIdRef.current;
+      if (!currentTenantId) {
         console.log('[Notifications] No tenantId — skipping FCM registration');
         return;
       }
       try {
         const deviceId = `${Platform.OS}-${APP_VERSION}`;
-        await registerTokenMutation({
-          tenantId,
+        await registerTokenMutationRef.current({
+          tenantId: currentTenantId,
           fcmToken: deviceToken,
           platform: Platform.OS,
           deviceId,
@@ -201,7 +222,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         console.error('[Notifications] Failed to register FCM token:', err);
       }
     },
-    [tenantId, registerTokenMutation],
+    [],
   );
 
   // -----------------------------------------------------------------------
@@ -210,8 +231,8 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   useEffect(() => {
     if (!authToken || !subdomain) {
       // Logged out – unregister token and clean up
-      if (fcmToken && tenantId) {
-        unregisterTokenMutation({ tenantId, fcmToken }).catch(() => {});
+      if (fcmTokenRef.current && tenantIdRef.current) {
+        unregisterTokenMutationRef.current({ tenantId: tenantIdRef.current, fcmToken: fcmTokenRef.current }).catch(() => {});
       }
       cleanupRefs.current.forEach(fn => fn());
       cleanupRefs.current = [];
@@ -296,7 +317,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
       cleanupRefs.current.forEach(fn => fn());
       cleanupRefs.current = [];
     };
-  }, [authToken, subdomain, registerTokenWithBackend]);
+  }, [authToken, subdomain, tenantId, registerTokenWithBackend]);
 
   // -----------------------------------------------------------------------
   // Persist notifications when they change

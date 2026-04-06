@@ -68,7 +68,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
   });
 
   // Category filter for statuses
-  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<TaskFilters['categoryIds'][number] | null>(null);
 
   // Assignee search
   const [assigneeSearch, setAssigneeSearch] = useState('');
@@ -78,6 +78,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
   React.useEffect(() => {
     if (visible) {
       setDraft(filters);
+      setSelectedCategory(filters.categoryIds[0] ?? null);
       setAssigneeSearch('');
       setShowAllAssignees(false);
       setCollapsedSections({
@@ -97,7 +98,10 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
   // ---------------------------------------------------------------------------
 
   // Visible statuses — context-aware, filtered by workspace category transition groups
-  const visibleStatuses = availableStatuses;
+  const visibleStatuses = useMemo(() => {
+    if (selectedCategory == null) return availableStatuses;
+    return availableStatuses.filter((status) => String(status.categoryId) === String(selectedCategory));
+  }, [availableStatuses, selectedCategory]);
 
   // Filtered assignees (search + limit)
   const filteredAssignees = useMemo(() => {
@@ -114,7 +118,7 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
 
   // Active filter count
   const activeFilterCount =
-    draft.statuses.length + draft.priorities.length + draft.assignees.length + draft.flagColors.length + draft.tags.length;
+    draft.categoryIds.length + draft.statuses.length + draft.priorities.length + draft.assignees.length + draft.flagColors.length + draft.tags.length;
 
   // ---------------------------------------------------------------------------
   // Callbacks
@@ -125,9 +129,14 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
     setCollapsedSections((prev) => ({ ...prev, [section]: !prev[section] }));
   }, []);
 
-  const selectCategory = useCallback((catId: number | null) => {
-    setSelectedCategory((prev) => (prev === catId ? null : catId));
-  }, []);
+  const selectCategory = useCallback((catId: TaskFilters['categoryIds'][number] | null) => {
+    const nextCategory = selectedCategory === catId ? null : catId;
+    setSelectedCategory(nextCategory);
+    setDraft((current) => ({
+      ...current,
+      categoryIds: nextCategory == null ? [] : [nextCategory],
+    }));
+  }, [selectedCategory]);
 
   const toggleStatus = useCallback((name: string) => {
     setDraft((prev) => ({
@@ -399,6 +408,11 @@ export const TaskFilterSheet: React.FC<TaskFilterSheetProps> = ({ visible, onClo
                     () => toggleStatus(s.name),
                     <View style={[styles.statusDot, { backgroundColor: s.color || '#9E9E9E' }]} />,
                   ),
+                )}
+                {visibleStatuses.length === 0 && (
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    {t('component.taskFilterSheet.noStatusesForCategory')}
+                  </Text>
                 )}
               </View>
             )}
@@ -702,6 +716,12 @@ const styles = StyleSheet.create({
   chipText: {
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  emptyText: {
+    width: '100%',
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    paddingVertical: 8,
   },
 
   // Assignee search
