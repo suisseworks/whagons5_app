@@ -20,6 +20,7 @@ export const SpotsMapScreen: React.FC = () => {
   const { colors, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const { location } = route.params;
+  const hasEmbeddedMap = Platform.OS !== 'android' || Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
   const openNativeDirections = () => {
     const url = Platform.select({
@@ -50,21 +51,29 @@ export const SpotsMapScreen: React.FC = () => {
       </View>
 
       <View style={styles.mapArea}>
-        <MapView
-          style={styles.map}
-          initialRegion={{
-            latitude: location.latitude,
-            longitude: location.longitude,
-            latitudeDelta: 0.0045,
-            longitudeDelta: 0.0045,
-          }}
-        >
-          <Marker
-            coordinate={{ latitude: location.latitude, longitude: location.longitude }}
-            title={location.title}
-            description={location.subtitle ?? undefined}
-          />
-        </MapView>
+        {hasEmbeddedMap ? (
+          <MapView
+            style={styles.map}
+            initialRegion={{
+              latitude: location.latitude,
+              longitude: location.longitude,
+              latitudeDelta: 0.0045,
+              longitudeDelta: 0.0045,
+            }}
+          >
+            <Marker
+              coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+              title={location.title}
+              description={location.subtitle ?? undefined}
+            />
+          </MapView>
+        ) : (
+          <View style={[styles.mapFallback, { backgroundColor: isDarkMode ? '#111827' : '#E5E7EB' }]}>
+            <MaterialIcons name="map" size={40} color={colors.primary} />
+            <Text style={[styles.mapFallbackTitle, { color: colors.text }]}>Map unavailable on Android</Text>
+            <Text style={[styles.mapFallbackText, { color: colors.textSecondary }]}>Use the directions button below to open this location in your device map app.</Text>
+          </View>
+        )}
 
         <View
           style={[
@@ -133,6 +142,23 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  mapFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    gap: 8,
+  },
+  mapFallbackTitle: {
+    fontSize: 18,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  mapFallbackText: {
+    fontSize: 13,
+    lineHeight: 20,
+    textAlign: 'center',
+    fontFamily: fontFamilies.bodyRegular,
   },
   infoCard: {
     position: 'absolute',

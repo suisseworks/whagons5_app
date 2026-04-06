@@ -33,11 +33,7 @@ function mapPriority(
 ): TaskItem['priority'] {
   if (!priorityId) return 'Medium';
   const p = priorityMap.get(priorityId);
-  if (!p) return 'Medium';
-  const name = p.name.toLowerCase();
-  if (name.includes('high') || name.includes('alta')) return 'High';
-  if (name.includes('low') || name.includes('baja')) return 'Low';
-  return 'Medium';
+  return p?.name ?? 'Medium';
 }
 
 function resolveStatus(
@@ -229,6 +225,11 @@ export interface CreateTaskArgs {
   longitude?: number;
 }
 
+export interface CreatedTaskResult {
+  _id: string;
+  pgId: number;
+}
+
 interface TaskContextType {
   tasks: TaskItem[];
   totalTaskCount: number;
@@ -246,7 +247,7 @@ interface TaskContextType {
   initialStatus: { name: string; color: string | null } | null;
   finalStatus: { name: string; color: string | null } | null;
   getAllowedStatuses: (task: TaskItem) => StatusOption[];
-  createTask: (args: CreateTaskArgs) => Promise<string>;
+  createTask: (args: CreateTaskArgs) => Promise<CreatedTaskResult>;
   addTask: (task: TaskItem) => void;
   updateTask: (index: number, task: TaskItem) => void;
   setActiveTask: (task: TaskItem | null, markDone?: boolean) => void;
@@ -1002,7 +1003,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Mutations (Convex)
   // ---------------------------------------------------------------------------
 
-  const createTask = useCallback(async (args: CreateTaskArgs): Promise<string> => {
+  const createTask = useCallback(async (args: CreateTaskArgs): Promise<CreatedTaskResult> => {
     if (!tenantId) throw new Error('No tenant selected');
 
     const mutationArgs: Record<string, any> = {
@@ -1023,7 +1024,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (args.userConvexIds?.length) mutationArgs.assigneeUserIds = args.userConvexIds;
 
     const result = await createTaskMutation(mutationArgs as any);
-    return String(result);
+    return result as CreatedTaskResult;
   }, [tenantId, createTaskMutation]);
 
   const addTask = (_task: TaskItem) => {
@@ -1074,7 +1075,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
     const priorityInfo = priorityMap.get(priorityId);
     if (priorityInfo) {
-      setTimedOverride(taskId, { priority: mapPriority(priorityId, priorityMap), priorityId });
+      setTimedOverride(taskId, { priority: priorityInfo.name, priorityId });
     }
 
     if (tenantId) {

@@ -19,6 +19,8 @@ import * as Location from 'expo-location';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { useMutation } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useTasks } from '../context/TaskContext';
@@ -200,6 +202,10 @@ export const CreateTaskScreen: React.FC = () => {
   const { tenantId } = useTenant();
   const { t } = useLanguage();
   const { pickImages, takePhoto, pickDocuments, uploadFile } = useConvexUpload();
+  const createDocumentMutation = useMutation(api.documents.create);
+  const createDocumentAssociationMutation = useMutation(api.documents.createAssociation);
+  const addTagByPgIdMutation = useMutation(api.taskResources.addTagByPgId);
+  const addTagByTaskPgIdMutation = useMutation(api.taskResources.addTagByTaskPgId);
 
   const titleInputRef = useRef<TextInput>(null);
   const toastRef = useRef<ToastRef>(null);
@@ -233,13 +239,6 @@ export const CreateTaskScreen: React.FC = () => {
   const [workspaceModalVisible, setWorkspaceModalVisible] = useState(
     selectedWorkspace === 'Everything'
   );
-
-  // Auto-focus title on mount (only when no templates)
-  useEffect(() => {
-    if (hasTemplates) return;
-    const timer = setTimeout(() => titleInputRef.current?.focus(), 400);
-    return () => clearTimeout(timer);
-  }, [hasTemplates]);
 
   // Capture GPS on mount (if setting is enabled)
   useEffect(() => {
@@ -366,6 +365,13 @@ export const CreateTaskScreen: React.FC = () => {
   }, [data.templates, workspaceCategoryIds]);
 
   const hasTemplates = categoryTemplates.length > 0;
+
+  // Auto-focus title on mount (only when no templates)
+  useEffect(() => {
+    if (hasTemplates) return;
+    const timer = setTimeout(() => titleInputRef.current?.focus(), 400);
+    return () => clearTimeout(timer);
+  }, [hasTemplates]);
 
   // Reset selected template when workspace/category changes
   useEffect(() => {
@@ -593,7 +599,7 @@ export const CreateTaskScreen: React.FC = () => {
           fileType: a.fileType,
         }));
 
-      await createTask({
+      const createdTask = await createTask({
         name: finalName,
         description: description.trim() || undefined,
         workspaceConvexId,
@@ -608,6 +614,49 @@ export const CreateTaskScreen: React.FC = () => {
         longitude: capturedLocation?.longitude,
       });
 
+      if (tenantId && uploadedAttachments.length > 0) {
+        for (const attachment of uploadedAttachments) {
+          const ext = attachment.fileName.split('.').pop()?.toLowerCase() || '';
+          const title = attachment.fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
+          const documentId = await createDocumentMutation({
+            tenantId,
+            title,
+            workspaceId: workspaceConvexId as any,
+            storageId: attachment.storageId as any,
+            fileName: attachment.fileName,
+            fileExtension: ext,
+            fileSize: attachment.fileSize,
+            documentType: 'OTHER',
+          });
+
+          await createDocumentAssociationMutation({
+            tenantId,
+            documentId,
+            associableType: 'task',
+            associableId: String(createdTask.pgId ?? createdTask._id),
+          });
+        }
+      }
+
+      if (tenantId && createdTask.pgId && selectedTags.length > 0) {
+        for (const tag of selectedTags) {
+          const numericTagId = Number(tag._id);
+          if (Number.isFinite(numericTagId) && numericTagId > 0) {
+            await addTagByPgIdMutation({
+              tenantId,
+              taskPgId: createdTask.pgId,
+              tagPgId: numericTagId,
+            });
+          } else {
+            await addTagByTaskPgIdMutation({
+              tenantId,
+              taskPgId: createdTask.pgId,
+              tagId: tag._id as any,
+            });
+          }
+        }
+      }
+
       toastRef.current?.show({ type: 'success', title: t('common.success'), body: t('createTask.taskCreatedSuccess') });
       setTimeout(() => navigation.goBack(), 800);
     } catch (err: any) {
@@ -621,6 +670,8 @@ export const CreateTaskScreen: React.FC = () => {
     initialStatusConvexId, matchedPriorityId, attachments, hasUploadingFiles,
     workspaceCategories, currentWorkspace, capturedLocation,
     hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, t,
+    tenantId, createDocumentMutation, createDocumentAssociationMutation,
+    selectedTags, addTagByPgIdMutation, addTagByTaskPgIdMutation,
   ]);
 
   // ---------------------------------------------------------------------------

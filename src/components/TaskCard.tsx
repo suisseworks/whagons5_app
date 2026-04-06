@@ -5,7 +5,7 @@ import { FaIcon } from './FaIcon';
 import { TaskItem, CardDensity } from '../models/types';
 import { CustomChip } from './CustomChip';
 import { AssigneeAvatars } from './AssigneeAvatars';
-import { statusColor, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
+import { statusColor, parseWorkspaceIcon, contrastTextColor, priorityColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
@@ -28,12 +28,6 @@ const FLAG_HEX: Record<string, string> = {
   green: '#22c55e',
   blue: '#3b82f6',
   purple: '#a855f7',
-};
-
-const PRIORITY_COLOR: Record<string, string> = {
-  High: '#EF4444',
-  Medium: '#F59E0B',
-  Low: '#22C55E',
 };
 
 const MAX_VISIBLE_TAGS = 3;
@@ -221,7 +215,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           />
         )}
         {task.priority && (
-          <Text style={[styles.priorityLabel, { color: PRIORITY_COLOR[task.priority] ?? '#D1D5DB' }]}>
+          <Text style={[styles.priorityLabel, { color: priorityColor(task.priority) }]}> 
             {task.priority}
           </Text>
         )}
@@ -264,7 +258,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           icon={
             working
               ? <SpinnerIcon color="#FFFFFF" size={12} />
-              : <MaterialCommunityIcons name={STATUS_ICONS[statusType as Exclude<StatusType, 'working'>] ?? STATUS_ICONS.default} size={12} color="#FFFFFF" />
+              : <MaterialCommunityIcons name={(STATUS_ICONS[statusType as Exclude<StatusType, 'working'>] ?? STATUS_ICONS.default) as any} size={12} color="#FFFFFF" />
           }
         />
         {task.approvalStatus === 'pending' && (

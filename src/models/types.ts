@@ -19,7 +19,7 @@ export interface TaskItem {
   description?: string | null;
   spot: string;
   spotId?: number | string | null;
-  priority: 'Low' | 'Medium' | 'High';
+  priority: string;
   status: string;
   statusColor?: string | null;
   statusId?: string | number | null;

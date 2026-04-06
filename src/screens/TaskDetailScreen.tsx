@@ -24,7 +24,6 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
-import { useVideoPlayer, VideoView } from 'expo-video';
 import RenderHtml from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -112,6 +111,27 @@ function parseChecklistItems(desc: string): { label: string; checked: boolean }[
   return items.length > 0 ? items : null;
 }
 
+function getAttachmentDisplayName(
+  document: { title?: string; fileName?: string; fileExtension?: string },
+  index: number,
+): string {
+  const rawName = document.fileName || document.title || '';
+  const extension = document.fileExtension?.toLowerCase() ?? rawName.split('.').pop()?.toLowerCase() ?? '';
+  const baseName = rawName.replace(/\.[^/.]+$/, '');
+  const looksGenerated = /^[a-f0-9-]{24,}$/i.test(baseName);
+  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].includes(extension);
+
+  if (rawName && !(looksGenerated && isImage)) {
+    return rawName;
+  }
+
+  if (isImage) {
+    return `Photo ${index + 1}`;
+  }
+
+  return rawName || `Attachment ${index + 1}`;
+}
+
 const FLAG_HEX: Record<string, string> = {
   red: '#ef4444',
   orange: '#f97316',
@@ -143,6 +163,18 @@ interface TaskNoteResponse {
   attachments?: NoteAttachmentData[];
 }
 
+interface TaskDocumentAssociation {
+  _id: string;
+  document: {
+    _id: string;
+    title?: string;
+    fileName?: string;
+    fileSize?: number;
+    fileExtension?: string;
+    fileUrl?: string | null;
+  };
+}
+
 function fixConvexStorageUrl(url: string): string {
   const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
   if (!convexUrl) return url;
@@ -156,23 +188,6 @@ function fixConvexStorageUrl(url: string): string {
   } catch {}
   return url;
 }
-
-/** Inline video player for note attachments */
-const NoteVideoPlayer: React.FC<{ url: string }> = ({ url }) => {
-  const player = useVideoPlayer(url, (p) => {
-    p.loop = false;
-  });
-  return (
-    <View style={noteAttachStyles.videoContainer}>
-      <VideoView
-        player={player}
-        style={noteAttachStyles.video}
-        allowsPictureInPicture
-        allowsFullscreen
-      />
-    </View>
-  );
-};
 
 const NoteAttachmentView: React.FC<{
   attachment: NoteAttachmentData;
@@ -210,7 +225,24 @@ const NoteAttachmentView: React.FC<{
   }
 
   if (isVideo && url) {
-    return <NoteVideoPlayer url={url} />;
+    return (
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={handleFilePress}
+        style={[
+          noteAttachStyles.videoFallback,
+          { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' },
+        ]}
+      >
+        <MaterialIcons name="play-circle-outline" size={28} color={colors.textSecondary} />
+        <Text style={[noteAttachStyles.videoFileName, { color: colors.text }]} numberOfLines={1}>
+          {attachment.fileName}
+        </Text>
+        <Text style={[noteAttachStyles.videoHint, { color: colors.textSecondary }]}>
+          Open video
+        </Text>
+      </TouchableOpacity>
+    );
   }
 
   if (isImage && url) {
@@ -253,17 +285,23 @@ const noteAttachStyles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 6,
   },
-  videoContainer: {
+  videoFallback: {
     width: '100%',
     height: 200,
     borderRadius: 8,
     marginTop: 6,
-    overflow: 'hidden',
-    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    gap: 6,
   },
-  video: {
-    width: '100%',
-    height: '100%',
+  videoFileName: {
+    fontSize: 13,
+    fontFamily: 'Montserrat_600SemiBold',
+  },
+  videoHint: {
+    fontSize: 12,
+    fontFamily: 'Montserrat_500Medium',
   },
   filePlaceholder: {
     width: '100%',
@@ -319,7 +357,19 @@ type TaskDetailRouteProp = RouteProp<RootStackParamList, 'TaskDetail'>;
 export const TaskDetailScreen: React.FC = () => {
   const navigation = useNavigation();
   const route = useRoute<TaskDetailRouteProp>();
-  const { task } = route.params;
+  const task = useMemo<TaskItem>(() => {
+    const rawTask = route.params.task;
+    return {
+      ...rawTask,
+      title: rawTask.title ?? 'Untitled',
+      spot: rawTask.spot ?? '',
+      priority: rawTask.priority ?? 'Medium',
+      status: rawTask.status ?? '',
+      createdAt: rawTask.createdAt ?? '',
+      assignees: Array.isArray(rawTask.assignees) ? rawTask.assignees : [],
+      tags: Array.isArray(rawTask.tags) ? rawTask.tags : [],
+    };
+  }, [route.params.task]);
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const toastRef = useRef<ToastRef>(null);
@@ -421,8 +471,15 @@ export const TaskDetailScreen: React.FC = () => {
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
 
   const convexTaskId = task.convexId ?? null;
+  const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
+  const taskDocumentAssociations = useQuery(
+    api.documents.listAssociationsByEntity,
+    tenantId && taskDocumentAssociableId
+      ? { tenantId, associableType: 'task', associableId: taskDocumentAssociableId }
+      : 'skip'
+  ) as TaskDocumentAssociation[] | undefined;
   const rawNotes = useQuery(
     api.taskResources.listTaskNotes,
     tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
@@ -443,6 +500,10 @@ export const TaskDetailScreen: React.FC = () => {
 
   const notesLoading = tenantId && hasValidConvexId ? rawNotes === undefined : false;
   const notesError: string | null = null;
+  const taskDocuments = useMemo(
+    () => (taskDocumentAssociations ?? []).map((association) => association.document).filter(Boolean),
+    [taskDocumentAssociations]
+  );
   const [sendingComment, setSendingComment] = useState(false);
   const commentsScrollRef = useRef<ScrollView>(null);
 
@@ -465,6 +526,14 @@ export const TaskDetailScreen: React.FC = () => {
 
   const currentUserId = authUser?.id != null ? Number(authUser.id) : null;
 
+  type TaskViewer = {
+    id: number;
+    name: string;
+    picture: string | null;
+    viewedAt: string;
+    isSelf: boolean;
+  };
+
   const viewersForDisplay = useMemo(() => {
     if (!taskViews.length) return [];
     return taskViews
@@ -478,9 +547,9 @@ export const TaskDetailScreen: React.FC = () => {
           id === currentUserId ||
           (v.convex_user_id && v.convex_user_id === (authUser as any)?._id)
         );
-        return { id, name, picture, viewedAt: v.viewed_at, isSelf };
+        return { id, name, picture, viewedAt: v.viewed_at, isSelf } satisfies TaskViewer;
       })
-      .sort((a, b) => {
+      .sort((a: TaskViewer, b: TaskViewer) => {
         if (a.isSelf && !b.isSelf) return -1;
         if (!a.isSelf && b.isSelf) return 1;
         return new Date(a.viewedAt).getTime() - new Date(b.viewedAt).getTime();
@@ -509,13 +578,7 @@ export const TaskDetailScreen: React.FC = () => {
 
   const handlePriorityChange = (priority: { id: any; name: string }) => {
     changeTaskPriority(task.id || '', priority.id);
-    const name = priority.name.toLowerCase();
-    const mapped: TaskItem['priority'] = name.includes('high') || name.includes('alta')
-      ? 'High'
-      : name.includes('low') || name.includes('baja')
-        ? 'Low'
-        : 'Medium';
-    setCurrentPriority(mapped);
+    setCurrentPriority(priority.name);
     setCurrentPriorityId(priority.id);
     setPriorityPickerVisible(false);
   };
@@ -769,7 +832,7 @@ export const TaskDetailScreen: React.FC = () => {
           {taskWorkspace.color && (
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: taskWorkspace.color }} />
           )}
-          <Text style={{ fontSize: 12, color: tertiaryText, fontFamily: fontFamilies.medium }}>
+          <Text style={{ fontSize: 12, color: tertiaryText, fontFamily: fontFamilies.bodyMedium }}>
             {taskWorkspace.name}
           </Text>
         </View>
@@ -899,25 +962,6 @@ export const TaskDetailScreen: React.FC = () => {
         />
       )}
 
-      {/* Created-from GPS */}
-      {showCreatedFromCard && (
-        <TaskNavigationMapSafe
-          taskLatitude={task.latitude!}
-          taskLongitude={task.longitude!}
-          taskTitle={task.title}
-          spotName={!hasSpotCoordinates && task.spot ? task.spot : undefined}
-          helperText={t('taskDetail.creationLocationHelper')}
-          warningText={!hasSpotCoordinates && task.spot ? t('taskDetail.spotLocationFallbackHelper') : undefined}
-          isDarkMode={isDarkMode}
-          secondarySurface={secondarySurface}
-          tertiaryText={tertiaryText}
-          sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
-          sectionLabelText={!hasSpotCoordinates && task.spot ? t('taskDetail.reportedFromLabel') : t('taskDetail.createdFromLabel')}
-          primaryColor={primaryColor}
-          actionText={t('taskDetail.navigateToTask')}
-        />
-      )}
-
       {/* Assignees section */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.assigneesLabel')}</Text>
@@ -954,6 +998,25 @@ export const TaskDetailScreen: React.FC = () => {
         </TouchableOpacity>
       )}
 
+      {/* Created-from GPS */}
+      {showCreatedFromCard && (
+        <TaskNavigationMapSafe
+          taskLatitude={task.latitude!}
+          taskLongitude={task.longitude!}
+          taskTitle={task.title}
+          spotName={!hasSpotCoordinates && task.spot ? task.spot : undefined}
+          helperText={t('taskDetail.creationLocationHelper')}
+          warningText={!hasSpotCoordinates && task.spot ? t('taskDetail.spotLocationFallbackHelper') : undefined}
+          isDarkMode={isDarkMode}
+          secondarySurface={secondarySurface}
+          tertiaryText={tertiaryText}
+          sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
+          sectionLabelText={!hasSpotCoordinates && task.spot ? t('taskDetail.reportedFromLabel') : t('taskDetail.createdFromLabel')}
+          primaryColor={primaryColor}
+          actionText={t('taskDetail.navigateToTask')}
+        />
+      )}
+
       {/* Tags */}
       {task.tags.length > 0 && (
         <>
@@ -978,6 +1041,52 @@ export const TaskDetailScreen: React.FC = () => {
         </>
       )}
 
+      {taskDocuments.length > 0 && (
+        <View style={styles.descriptionAttachmentsSection}>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>Attachments</Text>
+          <View style={styles.descriptionAttachmentsList}>
+            {taskDocuments.map((document, index) => {
+              const fileUrl = document.fileUrl ? fixConvexStorageUrl(document.fileUrl) : null;
+              const fileName = getAttachmentDisplayName(document, index);
+              const extension = document.fileExtension?.toLowerCase() ?? '';
+              const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].includes(extension);
+
+              return (
+                <TouchableOpacity
+                  key={document._id || `${fileName}-${index}`}
+                  style={[
+                    styles.descriptionAttachmentItem,
+                    { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' },
+                  ]}
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    if (!fileUrl) return;
+                    if (isImage) {
+                      setImageViewerUri(fileUrl);
+                    } else {
+                      Linking.openURL(fileUrl).catch(() => {});
+                    }
+                  }}
+                >
+                  <MaterialIcons name="insert-drive-file" size={18} color={colors.textSecondary} />
+                  <View style={styles.descriptionAttachmentTextWrap}>
+                    <Text style={[styles.descriptionAttachmentName, { color: colors.text }]} numberOfLines={1}>
+                      {fileName}
+                    </Text>
+                    {!!document.fileSize && (
+                      <Text style={[styles.descriptionAttachmentMeta, { color: colors.textSecondary }]}>
+                        {(document.fileSize / (1024 * 1024)).toFixed(document.fileSize >= 1024 * 1024 ? 1 : 2)} MB
+                      </Text>
+                    )}
+                  </View>
+                  <MaterialIcons name="open-in-new" size={16} color={colors.textSecondary} />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      )}
+
       {/* Seen by */}
       <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.seenByLabel')}</Text>
       {taskViewsLoading ? (
@@ -987,7 +1096,7 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       ) : viewersForDisplay.length > 0 ? (
         <View style={styles.seenList}>
-          {viewersForDisplay.map((viewer) => (
+          {viewersForDisplay.map((viewer: TaskViewer) => (
             <View key={`${viewer.id}-${viewer.viewedAt}`} style={[styles.seenRow, { backgroundColor: secondarySurface }]}>
               {viewer.picture ? (
                 <Image source={{ uri: viewer.picture }} style={styles.seenAvatarImg} />
@@ -1095,7 +1204,9 @@ export const TaskDetailScreen: React.FC = () => {
               || (authUser as any)?._id === noteUid;
             const authorName = isMe
               ? 'You'
-              : userMap.get(noteUid) || userMap.get(String(noteUid)) || userMap.get(Number(noteUid)) || `User #${noteUid}`;
+              : (noteUid != null
+                ? userMap.get(noteUid) || userMap.get(String(noteUid)) || userMap.get(Number(noteUid)) || `User #${noteUid}`
+                : 'Unknown user');
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
                 <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}>
@@ -1386,7 +1497,7 @@ export const TaskDetailScreen: React.FC = () => {
           >
             <View style={styles.statusPickerHandle} />
             <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              {t('taskDetail.changePriority', 'Change Priority')}
+              {t('taskDetail.changePriority')}
             </Text>
             <View style={styles.statusPickerList}>
               {data.priorities.map((p) => {
@@ -1463,7 +1574,7 @@ export const TaskDetailScreen: React.FC = () => {
           >
             <View style={styles.statusPickerHandle} />
             <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              {t('common.assignTo', 'Assign To')}
+              {t('common.assignTo')}
             </Text>
             <View
               style={{
@@ -1486,7 +1597,7 @@ export const TaskDetailScreen: React.FC = () => {
               />
               <TextInput
                 style={{ flex: 1, fontSize: fontSizes.md, fontFamily: fontFamilies.bodyRegular, color: colors.text, padding: 0 }}
-                placeholder={t('common.searchUsers', 'Search users...')}
+                placeholder={t('common.searchUsers')}
                 placeholderTextColor={colors.textSecondary}
                 value={assigneeSearch}
                 onChangeText={setAssigneeSearch}
@@ -1541,7 +1652,7 @@ export const TaskDetailScreen: React.FC = () => {
                           isAssigned && { fontFamily: fontFamilies.bodySemibold },
                         ]}
                       >
-                        {u.name}{isCurrentUser ? ` (${t('common.you', 'You')})` : ''}
+                        {u.name}{isCurrentUser ? ` (${t('common.you')})` : ''}
                       </Text>
                       {isAssigned && (
                         <MaterialIcons name="check" size={20} color={primaryColor} />
@@ -1660,6 +1771,34 @@ const styles = StyleSheet.create({
   descriptionContainer: {
     marginTop: 6,
     marginBottom: 0,
+  },
+  descriptionAttachmentsSection: {
+    marginTop: 12,
+    marginBottom: 2,
+  },
+  descriptionAttachmentsList: {
+    marginTop: 6,
+    gap: 8,
+  },
+  descriptionAttachmentItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  descriptionAttachmentTextWrap: {
+    flex: 1,
+  },
+  descriptionAttachmentName: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  descriptionAttachmentMeta: {
+    fontSize: 11,
+    marginTop: 2,
+    fontFamily: fontFamilies.bodyRegular,
   },
 
   /* ── Checklist ── */

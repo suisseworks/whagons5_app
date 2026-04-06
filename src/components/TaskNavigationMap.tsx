@@ -45,6 +45,7 @@ export default function TaskNavigationMap({
   const { primaryColor, colors } = useTheme();
   const { t } = useLanguage();
   const navigation = useNavigation<NavigationProp>();
+  const hasEmbeddedMap = Platform.OS !== 'android' || Boolean(process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY);
 
   const locationPayload: MapLocationPayload = {
     latitude: taskLatitude,
@@ -76,6 +77,10 @@ export default function TaskNavigationMap({
   };
 
   const openInAppMap = () => {
+    if (!hasEmbeddedMap) {
+      openNativeDirections();
+      return;
+    }
     navigation.navigate('SpotsMap', { location: locationPayload });
   };
 
@@ -97,29 +102,41 @@ export default function TaskNavigationMap({
 
       <TouchableOpacity style={styles.previewTouch} activeOpacity={0.92} onPress={openInAppMap}>
         <View style={styles.previewFrame}>
-          <MapView
-            style={styles.mapPreview}
-            initialRegion={previewRegion}
-            region={previewRegion}
-            pointerEvents="none"
-            scrollEnabled={false}
-            zoomEnabled={false}
-            rotateEnabled={false}
-            pitchEnabled={false}
-            toolbarEnabled={false}
-            liteMode={Platform.OS === 'android'}
-          >
-            <Marker
-              coordinate={{ latitude: taskLatitude, longitude: taskLongitude }}
-              title={locationPayload.title}
-              description={locationPayload.subtitle ?? undefined}
-            />
-          </MapView>
+          {hasEmbeddedMap ? (
+            <>
+              <MapView
+                style={styles.mapPreview}
+                initialRegion={previewRegion}
+                region={previewRegion}
+                pointerEvents="none"
+                scrollEnabled={false}
+                zoomEnabled={false}
+                rotateEnabled={false}
+                pitchEnabled={false}
+                toolbarEnabled={false}
+                liteMode={Platform.OS === 'android'}
+              >
+                <Marker
+                  coordinate={{ latitude: taskLatitude, longitude: taskLongitude }}
+                  title={locationPayload.title}
+                  description={locationPayload.subtitle ?? undefined}
+                />
+              </MapView>
 
-          <View style={styles.previewHint}>
-            <MaterialIcons name="open-in-full" size={12} color="#FFFFFF" />
-            <Text style={styles.previewHintText}>{t('spotsMap.tapToExpand')}</Text>
-          </View>
+              <View style={styles.previewHint}>
+                <MaterialIcons name="open-in-full" size={12} color="#FFFFFF" />
+                <Text style={styles.previewHintText}>{t('spotsMap.tapToExpand')}</Text>
+              </View>
+            </>
+          ) : (
+            <View style={styles.previewFallback}>
+              <MaterialIcons name="map" size={30} color={primaryColor} />
+              <Text style={[styles.previewFallbackTitle, { color: colors.text }]}>Map preview unavailable</Text>
+              <Text style={[styles.previewFallbackText, { color: tertiaryText }]}>
+                Open this location in your device map app.
+              </Text>
+            </View>
+          )}
         </View>
       </TouchableOpacity>
 
@@ -212,6 +229,23 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: fontFamilies.bodySemibold,
     color: '#FFFFFF',
+  },
+  previewFallback: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    gap: 6,
+  },
+  previewFallbackTitle: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  previewFallbackText: {
+    fontSize: 11,
+    lineHeight: 16,
+    textAlign: 'center',
+    fontFamily: fontFamilies.bodyRegular,
   },
   messageBlock: {
     paddingHorizontal: 14,
