@@ -39,6 +39,7 @@ import { VoiceTaskCaptureOverlay } from '../components/VoiceTaskCaptureOverlay';
 import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
+import { SchedulingScreen } from './SchedulingScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
@@ -58,19 +59,30 @@ const SURFACE = {
 type MainScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Main'>;
 
 interface NavItem {
+  key: 'tasks' | 'colab' | 'boards' | 'scheduling' | 'cleaning';
   icon: keyof typeof MaterialIcons.glyphMap;
   label: string;
   color?: string;
 }
 
 // Nav items are now built inside the component to access t()
-const BASE_NAV_KEYS: { icon: keyof typeof MaterialIcons.glyphMap; labelKey: string }[] = [
-  { icon: 'checklist', labelKey: 'main.navTasks' },
-  { icon: 'forum', labelKey: 'main.navColab' },
-  { icon: 'people-outline', labelKey: 'main.navBoards' },
+const BASE_NAV_KEYS: Array<{ key: NavItem['key']; icon: keyof typeof MaterialIcons.glyphMap; labelKey: string }> = [
+  { key: 'tasks', icon: 'checklist', labelKey: 'main.navTasks' },
+  { key: 'colab', icon: 'forum', labelKey: 'main.navColab' },
+  { key: 'boards', icon: 'people-outline', labelKey: 'main.navBoards' },
 ];
 
-const CLEANING_NAV_KEY = { icon: 'cleaning-services' as keyof typeof MaterialIcons.glyphMap, labelKey: 'main.navCleaning' };
+const SCHEDULING_NAV_KEY = {
+  key: 'scheduling' as const,
+  icon: 'calendar-month' as keyof typeof MaterialIcons.glyphMap,
+  labelKey: 'main.navScheduling',
+};
+
+const CLEANING_NAV_KEY = {
+  key: 'cleaning' as const,
+  icon: 'cleaning-services' as keyof typeof MaterialIcons.glyphMap,
+  labelKey: 'main.navCleaning',
+};
 
 // ---------------------------------------------------------------------------
 // Stable FlatList helpers (module-level to avoid re-creation)
@@ -205,6 +217,10 @@ export const MainScreen: React.FC = () => {
     api.settings.listNotifications,
     isAuthenticated && tenantId ? { tenantId } : 'skip',
   );
+  const schedulingPlugin = useQuery(
+    api.settings.getPlugin,
+    isAuthenticated && tenantId ? { tenantId, slug: 'scheduling' } : 'skip',
+  );
   const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
 
   const isCleaningEnabled = useMemo(() => {
@@ -212,10 +228,36 @@ export const MainScreen: React.FC = () => {
     return plugin?.is_enabled === true;
   }, [data.plugins]);
 
+  const isSchedulingEnabled = useMemo(() => {
+    const plugin = data.plugins.find((p: any) => p.slug === 'scheduling');
+    if (plugin) {
+      return plugin.is_enabled === true;
+    }
+    return (schedulingPlugin as any)?.isEnabled === true || (schedulingPlugin as any)?.is_enabled === true;
+  }, [data.plugins, schedulingPlugin]);
+
   const navItems = useMemo(() => {
-    const base: NavItem[] = BASE_NAV_KEYS.map((k) => ({ icon: k.icon, label: t(k.labelKey) }));
-    return isCleaningEnabled ? [...base, { icon: CLEANING_NAV_KEY.icon, label: t(CLEANING_NAV_KEY.labelKey) }] : base;
-  }, [isCleaningEnabled, t]);
+    const base: NavItem[] = BASE_NAV_KEYS.map((k) => ({
+      key: k.key,
+      icon: k.icon,
+      label: t(k.labelKey),
+    }));
+    if (isSchedulingEnabled) {
+      base.push({
+        key: SCHEDULING_NAV_KEY.key,
+        icon: SCHEDULING_NAV_KEY.icon,
+        label: t(SCHEDULING_NAV_KEY.labelKey),
+      });
+    }
+    if (isCleaningEnabled) {
+      base.push({
+        key: CLEANING_NAV_KEY.key,
+        icon: CLEANING_NAV_KEY.icon,
+        label: t(CLEANING_NAV_KEY.labelKey),
+      });
+    }
+    return base;
+  }, [isCleaningEnabled, isSchedulingEnabled, t]);
 
   // -- Sync pill: show while syncing / offline, briefly after sync, then hide --
   const wasSyncingRef = useRef(false);
@@ -329,6 +371,7 @@ export const MainScreen: React.FC = () => {
   // Status chip selection is now driven by filters.statuses from context
   // so it stays in sync with the filter sheet
   const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
+  const selectedNavKey = navItems[selectedNav]?.key ?? 'tasks';
 
   // Handle navigation params from notification taps (e.g., switch to Colab tab + open conversation)
   useEffect(() => {
@@ -374,9 +417,9 @@ export const MainScreen: React.FC = () => {
   }, [navItems.length, selectedNav]);
 
   useEffect(() => {
-    if (selectedNav !== 2 || !tenantId || boardUnreadCount === 0) return;
+    if (selectedNavKey !== 'boards' || !tenantId || boardUnreadCount === 0) return;
     markBoardNotificationsRead({ tenantId }).catch(() => {});
-  }, [selectedNav, tenantId, boardUnreadCount, markBoardNotificationsRead]);
+  }, [selectedNavKey, tenantId, boardUnreadCount, markBoardNotificationsRead]);
 
   const surfaces = isDarkMode ? SURFACE.dark : SURFACE.light;
 
@@ -1017,7 +1060,7 @@ export const MainScreen: React.FC = () => {
   };
 
   const renderContent = () => {
-    if (selectedNav === 0) {
+    if (selectedNavKey === 'tasks') {
       // Workspaces list tab
       if (tasksTab === 'workspaces') {
         return renderWorkspacesList();
@@ -1057,7 +1100,7 @@ export const MainScreen: React.FC = () => {
       );
     }
 
-    if (selectedNav === 1) {
+    if (selectedNavKey === 'colab') {
       return (
         <ColabScreen
           onChatViewChange={handleColabChatViewChange}
@@ -1067,12 +1110,16 @@ export const MainScreen: React.FC = () => {
       );
     }
 
-    if (selectedNav === 2) {
+    if (selectedNavKey === 'boards') {
       return renderBoardsList();
     }
 
+    if (selectedNavKey === 'scheduling' && isSchedulingEnabled) {
+      return <SchedulingScreen />;
+    }
+
     // Cleaning tab placeholder
-    if (selectedNav === 3 && isCleaningEnabled) {
+    if (selectedNavKey === 'cleaning' && isCleaningEnabled) {
       return (
         <View style={styles.placeholderContainer}>
           <MaterialIcons name="cleaning-services" size={64} color="#BDBDBD" />
@@ -1103,7 +1150,7 @@ export const MainScreen: React.FC = () => {
         </TouchableOpacity>
 
         {/* Search bar in the center (replaces workspace dropdown) */}
-        {selectedNav === 0 ? (
+        {selectedNavKey === 'tasks' ? (
           <View style={styles.appBarSearchContainer}>
             <View
               style={[
@@ -1195,7 +1242,7 @@ export const MainScreen: React.FC = () => {
       </View>
 
       {/* Everything / Workspaces tabs — Tasks tab only, hidden when inside a specific workspace */}
-      {selectedNav === 0 && tasksTab !== 'workspace' && (
+      {selectedNavKey === 'tasks' && tasksTab !== 'workspace' && (
         <View
           style={[
             styles.tasksTabBar,
@@ -1262,7 +1309,7 @@ export const MainScreen: React.FC = () => {
       )}
 
       {/* Workspace title bar — shown when viewing a specific workspace */}
-      {selectedNav === 0 && tasksTab === 'workspace' && (() => {
+      {selectedNavKey === 'tasks' && tasksTab === 'workspace' && (() => {
         const currentWs = workspaceObjects.find((w) => w.name === selectedWorkspace);
         const wsColor = currentWs?.color || primaryColor;
         const wsIcon = parseWorkspaceIcon(currentWs?.icon);
@@ -1315,7 +1362,7 @@ export const MainScreen: React.FC = () => {
       ) : null}
 
       {/* Active Task Strip — above bottom nav, workspace-filtered */}
-      {!(selectedNav === 1 && colabInChat) && workspaceFilteredWorkingTasks.length > 0 && (
+      {!(selectedNavKey === 'colab' && colabInChat) && workspaceFilteredWorkingTasks.length > 0 && (
         <ActiveTaskStrip
           tasks={workspaceFilteredWorkingTasks}
           doneLabel={finalStatus?.name}
@@ -1328,7 +1375,7 @@ export const MainScreen: React.FC = () => {
       )}
 
       {/* Bottom Navigation — hidden when inside a colab chat */}
-      {!(selectedNav === 1 && colabInChat) && (
+      {!(selectedNavKey === 'colab' && colabInChat) && (
         <View
           style={[
             styles.bottomBar,
@@ -1346,7 +1393,7 @@ export const MainScreen: React.FC = () => {
                 style={styles.navItem}
                 onPress={() => {
                   setSelectedNav(index);
-                  if (index !== 1) setColabInChat(false);
+                  if (item.key !== 'colab') setColabInChat(false);
                 }}
               >
                 <View style={styles.navIconContainer}>
@@ -1355,14 +1402,14 @@ export const MainScreen: React.FC = () => {
                     size={26}
                     color={selectedNav === index ? primaryColor : (item.color || colors.textSecondary)}
                   />
-                  {index === 1 && chatUnreadCount > 0 && (
+                  {item.key === 'colab' && chatUnreadCount > 0 && (
                     <View style={[styles.boardsBadge, { backgroundColor: primaryColor }]}>
                       <Text style={styles.boardsBadgeText}>
                         {chatUnreadCount > 99 ? '99+' : chatUnreadCount}
                       </Text>
                     </View>
                   )}
-                  {index === 2 && boardUnreadCount > 0 && (
+                  {item.key === 'boards' && boardUnreadCount > 0 && (
                     <View style={[styles.boardsBadge, { borderColor: colors.surface }]}>
                       <Text style={styles.boardsBadgeText}>{boardUnreadCount > 99 ? '99+' : boardUnreadCount}</Text>
                     </View>
