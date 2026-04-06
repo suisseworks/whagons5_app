@@ -949,7 +949,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       plugins: rawPlugins ? rawPlugins.map((p: any) => ({
         ...p,
         id: p.pgId ?? p._id,
-        is_enabled: p.isEnabled ?? false,
+        is_enabled: p.isEnabled ?? p.is_enabled ?? false,
       })) : EMPTY,
     };
   }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards, rawPlugins]);

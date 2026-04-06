@@ -5,6 +5,7 @@ import {
   TextInput,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -21,9 +22,9 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
-import { useAuth, TenantChoiceRequired } from '../context/AuthContext';
+import { useAuth } from '../context/AuthContext';
 import Svg, { Path, Rect, G, Defs, ClipPath } from 'react-native-svg';
-import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
@@ -47,7 +48,7 @@ const GoogleLogo = () => (
 
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const { signInWithGoogle, signInWithEmail, token, pendingTenants } = useAuth();
   const { t } = useLanguage();
 
@@ -62,24 +63,26 @@ export const LoginScreen: React.FC = () => {
   const logoFade = useRef(new Animated.Value(0)).current;
   const formSlide = useRef(new Animated.Value(30)).current;
   const formFade = useRef(new Animated.Value(0)).current;
+  const emailInputRef = useRef<TextInput>(null);
+  const passwordInputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     Animated.sequence([
       Animated.timing(logoFade, {
         toValue: 1,
         duration: 600,
-        useNativeDriver: true,
+        useNativeDriver: false,
       }),
       Animated.parallel([
         Animated.timing(formFade, {
           toValue: 1,
           duration: 500,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(formSlide, {
           toValue: 0,
           duration: 500,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]),
     ]).start();
@@ -162,7 +165,7 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
-  const LoginForm = () => (
+  const loginForm = (
     <Animated.View
       style={[
         styles.formContainer,
@@ -171,9 +174,13 @@ export const LoginScreen: React.FC = () => {
       ]}
     >
       {/* Email */}
-      <View style={styles.inputContainer}>
+      <Pressable
+        style={styles.inputContainer}
+        onPress={() => emailInputRef.current?.focus()}
+      >
         <MaterialIcons name="email" size={20} color="#A8A8A0" style={styles.inputIcon} />
         <TextInput
+          ref={emailInputRef}
           style={styles.input}
           placeholder={t('login.emailPlaceholder')}
           placeholderTextColor="#B0B0A8"
@@ -181,20 +188,33 @@ export const LoginScreen: React.FC = () => {
           onChangeText={setEmail}
           keyboardType="email-address"
           autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
+          textContentType="emailAddress"
           editable={!anyLoading}
+          returnKeyType="next"
+          onSubmitEditing={() => passwordInputRef.current?.focus()}
         />
-      </View>
+      </Pressable>
 
       {/* Password */}
-      <View style={styles.inputContainer}>
+      <Pressable
+        style={styles.inputContainer}
+        onPress={() => passwordInputRef.current?.focus()}
+      >
         <MaterialIcons name="lock" size={20} color="#A8A8A0" style={styles.inputIcon} />
         <TextInput
+          ref={passwordInputRef}
           style={[styles.input, { flex: 1 }]}
           placeholder={t('login.passwordPlaceholder')}
           placeholderTextColor="#B0B0A8"
           value={password}
           onChangeText={setPassword}
           secureTextEntry={isObscured}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="current-password"
+          textContentType="password"
           editable={!anyLoading}
           returnKeyType="go"
           onSubmitEditing={handleEmailSignIn}
@@ -206,7 +226,7 @@ export const LoginScreen: React.FC = () => {
             color="#A8A8A0"
           />
         </TouchableOpacity>
-      </View>
+      </Pressable>
 
       {/* Sign In Button */}
       <TouchableOpacity
@@ -259,7 +279,7 @@ export const LoginScreen: React.FC = () => {
               <Text style={styles.brandName}>{t('login.brandName')}</Text>
               <Text style={styles.tagline}>{t('login.tagline')}</Text>
             </View>
-            <LoginForm />
+            {loginForm}
           </View>
         </View>
       </SafeAreaView>
@@ -274,38 +294,37 @@ export const LoginScreen: React.FC = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={styles.flex}
       >
-        {keyboardVisible ? (
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            bounces={false}
-            overScrollMode="never"
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
+        <ScrollView
+          contentContainerStyle={[
+            styles.phoneScrollContent,
+            keyboardVisible && styles.phoneScrollContentKeyboardVisible,
+          ]}
+          bounces={false}
+          overScrollMode="never"
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {keyboardVisible ? (
             <View style={styles.keyboardHeader}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMarkSmall} />
               <Text style={styles.brandNameSmall}>{t('login.brandName')}</Text>
             </View>
-            <LoginForm />
-          </ScrollView>
-        ) : (
-          <View style={styles.flex}>
-            {/* Top: Logo area */}
+          ) : (
             <Animated.View style={[styles.logoSection, { opacity: logoFade }]}>
               <Image source={require('../../assets/whagons-check.png')} style={styles.logoMark} />
               <Text style={styles.brandName}>{t('login.brandName')}</Text>
               <Text style={styles.tagline}>{t('login.tagline')}</Text>
             </Animated.View>
+          )}
 
-            {/* Bottom: Form */}
-            <LoginForm />
+          {loginForm}
 
-            {/* Footer */}
+          {!keyboardVisible && (
             <View style={styles.footer}>
               <Text style={styles.footerText}>{t('login.tagline')}</Text>
             </View>
-          </View>
-        )}
+          )}
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -322,6 +341,14 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingBottom: 24,
+  },
+  phoneScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
+    paddingBottom: 24,
+  },
+  phoneScrollContentKeyboardVisible: {
+    justifyContent: 'flex-start',
   },
 
   // ---- Logo section (phone) ----
