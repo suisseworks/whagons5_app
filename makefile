@@ -1,4 +1,4 @@
-.PHONY: help android-run android-apk-debug android-apk-release android-clean \
+.PHONY: help android-run android-apk-debug android-apk-release android-apk-dev-backend android-clean \
        ios-run ios-prebuild ios-build-sim ios-clean \
        release release-prod version
 
@@ -32,6 +32,7 @@ help:
 	@echo "  make android-run           Run app on Android via Expo (dev)"
 	@echo "  make android-apk-debug     Build debug APK"
 	@echo "  make android-apk-release   Build release APK"
+	@echo "  make android-apk-dev-backend  Build release APK using .env.dev-backend"
 	@echo "  make android-clean         Clean Android build"
 	@echo "  make ios-run               Run app on iOS via Expo (dev)"
 	@echo "  make ios-prebuild          Generate native iOS project"
@@ -49,6 +50,9 @@ android-apk-debug: android-clean
 
 android-apk-release: android-clean
 	cd android && ./gradlew assembleRelease
+
+android-apk-dev-backend:
+	set -a && . ./.env.dev-backend && set +a && cd android && ./gradlew assembleRelease
 
 android-clean:
 	rm -rf android/app/.cxx android/app/build android/build android/.gradle
