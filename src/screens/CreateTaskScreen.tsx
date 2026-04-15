@@ -13,10 +13,11 @@ import {
   KeyboardAvoidingView,
   Platform,
   Animated,
+  Image,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useMutation } from 'convex/react';
@@ -53,21 +54,6 @@ interface AttachmentItem {
   status: 'uploading' | 'done' | 'error';
 }
 
-// Fallback colors only used when backend priority has no color
-const PRIORITY_FALLBACK_COLORS: Record<string, string> = {
-  urgent: '#EF4444',
-  high: '#F59E0B',
-  normal: '#3B82F6',
-  low: '#9CA3AF',
-};
-
-const PRIORITY_MATCHERS: { key: string; labelKey: string; match: (name: string) => boolean }[] = [
-  { key: 'urgent', labelKey: 'createTask.priorityUrgent', match: (n) => n.includes('urgent') || n.includes('urgente') },
-  { key: 'high', labelKey: 'createTask.priorityHigh', match: (n) => n.includes('high') || n.includes('alta') },
-  { key: 'normal', labelKey: 'createTask.priorityNormal', match: (n) => n.includes('medium') || n.includes('normal') || n.includes('media') },
-  { key: 'low', labelKey: 'createTask.priorityLow', match: (n) => n.includes('low') || n.includes('baja') },
-];
-
 const MAX_ATTACHMENTS = 10;
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 
@@ -95,6 +81,7 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
   colors, isDarkMode, primaryColor,
 }) => {
   const [search, setSearch] = useState('');
+  const insets = useSafeAreaInsets();
 
   const filtered = useMemo(() => {
     if (!search.trim()) return items;
@@ -103,69 +90,79 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
   }, [items, search]);
 
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <TouchableOpacity style={modalStyles.overlay} activeOpacity={1} onPress={onClose}>
-        <View
-          style={[
-            modalStyles.sheet,
-            { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7' },
-          ]}
-          onStartShouldSetResponder={() => true}
-        >
-          <View style={modalStyles.handle} />
-          <Text style={[modalStyles.title, { color: colors.text }]}>{title}</Text>
+    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={modalStyles.keyboardAvoidingView}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={insets.bottom}
+      >
+        <TouchableOpacity style={modalStyles.overlay} activeOpacity={1} onPress={onClose}>
+          <View
+            style={[
+              modalStyles.sheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+                paddingBottom: Math.max(20, insets.bottom + 12),
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={modalStyles.handle} />
+            <Text style={[modalStyles.title, { color: colors.text }]}>{title}</Text>
 
-          {searchable && (
-            <TextInput
-              style={[
-                modalStyles.searchInput,
-                { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F7F4EF', color: colors.text, borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7' },
-              ]}
-              placeholder="Search..."
-              placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
-              value={search}
-              onChangeText={setSearch}
-              autoFocus
+            {searchable && (
+              <TextInput
+                style={[
+                  modalStyles.searchInput,
+                  { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F7F4EF', color: colors.text, borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7' },
+                ]}
+                placeholder="Search..."
+                placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'}
+                value={search}
+                onChangeText={setSearch}
+                autoFocus
+              />
+            )}
+
+            <FlatList
+              data={filtered}
+              keyExtractor={(item) => String(item._id)}
+              style={modalStyles.list}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const isSelected = multiSelect
+                  ? selectedIds?.has(item._id)
+                  : item._id === selectedId;
+                return (
+                  <TouchableOpacity
+                    style={[
+                      modalStyles.item,
+                      { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EBE1' },
+                      isSelected && { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F7F4EF' },
+                    ]}
+                    onPress={() => onSelect(item)}
+                    activeOpacity={0.7}
+                  >
+                    {item.color && (
+                      <View style={[modalStyles.dot, { backgroundColor: item.color }]} />
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={[modalStyles.itemText, { color: colors.text }, isSelected && { fontFamily: fontFamilies.bodySemibold }]}> 
+                        {item.name}
+                      </Text>
+                    </View>
+                    {isSelected && <MaterialIcons name="check" size={20} color={primaryColor} />}
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={
+                <Text style={[modalStyles.emptyText, { color: colors.textSecondary }]}>No items found</Text>
+              }
             />
-          )}
-
-          <FlatList
-            data={filtered}
-            keyExtractor={(item) => String(item._id)}
-            style={{ maxHeight: 350 }}
-            keyboardShouldPersistTaps="handled"
-            renderItem={({ item }) => {
-              const isSelected = multiSelect
-                ? selectedIds?.has(item._id)
-                : item._id === selectedId;
-              return (
-                <TouchableOpacity
-                  style={[
-                    modalStyles.item,
-                    { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F0EBE1' },
-                    isSelected && { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F7F4EF' },
-                  ]}
-                  onPress={() => onSelect(item)}
-                  activeOpacity={0.7}
-                >
-                  {item.color && (
-                    <View style={[modalStyles.dot, { backgroundColor: item.color }]} />
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={[modalStyles.itemText, { color: colors.text }, isSelected && { fontFamily: fontFamilies.bodySemibold }]}>
-                      {item.name}
-                    </Text>
-                  </View>
-                  {isSelected && <MaterialIcons name="check" size={20} color={primaryColor} />}
-                </TouchableOpacity>
-              );
-            }}
-            ListEmptyComponent={
-              <Text style={[modalStyles.emptyText, { color: colors.textSecondary }]}>No items found</Text>
-            }
-          />
-        </View>
-      </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -215,8 +212,9 @@ export const CreateTaskScreen: React.FC = () => {
   const [taskName, setTaskName] = useState('');
   const [description, setDescription] = useState('');
   const [showDescription, setShowDescription] = useState(false);
-  const [selectedPriorityKey, setSelectedPriorityKey] = useState('normal');
+  const [selectedPriorityConvexId, setSelectedPriorityConvexId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Template state
@@ -356,6 +354,10 @@ export const CreateTaskScreen: React.FC = () => {
     return new Set(workspaceCategories.map((c: any) => c._id));
   }, [workspaceCategories]);
 
+  const workspaceCategoryPgIds = useMemo(() => {
+    return new Set(workspaceCategories.map((c: any) => String(c.id)));
+  }, [workspaceCategories]);
+
   // Templates for the current workspace's category
   const categoryTemplates = useMemo(() => {
     if (workspaceCategoryIds.size === 0) return [];
@@ -388,26 +390,44 @@ export const CreateTaskScreen: React.FC = () => {
   }, [data.statuses, workspaceCategoryIds]);
 
   // ---------------------------------------------------------------------------
-  // Build priority options from backend data (using real colors)
+  // Build priority options from backend data instead of app-level defaults.
   // ---------------------------------------------------------------------------
   const priorityOptions = useMemo(() => {
-    return PRIORITY_MATCHERS.map((matcher) => {
-      const backendPriority = data.priorities.find((p: any) => matcher.match(p.name.toLowerCase()));
-      return {
-        key: matcher.key,
-        label: backendPriority?.name ?? t(matcher.labelKey),
-        color: backendPriority?.color ?? PRIORITY_FALLBACK_COLORS[matcher.key],
-      };
-    });
-  }, [data.priorities, t]);
+    const scopedPriorities = data.priorities.filter((priority: any) => {
+      if (workspaceCategoryIds.size === 0 && workspaceCategoryPgIds.size === 0) return true;
 
-  const matchedPriorityId = useMemo(() => {
-    const key = selectedPriorityKey.toLowerCase();
-    const matcher = PRIORITY_MATCHERS.find((m) => m.key === key);
-    if (!matcher) return undefined;
-    const match = data.priorities.find((p: any) => matcher.match(p.name.toLowerCase()));
-    return match ? (match as any)._id : undefined;
-  }, [data.priorities, selectedPriorityKey]);
+      const priorityCategoryConvexId = priority.categoryId != null ? String(priority.categoryId) : null;
+      const priorityCategoryPgId = priority.category_id != null ? String(priority.category_id) : null;
+
+      if (!priorityCategoryConvexId && !priorityCategoryPgId) return true;
+
+      return (
+        (priorityCategoryConvexId != null && workspaceCategoryIds.has(priorityCategoryConvexId)) ||
+        (priorityCategoryPgId != null && workspaceCategoryPgIds.has(priorityCategoryPgId))
+      );
+    });
+
+    return (scopedPriorities.length > 0 ? scopedPriorities : data.priorities).map((priority: any) => ({
+      _id: String(priority._id),
+      label: String(priority.name ?? ''),
+      color: priority.color ?? '#9CA3AF',
+    }));
+  }, [data.priorities, workspaceCategoryIds, workspaceCategoryPgIds]);
+
+  useEffect(() => {
+    setSelectedPriorityConvexId((current) => {
+      if (current && priorityOptions.some((option) => option._id === current)) {
+        return current;
+      }
+
+      const preferred = priorityOptions.find((option) => {
+        const normalized = option.label.toLowerCase();
+        return normalized.includes('medium') || normalized.includes('normal') || normalized.includes('media');
+      });
+
+      return preferred?._id ?? priorityOptions[0]?._id ?? null;
+    });
+  }, [priorityOptions]);
 
   const workspaceItems = useMemo(() => {
     return data.workspaces.map((w: any) => ({
@@ -500,7 +520,9 @@ export const CreateTaskScreen: React.FC = () => {
           fileType: item.fileType,
         });
         setAttachments(prev =>
-          prev.map(a => a.id === item.id ? { ...a, storageId: result.storageId, status: 'done' as const } : a)
+          prev.map(a => a.id === item.id
+            ? { ...a, storageId: result.storageId, fileSize: result.fileSize, status: 'done' as const }
+            : a)
         );
       } catch {
         setAttachments(prev =>
@@ -554,7 +576,9 @@ export const CreateTaskScreen: React.FC = () => {
         fileType: item.fileType,
       });
       setAttachments(prev =>
-        prev.map(a => a.id === item.id ? { ...a, storageId: result.storageId, status: 'done' as const } : a)
+        prev.map(a => a.id === item.id
+          ? { ...a, storageId: result.storageId, fileSize: result.fileSize, status: 'done' as const }
+          : a)
       );
     } catch {
       setAttachments(prev =>
@@ -565,6 +589,11 @@ export const CreateTaskScreen: React.FC = () => {
 
   const handleRemoveAttachment = useCallback((id: string) => {
     setAttachments(prev => prev.filter(a => a.id !== id));
+  }, []);
+
+  const handlePreviewAttachment = useCallback((attachment: AttachmentItem) => {
+    if (!attachment.fileType.startsWith('image/') || !attachment.uri) return;
+    setImageViewerUri(attachment.uri);
   }, []);
 
   // ---------------------------------------------------------------------------
@@ -606,7 +635,7 @@ export const CreateTaskScreen: React.FC = () => {
         categoryConvexId: workspaceCategories.length === 1 ? (workspaceCategories[0] as any)._id : currentWorkspace?.categoryId ?? undefined,
         templateConvexId: selectedTemplate?._id,
         statusConvexId: initialStatusConvexId ?? undefined,
-        priorityConvexId: matchedPriorityId,
+        priorityConvexId: selectedPriorityConvexId ?? undefined,
         spotConvexId: selectedSpot?._id,
         userConvexIds: selectedAssignees.length > 0 ? selectedAssignees.map(a => a._id) : undefined,
         attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
@@ -667,7 +696,7 @@ export const CreateTaskScreen: React.FC = () => {
     }
   }, [
     taskName, description, workspaceConvexId, createTask, navigation,
-    initialStatusConvexId, matchedPriorityId, attachments, hasUploadingFiles,
+    initialStatusConvexId, selectedPriorityConvexId, attachments, hasUploadingFiles,
     workspaceCategories, currentWorkspace, capturedLocation,
     hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, t,
     tenantId, createDocumentMutation, createDocumentAssociationMutation,
@@ -817,10 +846,10 @@ export const CreateTaskScreen: React.FC = () => {
           <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.priorityLabel')}</Text>
           <View style={styles.priorityRow}>
             {priorityOptions.map((opt) => {
-              const isActive = selectedPriorityKey === opt.key;
+              const isActive = selectedPriorityConvexId === opt._id;
               return (
                 <TouchableOpacity
-                  key={opt.key}
+                  key={opt._id}
                   style={[
                     styles.priorityPill,
                     {
@@ -828,7 +857,7 @@ export const CreateTaskScreen: React.FC = () => {
                       borderColor: isActive ? opt.color : borderColor,
                     },
                   ]}
-                  onPress={() => setSelectedPriorityKey(opt.key)}
+                  onPress={() => setSelectedPriorityConvexId(opt._id)}
                   activeOpacity={0.7}
                 >
                   <View
@@ -1021,24 +1050,32 @@ export const CreateTaskScreen: React.FC = () => {
                 },
               ]}
             >
-              <MaterialIcons
-                name={getFileIcon(att.fileType) as any}
-                size={20}
-                color={att.status === 'error' ? '#EF4444' : (isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780')}
-              />
-              <View style={styles.attachmentInfo}>
-                <Text
-                  style={[styles.attachmentName, { color: colors.text }]}
-                  numberOfLines={1}
-                  ellipsizeMode="middle"
-                >
-                  {att.fileName}
-                </Text>
-                <Text style={[styles.attachmentSize, { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299' }]}>
-                  {att.fileSize > 0 ? formatFileSize(att.fileSize) : ''}
-                  {att.status === 'error' && ` — ${t('createTask.uploadFailed')}`}
-                </Text>
-              </View>
+              <TouchableOpacity
+                style={styles.attachmentMain}
+                onPress={() => handlePreviewAttachment(att)}
+                disabled={!att.fileType.startsWith('image/') || !att.uri}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons
+                  name={getFileIcon(att.fileType) as any}
+                  size={20}
+                  color={att.status === 'error' ? '#EF4444' : (isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780')}
+                />
+                <View style={styles.attachmentInfo}>
+                  <Text
+                    style={[styles.attachmentName, { color: colors.text }]}
+                    numberOfLines={1}
+                    ellipsizeMode="middle"
+                  >
+                    {att.fileName}
+                  </Text>
+                  <Text style={[styles.attachmentSize, { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299' }]}>
+                    {att.fileSize > 0 ? formatFileSize(att.fileSize) : ''}
+                    {att.status === 'error' && ` - ${t('createTask.uploadFailed')}`}
+                    {att.fileType.startsWith('image/') && att.uri ? ` - ${t('createTask.tapToPreview')}` : ''}
+                  </Text>
+                </View>
+              </TouchableOpacity>
               {att.status === 'uploading' && (
                 <ActivityIndicator size="small" color={primaryColor} style={{ marginRight: 4 }} />
               )}
@@ -1097,6 +1134,26 @@ export const CreateTaskScreen: React.FC = () => {
           </Text>
         </TouchableOpacity>
       </View>
+
+      <Modal
+        visible={!!imageViewerUri}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImageViewerUri(null)}
+      >
+        <View style={styles.imageViewerOverlay}>
+          <TouchableOpacity style={styles.imageViewerClose} onPress={() => setImageViewerUri(null)}>
+            <MaterialIcons name="close" size={28} color="#FFFFFF" />
+          </TouchableOpacity>
+          {imageViewerUri && (
+            <Image
+              source={{ uri: imageViewerUri }}
+              style={styles.imageViewerImage}
+              resizeMode="contain"
+            />
+          )}
+        </View>
+      </Modal>
 
       {/* Workspace Modal */}
       <SelectorModal
@@ -1379,6 +1436,12 @@ const styles = StyleSheet.create({
     marginTop: 8,
     gap: 8,
   },
+  attachmentMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   attachmentInfo: {
     flex: 1,
   },
@@ -1407,15 +1470,37 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodySemibold,
   },
+  imageViewerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 10,
+    padding: 8,
+  },
+  imageViewerImage: {
+    width: '100%',
+    height: '80%',
+  },
 });
 
 const modalStyles = StyleSheet.create({
+  keyboardAvoidingView: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'flex-end',
   },
   sheet: {
+    maxHeight: '78%',
+    flexShrink: 1,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: 1,
@@ -1424,6 +1509,9 @@ const modalStyles = StyleSheet.create({
     paddingBottom: 32,
     paddingHorizontal: 20,
     ...shadows.subtle,
+  },
+  list: {
+    maxHeight: 350,
   },
   handle: {
     width: 36,

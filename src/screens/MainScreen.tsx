@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   Image,
   BackHandler,
+  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 
@@ -1541,117 +1542,125 @@ export const MainScreen: React.FC = () => {
         visible={assigneePickerVisible}
         animationType="slide"
         transparent={true}
+        statusBarTranslucent
         onRequestClose={() => {
           setAssigneePickerVisible(false);
           setAssigneePickerTask(null);
           setAssigneeSearch('');
         }}
       >
-        <TouchableOpacity
-          style={styles.statusPickerOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setAssigneePickerVisible(false);
-            setAssigneePickerTask(null);
-            setAssigneeSearch('');
-          }}
+        <KeyboardAvoidingView
+          style={styles.modalKeyboardAvoidingView}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={insets.bottom}
         >
-          <View
-            style={[
-              styles.statusPickerSheet,
-              {
-                backgroundColor: colors.surface,
-                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-              },
-            ]}
-            onStartShouldSetResponder={() => true}
+          <TouchableOpacity
+            style={styles.statusPickerOverlay}
+            activeOpacity={1}
+            onPress={() => {
+              setAssigneePickerVisible(false);
+              setAssigneePickerTask(null);
+              setAssigneeSearch('');
+            }}
           >
-            <View style={styles.statusPickerHandle} />
-            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              {t('common.assignTo')}
-            </Text>
-            {assigneePickerTask && (
-              <Text
-                style={[styles.statusPickerSubtitle, { color: colors.textSecondary }]}
-                numberOfLines={1}
-              >
-                {assigneePickerTask.title}
-              </Text>
-            )}
             <View
               style={[
-                styles.assigneeSearchContainer,
+                styles.statusPickerSheet,
                 {
-                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+                  backgroundColor: colors.surface,
+                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
+                  paddingBottom: Math.max(20, insets.bottom + 12),
                 },
               ]}
+              onStartShouldSetResponder={() => true}
             >
-              <MaterialIcons
-                name="search"
-                size={20}
-                color={colors.textSecondary}
-                style={{ marginRight: 8 }}
-              />
-              <TextInput
-                style={[styles.assigneeSearchInput, { color: colors.text }]}
-                placeholder={t('common.searchUsers')}
-                placeholderTextColor={colors.textSecondary}
-                value={assigneeSearch}
-                onChangeText={setAssigneeSearch}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {assigneeSearch.length > 0 && (
-                <TouchableOpacity onPress={() => setAssigneeSearch('')}>
-                  <MaterialIcons name="close" size={18} color={colors.textSecondary} />
-                </TouchableOpacity>
+              <View style={styles.statusPickerHandle} />
+              <Text style={[styles.statusPickerTitle, { color: colors.text }]}> 
+                {t('common.assignTo')}
+              </Text>
+              {assigneePickerTask && (
+                <Text
+                  style={[styles.statusPickerSubtitle, { color: colors.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {assigneePickerTask.title}
+                </Text>
               )}
-            </View>
-            <ScrollView style={styles.assigneeScrollList} bounces={false} keyboardShouldPersistTaps="handled">
-              <View style={styles.statusPickerList}>
-                {sortedUsers.map((u) => {
-                  const isAssigned = assigneePickerTask?.assignees.some((a) => a.name === u.name) ?? false;
-                  const isCurrentUser = u.id === (authUser?.id ?? 0);
-                  return (
-                    <TouchableOpacity
-                      key={u.id}
-                      style={[
-                        styles.statusPickerItem,
-                        {
-                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
-                        },
-                        isAssigned && {
-                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                        },
-                      ]}
-                      onPress={() => handleAssigneeSelect({ id: u.id, name: u.name })}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.assigneeAvatar}>
-                        <Text style={styles.assigneeAvatarText}>
-                          {u.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <Text
-                        style={[
-                          styles.statusPickerItemText,
-                          { color: colors.text },
-                          isAssigned && { fontFamily: fontFamilies.bodySemibold },
-                        ]}
-                      >
-                        {u.name}{isCurrentUser ? t('main.userYouSuffix') : ''}
-                      </Text>
-                      {isAssigned && (
-                        <MaterialIcons name="check" size={20} color="#2196F3" />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
+              <View
+                style={[
+                  styles.assigneeSearchContainer,
+                  {
+                    backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                    borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+                  },
+                ]}
+              >
+                <MaterialIcons
+                  name="search"
+                  size={20}
+                  color={colors.textSecondary}
+                  style={{ marginRight: 8 }}
+                />
+                <TextInput
+                  style={[styles.assigneeSearchInput, { color: colors.text }]}
+                  placeholder={t('common.searchUsers')}
+                  placeholderTextColor={colors.textSecondary}
+                  value={assigneeSearch}
+                  onChangeText={setAssigneeSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {assigneeSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setAssigneeSearch('')}>
+                    <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
               </View>
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
+              <ScrollView style={styles.assigneeScrollList} bounces={false} keyboardShouldPersistTaps="handled">
+                <View style={styles.statusPickerList}>
+                  {sortedUsers.map((u) => {
+                    const isAssigned = assigneePickerTask?.assignees.some((a) => a.name === u.name) ?? false;
+                    const isCurrentUser = u.id === (authUser?.id ?? 0);
+                    return (
+                      <TouchableOpacity
+                        key={u.id}
+                        style={[
+                          styles.statusPickerItem,
+                          {
+                            borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+                          },
+                          isAssigned && {
+                            backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                          },
+                        ]}
+                        onPress={() => handleAssigneeSelect({ id: u.id, name: u.name })}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.assigneeAvatar}>
+                          <Text style={styles.assigneeAvatarText}>
+                            {u.name.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text
+                          style={[
+                            styles.statusPickerItemText,
+                            { color: colors.text },
+                            isAssigned && { fontFamily: fontFamilies.bodySemibold },
+                          ]}
+                        >
+                          {u.name}{isCurrentUser ? t('main.userYouSuffix') : ''}
+                        </Text>
+                        {isAssigned && (
+                          <MaterialIcons name="check" size={20} color="#2196F3" />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -2142,12 +2151,17 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: fontFamilies.bodyBold,
   },
+  modalKeyboardAvoidingView: {
+    flex: 1,
+  },
   statusPickerOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
     justifyContent: 'flex-end' as const,
   },
   statusPickerSheet: {
+    maxHeight: '78%',
+    flexShrink: 1,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: 0.5,

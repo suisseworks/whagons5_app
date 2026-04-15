@@ -25,7 +25,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import RenderHtml from 'react-native-render-html';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { FaIcon } from '../components/FaIcon';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -371,9 +371,20 @@ export const TaskDetailScreen: React.FC = () => {
     };
   }, [route.params.task]);
   const { colors, primaryColor, isDarkMode } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t } = useLanguage();
   const toastRef = useRef<ToastRef>(null);
-  const { getAllowedStatuses, changeTaskStatus, changeTaskPriority, assignTaskToUser, getFormSchema, getTaskFormSubmission, getFormVersionId, tagInfoMap } = useTasks();
+  const {
+    getAllowedStatuses,
+    changeTaskStatus,
+    changeTaskPriority,
+    assignTaskToUser,
+    getFormSchema,
+    getTaskFormSubmission,
+    getFormVersionId,
+    tagInfoMap,
+    unfilteredTasks,
+  } = useTasks();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
@@ -453,6 +464,14 @@ export const TaskDetailScreen: React.FC = () => {
     });
   }, [data.users, authUser, assigneeSearch]);
 
+  const displayAssignees = useMemo(() => {
+    const liveTask = unfilteredTasks.find((candidate) => String(candidate.id) === String(task.id))
+      ?? data.tasks.find((candidate) => String(candidate.id) === String(task.id))
+      ?? task;
+
+    return Array.isArray(liveTask.assignees) ? liveTask.assignees : [];
+  }, [unfilteredTasks, data.tasks, task]);
+
   const currentTask = useMemo(
     () => ({ ...task, status: currentStatus, statusColor: currentStatusColor, statusId: currentStatusId }),
     [task, currentStatus, currentStatusColor, currentStatusId],
@@ -485,6 +504,8 @@ export const TaskDetailScreen: React.FC = () => {
     tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
   );
   const createNoteMutation = useMutation(api.taskResources.createNote);
+  const updateNoteMutation = useMutation(api.taskResources.updateNote);
+  const removeNoteMutation = useMutation(api.taskResources.removeNote);
 
   const notes: TaskNoteResponse[] = useMemo(() => {
     if (!rawNotes) return [];
@@ -505,7 +526,12 @@ export const TaskDetailScreen: React.FC = () => {
     [taskDocumentAssociations]
   );
   const [sendingComment, setSendingComment] = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+  const [commentActionId, setCommentActionId] = useState<string | null>(null);
+  const [commentActionNote, setCommentActionNote] = useState<TaskNoteResponse | null>(null);
   const commentsScrollRef = useRef<ScrollView>(null);
+  const commentEditInputRef = useRef<TextInput>(null);
 
   const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
@@ -525,6 +551,21 @@ export const TaskDetailScreen: React.FC = () => {
   const taskViews = viewsQueryArgs === 'skip' ? [] : (taskViewsRaw ?? []);
 
   const currentUserId = authUser?.id != null ? Number(authUser.id) : null;
+  const currentUserConvexId = useMemo(() => {
+    const authId = authUser?.id;
+    const authConvexId = (authUser as any)?._id;
+    const matchedUser = data.users.find((user: any) => {
+      if (authId != null && (String(user.id) === String(authId) || String(user.pgId) === String(authId))) {
+        return true;
+      }
+      if (authConvexId != null && String(user._id) === String(authConvexId)) {
+        return true;
+      }
+      return false;
+    });
+
+    return matchedUser?._id ? String(matchedUser._id) : (authConvexId ? String(authConvexId) : null);
+  }, [authUser, data.users]);
 
   type TaskViewer = {
     id: number;
@@ -556,6 +597,21 @@ export const TaskDetailScreen: React.FC = () => {
       });
   }, [taskViews, userMap, currentUserId, data.users, authUser]);
 
+  const canManageNote = useCallback((note: TaskNoteResponse) => {
+    const noteUserId = note.userId ?? note.user_id;
+    if (noteUserId == null) return false;
+
+    return [authUser?.id, (authUser as any)?._id, currentUserConvexId].some(
+      (candidate) => candidate != null && String(candidate) === String(noteUserId),
+    );
+  }, [authUser, currentUserConvexId]);
+
+  useEffect(() => {
+    if (!editingCommentId) return;
+    const timer = setTimeout(() => commentEditInputRef.current?.focus(), 50);
+    return () => clearTimeout(timer);
+  }, [editingCommentId]);
+
   const seenTaskIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (!tenantId || !Number.isFinite(taskPgId) || taskPgId <= 0) return;
@@ -585,7 +641,7 @@ export const TaskDetailScreen: React.FC = () => {
 
   const handleAssigneeSelect = (user: { id: number; name: string }) => {
     if (task.id) {
-      if (task.assignees.some((a) => a.name === user.name)) {
+      if (displayAssignees.some((a) => a.name === user.name)) {
         // Already assigned — just close
       } else {
         assignTaskToUser(task.id, user.id, user.name);
@@ -635,6 +691,67 @@ export const TaskDetailScreen: React.FC = () => {
       setPendingAttachments(prev => [...prev, ...attachments]);
     }
   };
+
+  const handleStartEditComment = useCallback((note: TaskNoteResponse) => {
+    const noteId = String(note._id || note.id || '');
+    setCommentActionNote(null);
+    setEditingCommentId(noteId || null);
+    setEditingCommentText(note.note || '');
+  }, []);
+
+  const handleCancelEditComment = useCallback(() => {
+    setEditingCommentId(null);
+    setEditingCommentText('');
+  }, []);
+
+  const handleSaveEditComment = useCallback(async () => {
+    if (!tenantId || !editingCommentId) return;
+
+    setCommentActionId(editingCommentId);
+    try {
+      await updateNoteMutation({
+        tenantId,
+        id: editingCommentId as any,
+        note: editingCommentText.trim(),
+      });
+      setEditingCommentId(null);
+      setEditingCommentText('');
+    } catch (err: any) {
+      toastRef.current?.show({
+        type: 'error',
+        title: t('common.error'),
+        body: err?.message || 'Failed to update comment',
+      });
+    } finally {
+      setCommentActionId(null);
+    }
+  }, [editingCommentId, editingCommentText, tenantId, updateNoteMutation, t]);
+
+  const handleDeleteComment = useCallback(async (noteId: string) => {
+    if (!tenantId) return;
+
+    setCommentActionNote(null);
+    setCommentActionId(noteId);
+    try {
+      await removeNoteMutation({ tenantId, id: noteId as any });
+      if (editingCommentId === noteId) {
+        setEditingCommentId(null);
+        setEditingCommentText('');
+      }
+    } catch (err: any) {
+      toastRef.current?.show({
+        type: 'error',
+        title: t('common.error'),
+        body: err?.message || 'Failed to delete comment',
+      });
+    } finally {
+      setCommentActionId(null);
+    }
+  }, [editingCommentId, removeNoteMutation, tenantId, t]);
+
+  const handleCommentActions = useCallback((note: TaskNoteResponse) => {
+    setCommentActionNote(note);
+  }, []);
 
   // Tab swipe – smooth spring animation (matches ColabScreen)
   const tabs: TabKey[] = hasForm ? ['details', 'form', 'comments'] : ['details', 'comments'];
@@ -973,10 +1090,10 @@ export const TaskDetailScreen: React.FC = () => {
           <MaterialIcons name="person-add" size={20} color={primaryColor} />
         </TouchableOpacity>
       </View>
-      {task.assignees.length > 0 ? (
+      {displayAssignees.length > 0 ? (
         <View style={styles.assigneeList}>
-          {task.assignees.map((assignee, index) => (
-            <View key={index} style={[styles.assigneeRow, { backgroundColor: secondarySurface }]}>
+          {displayAssignees.map((assignee, index) => (
+            <View key={index} style={[styles.assigneeRow, { backgroundColor: secondarySurface }]}> 
               {assignee.picture ? (
                 <Image source={{ uri: assignee.picture }} style={styles.assigneeAvatarImg} />
               ) : (
@@ -1193,35 +1310,54 @@ export const TaskDetailScreen: React.FC = () => {
           ref={commentsScrollRef}
           style={styles.flex}
           contentContainerStyle={styles.commentsList}
-          onContentSizeChange={() =>
-            commentsScrollRef.current?.scrollToEnd({ animated: false })
-          }
+          onContentSizeChange={() => {
+            if (!editingCommentId) {
+              commentsScrollRef.current?.scrollToEnd({ animated: false });
+            }
+          }}
         >
           {notes.map((note) => {
             const noteUid = note.user_id;
-            const isMe = authUser?.id === noteUid
-              || String(authUser?.id) === String(noteUid)
-              || (authUser as any)?._id === noteUid;
+            const noteId = String(note._id || note.id || '');
+            const isMe = canManageNote(note);
+            const isEditingThisNote = editingCommentId === noteId;
+            const isCommentBusy = commentActionId === noteId;
             const authorName = isMe
               ? 'You'
               : (noteUid != null
-                ? userMap.get(noteUid) || userMap.get(String(noteUid)) || userMap.get(Number(noteUid)) || `User #${noteUid}`
-                : 'Unknown user');
+                  ? userMap.get(noteUid) || userMap.get(String(noteUid)) || userMap.get(Number(noteUid)) || `User #${noteUid}`
+                  : 'Unknown user');
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
-                <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}>
+                <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}> 
                   <Text style={styles.commentAvatarText}>
                     {getInitials(authorName)}
                   </Text>
                 </View>
                 <View style={styles.commentContent}>
                   <View style={styles.commentHeader}>
-                    <Text style={[styles.commentAuthor, { color: colors.text }]}>
-                      {authorName}
-                    </Text>
-                    <Text style={[styles.commentTime, { color: colors.textSecondary }]}>
-                      {timeAgo(note.created_at!, t)}
-                    </Text>
+                    <View style={styles.commentHeaderMeta}>
+                      <Text style={[styles.commentAuthor, { color: colors.text }]}> 
+                        {authorName}
+                      </Text>
+                      <Text style={[styles.commentTime, { color: colors.textSecondary }]}> 
+                        {timeAgo(note.created_at!, t)}
+                      </Text>
+                    </View>
+                    {isMe && (
+                      <TouchableOpacity
+                        style={styles.commentMenuButton}
+                        onPress={() => handleCommentActions(note)}
+                        disabled={isCommentBusy}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        {isCommentBusy ? (
+                          <ActivityIndicator size="small" color={colors.textSecondary} />
+                        ) : (
+                          <MaterialIcons name="more-vert" size={18} color={colors.textSecondary} />
+                        )}
+                      </TouchableOpacity>
+                    )}
                   </View>
                   <View
                     style={[
@@ -1233,13 +1369,51 @@ export const TaskDetailScreen: React.FC = () => {
                       },
                     ]}
                   >
-                    {!!note.note && (
-                      <Text style={[styles.commentText, { color: colors.text }]}>
+                    {isEditingThisNote ? (
+                      <View style={styles.commentEditContainer}>
+                        <TextInput
+                          ref={commentEditInputRef}
+                          style={[
+                            styles.commentEditInput,
+                            {
+                              backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                              color: colors.text,
+                              borderColor: isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)',
+                            },
+                          ]}
+                          value={editingCommentText}
+                          onChangeText={setEditingCommentText}
+                          multiline
+                          editable={!isCommentBusy}
+                          onSubmitEditing={handleSaveEditComment}
+                        />
+                        <View style={styles.commentEditActions}>
+                          <TouchableOpacity
+                            style={[styles.commentEditActionButton, { backgroundColor: primaryColor, opacity: isCommentBusy ? 0.6 : 1 }]}
+                            onPress={handleSaveEditComment}
+                            disabled={isCommentBusy}
+                          >
+                            <MaterialIcons name="check" size={18} color="#FFFFFF" />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[
+                              styles.commentEditActionButton,
+                              { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)' },
+                            ]}
+                            onPress={handleCancelEditComment}
+                            disabled={isCommentBusy}
+                          >
+                            <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : !!note.note && (
+                      <Text style={[styles.commentText, { color: colors.text }]}> 
                         {note.note}
                       </Text>
                     )}
                     {note.attachments && note.attachments.length > 0 && (
-                      <View>
+                      <View style={note.note || isEditingThisNote ? styles.commentAttachments : undefined}>
                         {note.attachments.map((att, idx) => (
                           <NoteAttachmentView
                             key={att.storageId || idx}
@@ -1311,7 +1485,18 @@ export const TaskDetailScreen: React.FC = () => {
           )}
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.sendButton, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', opacity: sendingComment ? 0.6 : 1 }]}
+          style={[
+            styles.sendButton,
+            {
+              backgroundColor:
+                commentText.trim() || pendingAttachments.length > 0
+                  ? primaryColor
+                  : isDarkMode
+                    ? 'rgba(255,255,255,0.10)'
+                    : 'rgba(0,0,0,0.08)',
+              opacity: sendingComment ? 0.6 : 1,
+            },
+          ]}
           onPress={handleAddComment}
           disabled={sendingComment || (!commentText.trim() && pendingAttachments.length === 0)}
         >
@@ -1549,121 +1734,129 @@ export const TaskDetailScreen: React.FC = () => {
         visible={assigneePickerVisible}
         animationType="slide"
         transparent={true}
+        statusBarTranslucent
         onRequestClose={() => {
           setAssigneePickerVisible(false);
           setAssigneeSearch('');
         }}
       >
-        <TouchableOpacity
-          style={styles.statusPickerOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setAssigneePickerVisible(false);
-            setAssigneeSearch('');
-          }}
+        <KeyboardAvoidingView
+          style={styles.modalKeyboardAvoidingView}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={insets.bottom}
         >
-          <View
-            style={[
-              styles.statusPickerSheet,
-              {
-                backgroundColor: colors.surface,
-                borderColor: cardBorder,
-              },
-            ]}
-            onStartShouldSetResponder={() => true}
+          <TouchableOpacity
+            style={styles.statusPickerOverlay}
+            activeOpacity={1}
+            onPress={() => {
+              setAssigneePickerVisible(false);
+              setAssigneeSearch('');
+            }}
           >
-            <View style={styles.statusPickerHandle} />
-            <Text style={[styles.statusPickerTitle, { color: colors.text }]}>
-              {t('common.assignTo')}
-            </Text>
             <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
-                borderWidth: 1,
-                borderRadius: radius.md,
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                marginBottom: 12,
-              }}
+              style={[
+                styles.statusPickerSheet,
+                {
+                  backgroundColor: colors.surface,
+                  borderColor: cardBorder,
+                  paddingBottom: Math.max(20, insets.bottom + 12),
+                },
+              ]}
+              onStartShouldSetResponder={() => true}
             >
-              <MaterialIcons
-                name="search"
-                size={20}
-                color={colors.textSecondary}
-                style={{ marginRight: 8 }}
-              />
-              <TextInput
-                style={{ flex: 1, fontSize: fontSizes.md, fontFamily: fontFamilies.bodyRegular, color: colors.text, padding: 0 }}
-                placeholder={t('common.searchUsers')}
-                placeholderTextColor={colors.textSecondary}
-                value={assigneeSearch}
-                onChangeText={setAssigneeSearch}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {assigneeSearch.length > 0 && (
-                <TouchableOpacity onPress={() => setAssigneeSearch('')}>
-                  <MaterialIcons name="close" size={18} color={colors.textSecondary} />
-                </TouchableOpacity>
-              )}
-            </View>
-            <ScrollView style={{ maxHeight: 300 }} bounces={false} keyboardShouldPersistTaps="handled">
-              <View style={styles.statusPickerList}>
-                {sortedUsers.map((u) => {
-                  const isAssigned = task.assignees.some((a) => a.name === u.name);
-                  const isCurrentUser = u.id === (authUser?.id ?? 0);
-                  return (
-                    <TouchableOpacity
-                      key={String(u.id)}
-                      style={[
-                        styles.statusPickerItem,
-                        {
-                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
-                        },
-                        isAssigned && {
-                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                        },
-                      ]}
-                      onPress={() => handleAssigneeSelect({ id: u.id as number, name: u.name })}
-                      activeOpacity={0.7}
-                    >
-                      <View
-                        style={{
-                          width: 28,
-                          height: 28,
-                          borderRadius: 14,
-                          backgroundColor: primaryColor,
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          marginRight: 12,
-                        }}
-                      >
-                        <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
-                          {u.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
-                      <Text
-                        style={[
-                          styles.statusPickerItemText,
-                          { color: colors.text },
-                          isAssigned && { fontFamily: fontFamilies.bodySemibold },
-                        ]}
-                      >
-                        {u.name}{isCurrentUser ? ` (${t('common.you')})` : ''}
-                      </Text>
-                      {isAssigned && (
-                        <MaterialIcons name="check" size={20} color={primaryColor} />
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
+              <View style={styles.statusPickerHandle} />
+              <Text style={[styles.statusPickerTitle, { color: colors.text }]}> 
+                {t('common.assignTo')}
+              </Text>
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+                  borderWidth: 1,
+                  borderRadius: radius.md,
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  marginBottom: 12,
+                }}
+              >
+                <MaterialIcons
+                  name="search"
+                  size={20}
+                  color={colors.textSecondary}
+                  style={{ marginRight: 8 }}
+                />
+                <TextInput
+                  style={{ flex: 1, fontSize: fontSizes.md, fontFamily: fontFamilies.bodyRegular, color: colors.text, padding: 0 }}
+                  placeholder={t('common.searchUsers')}
+                  placeholderTextColor={colors.textSecondary}
+                  value={assigneeSearch}
+                  onChangeText={setAssigneeSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {assigneeSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setAssigneeSearch('')}>
+                    <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
               </View>
-            </ScrollView>
-          </View>
-        </TouchableOpacity>
+              <ScrollView style={{ maxHeight: 300 }} bounces={false} keyboardShouldPersistTaps="handled">
+                <View style={styles.statusPickerList}>
+                  {sortedUsers.map((u) => {
+                    const isAssigned = displayAssignees.some((a) => a.name === u.name);
+                    const isCurrentUser = u.id === (authUser?.id ?? 0);
+                    return (
+                      <TouchableOpacity
+                        key={String(u.id)}
+                        style={[
+                          styles.statusPickerItem,
+                          {
+                            borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+                          },
+                          isAssigned && {
+                            backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                          },
+                        ]}
+                        onPress={() => handleAssigneeSelect({ id: u.id as number, name: u.name })}
+                        activeOpacity={0.7}
+                      >
+                        <View
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 14,
+                            backgroundColor: primaryColor,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            marginRight: 12,
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
+                            {u.name.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text
+                          style={[
+                            styles.statusPickerItemText,
+                            { color: colors.text },
+                            isAssigned && { fontFamily: fontFamilies.bodySemibold },
+                          ]}
+                        >
+                          {u.name}{isCurrentUser ? ` (${t('common.you')})` : ''}
+                        </Text>
+                        {isAssigned && (
+                          <MaterialIcons name="check" size={20} color={primaryColor} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Full-screen image viewer */}
@@ -1697,6 +1890,89 @@ export const TaskDetailScreen: React.FC = () => {
             <MaterialIcons name="download" size={24} color="#fff" />
           </TouchableOpacity>
         </View>
+      </Modal>
+
+      <Modal
+        visible={!!commentActionNote}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!commentActionId) setCommentActionNote(null);
+        }}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            if (!commentActionId) setCommentActionNote(null);
+          }}
+        >
+          <View
+            style={[
+              styles.commentActionSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: cardBorder,
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.commentActionTitle, { color: colors.text }]}>
+              {t('taskDetail.commentActionsTitle')}
+            </Text>
+            <Text style={[styles.commentActionSubtitle, { color: colors.textSecondary }]} numberOfLines={2}>
+              {commentActionNote?.note?.trim() || t('taskDetail.commentActionsSubtitle')}
+            </Text>
+
+            {!!commentActionNote?.note && (
+              <TouchableOpacity
+                style={[
+                  styles.commentActionRow,
+                  { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+                ]}
+                onPress={() => commentActionNote && handleStartEditComment(commentActionNote)}
+                disabled={!!commentActionId}
+              >
+                <View style={[styles.commentActionIcon, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F5F5F7' }]}>
+                  <MaterialIcons name="edit" size={18} color={colors.text} />
+                </View>
+                <Text style={[styles.commentActionText, { color: colors.text }]}>{t('common.edit')}</Text>
+              </TouchableOpacity>
+            )}
+
+            <TouchableOpacity
+              style={[
+                styles.commentActionRow,
+                { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+              ]}
+              onPress={() => commentActionNote && handleDeleteComment(String(commentActionNote._id || commentActionNote.id || ''))}
+              disabled={!!commentActionId}
+            >
+              <View style={[styles.commentActionIcon, { backgroundColor: 'rgba(239,68,68,0.12)' }]}>
+                {commentActionId ? (
+                  <ActivityIndicator size="small" color="#DC2626" />
+                ) : (
+                  <MaterialIcons name="delete-outline" size={18} color="#DC2626" />
+                )}
+              </View>
+              <Text style={[styles.commentActionText, { color: '#DC2626' }]}>{t('common.delete')}</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.commentActionCancel,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
+                },
+              ]}
+              onPress={() => setCommentActionNote(null)}
+              disabled={!!commentActionId}
+            >
+              <Text style={[styles.commentActionCancelText, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
       </Modal>
 
       <Toast ref={toastRef} />
@@ -2094,6 +2370,13 @@ const styles = StyleSheet.create({
   commentHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  commentHeaderMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    minWidth: 0,
   },
   commentAuthor: {
     fontSize: fontSizes.sm,
@@ -2109,9 +2392,97 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     padding: 12,
   },
+  commentMenuButton: {
+    marginLeft: 8,
+    padding: 2,
+    minWidth: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   commentText: {
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyRegular,
+  },
+  commentAttachments: {
+    marginTop: 8,
+  },
+  commentEditContainer: {
+    gap: 8,
+  },
+  commentEditInput: {
+    minHeight: 44,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    textAlignVertical: 'top',
+  },
+  commentEditActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  commentEditActionButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentActionSheet: {
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 0.5,
+    borderBottomWidth: 0,
+    paddingTop: 12,
+    paddingBottom: 28,
+    paddingHorizontal: 20,
+    ...shadows.subtle,
+  },
+  commentActionTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+  },
+  commentActionSubtitle: {
+    marginTop: 6,
+    marginBottom: 18,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+    lineHeight: 20,
+  },
+  commentActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderRadius: radius.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 10,
+  },
+  commentActionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  commentActionText: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  commentActionCancel: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    paddingVertical: 14,
+    marginTop: 6,
+  },
+  commentActionCancelText: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
   },
   commentInputContainer: {
     flexDirection: 'row',
@@ -2159,12 +2530,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  modalKeyboardAvoidingView: {
+    flex: 1,
+  },
   statusPickerOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
     justifyContent: 'flex-end' as const,
   },
   statusPickerSheet: {
+    maxHeight: '78%',
+    flexShrink: 1,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderWidth: 0.5,

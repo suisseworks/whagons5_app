@@ -55,6 +55,7 @@ import * as DB from '../store/database';
 import { useCall } from '../context/CallContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { getInitials } from '../utils/helpers';
+import { Toast, ToastRef } from '../components/Toast';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -430,7 +431,6 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const cvxSendMessage = useMutation(api.chat.sendMessage);
   const cvxSendWorkspaceChat = useMutation(api.chat.sendWorkspaceChat);
   const cvxCreateConversation = useMutation(api.chat.createConversation);
-  const cvxAddParticipant = useMutation(api.chat.addParticipant);
   const cvxUpdateMessage = useMutation(api.chat.updateMessage);
   const cvxDeleteMessage = useMutation(api.chat.deleteMessage);
   const cvxUpdateWsMessage = useMutation(api.chat.updateWorkspaceChatMessage);
@@ -439,6 +439,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const cvxRemoveReaction = useMutation(api.chat.removeReaction);
   const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
   const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
+  const toastRef = useRef<ToastRef>(null);
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
@@ -532,7 +533,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const [showNewChatModal, setShowNewChatModal] = useState(false);
   const [newChatMode, setNewChatMode] = useState<'dm' | 'group'>('dm');
   const [newChatSearch, setNewChatSearch] = useState('');
-  const [selectedGroupUsers, setSelectedGroupUsers] = useState<number[]>([]);
+  const [selectedGroupUsers, setSelectedGroupUsers] = useState<string[]>([]);
   const [groupName, setGroupName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
 
@@ -1001,23 +1002,26 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   // ---------------------------------------------------------------------------
 
   const handleStartDm = useCallback(
-    async (targetUserId: number) => {
+    async (targetUserId: string) => {
       if (!currentUserId) return;
       setIsCreating(true);
+      setShowNewChatModal(false);
+      setNewChatSearch('');
       try {
         if (!tenantId) throw new Error('Not authenticated');
         // Find Convex _id for target user
-        const targetUser = data.users.find((u) => String(u.id) === String(targetUserId));
+        const targetUser = data.users.find((u) => String(u.id) === targetUserId);
         const targetConvexUserId = (targetUser as any)?._id;
-        if (!targetConvexUserId) throw new Error('User not found');
+        if (!targetConvexUserId) throw new Error('This user is not available for chat yet');
 
-        const convId = await cvxCreateConversation({ tenantId, type: 'dm' });
-        // Add both participants
-        const myConvexUser = data.users.find((u) => String(u.id) === String(currentUserId));
-        if (myConvexUser && (myConvexUser as any)._id) {
-          await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: (myConvexUser as any)._id as any });
-        }
-        await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: targetConvexUserId as any });
+        const result = await cvxCreateConversation({
+          tenantId,
+          type: 'dm',
+          uuid: generateUUID(),
+          participantUserIds: [targetConvexUserId as any],
+        });
+        const convId = result?.conversationId;
+        if (!convId) throw new Error('Failed to create conversation');
 
         // Convex queries will reactively update — just open the conversation
         // Use a short delay to let the reactive query pick up the new data
@@ -1027,18 +1031,24 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         }, 500);
         setShowNewChatModal(false);
         setNewChatSearch('');
-      } catch {
-        Alert.alert('Error', t('colab.failedToCreateConversation'));
+      } catch (err: any) {
+        toastRef.current?.show({
+          type: 'error',
+          title: t('common.error'),
+          body: err?.message || t('colab.failedToCreateConversation'),
+        });
       } finally {
         setIsCreating(false);
       }
     },
-    [currentUserId, openConversation],
+    [currentUserId, tenantId, data.users, data.conversations, openConversation, cvxCreateConversation, t],
   );
 
   const handleCreateGroup = useCallback(async () => {
     if (!currentUserId || selectedGroupUsers.length < 1) return;
     setIsCreating(true);
+    setShowNewChatModal(false);
+    setNewChatSearch('');
 
     const defaultName = selectedGroupUsers
       .map((id) => {
@@ -1049,16 +1059,24 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
     try {
       if (!tenantId) throw new Error('Not authenticated');
-      const convId = await cvxCreateConversation({ tenantId, type: 'group', name: groupName.trim() || defaultName });
-      // Add all participants (including self)
-      const allUserIds = [currentUserId, ...selectedGroupUsers];
-      for (const uid of allUserIds) {
-        const u = data.users.find((usr) => String(usr.id) === String(uid));
-        const convexUid = (u as any)?._id;
-        if (convexUid) {
-          await cvxAddParticipant({ tenantId, conversationId: convId as any, userId: convexUid as any });
-        }
+      const participantUserIds = selectedGroupUsers
+        .map((uid) => {
+          const u = data.users.find((usr) => String(usr.id) === uid);
+          return (u as any)?._id as any;
+        })
+        .filter(Boolean);
+      if (participantUserIds.length !== selectedGroupUsers.length) {
+        throw new Error('One or more selected users are not available for group chat yet');
       }
+      const result = await cvxCreateConversation({
+        tenantId,
+        type: 'group',
+        name: groupName.trim() || defaultName,
+        uuid: generateUUID(),
+        participantUserIds,
+      });
+      const convId = result?.conversationId;
+      if (!convId) throw new Error('Failed to create group');
       setTimeout(() => {
         const newConv = data.conversations.find((c) => (c as any)._id === convId);
         if (newConv) openConversation(newConv.id);
@@ -1067,14 +1085,18 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       setGroupName('');
       setSelectedGroupUsers([]);
       setNewChatSearch('');
-    } catch {
-      Alert.alert('Error', t('colab.failedToCreateGroup'));
+    } catch (err: any) {
+      toastRef.current?.show({
+        type: 'error',
+        title: t('common.error'),
+        body: err?.message || t('colab.failedToCreateGroup'),
+      });
     } finally {
       setIsCreating(false);
     }
-  }, [currentUserId, selectedGroupUsers, groupName, getUser, openConversation]);
+  }, [currentUserId, selectedGroupUsers, groupName, getUser, openConversation, tenantId, data.users, data.conversations, cvxCreateConversation, t]);
 
-  const toggleGroupUser = useCallback((userId: number) => {
+  const toggleGroupUser = useCallback((userId: string) => {
     setSelectedGroupUsers((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
     );
@@ -1083,6 +1105,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const availableUsers = useMemo(() => {
     const q = newChatSearch.toLowerCase();
     return data.users
+      .filter((u) => Boolean((u as any)._id))
       .filter((u) => String(u.id) !== String(currentUserId))
       .filter((u) => {
         if (!q) return true;
@@ -2209,7 +2232,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
             <View style={{ marginTop: 12 }}>
               {availableUsers.map((u) => {
-                const userId = Number(u.id);
+                const userId = String(u.id);
                 const isSelected = selectedGroupUsers.includes(userId);
                 return (
                   <TouchableOpacity
@@ -2323,6 +2346,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         {renderConversationChatView()}
         {renderNewChatModal()}
         {imageViewerModal}
+        <Toast ref={toastRef} />
       </View>
     );
   }
@@ -2332,6 +2356,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       <View style={{ flex: 1 }}>
         {renderSpaceChatView()}
         {imageViewerModal}
+        <Toast ref={toastRef} />
       </View>
     );
   }
@@ -2353,6 +2378,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       </Animated.View>
       {renderNewChatModal()}
       {imageViewerModal}
+      <Toast ref={toastRef} />
     </View>
   );
 };

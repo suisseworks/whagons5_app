@@ -74,11 +74,12 @@ export function useConvexUpload() {
       throw new Error(`Upload failed (${uploadResp.status}): ${errText}`);
     }
     const { storageId } = await uploadResp.json();
+    const resolvedFileSize = blob.size > 0 ? blob.size : file.fileSize;
 
     return {
       storageId,
       fileName: file.fileName,
-      fileSize: file.fileSize || blob.size,
+      fileSize: resolvedFileSize,
       fileType: file.fileType,
     };
   }, [tenantId, generateUploadUrl]);
