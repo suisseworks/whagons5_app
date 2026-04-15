@@ -80,6 +80,42 @@ function formatDate(dateStr?: string | null): string {
   }
 }
 
+function normalizeStatusAction(action?: string | null): string | null {
+  if (typeof action !== 'string') return null;
+  const normalized = action.trim().toUpperCase();
+  return normalized || null;
+}
+
+function readStringValue(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function resolveTaskStatusMeta(
+  task: TaskItem,
+  override: Partial<TaskItem> | undefined,
+  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean; icon?: string | null; action?: string | null }>,
+): { action: string | null; final: boolean; initial: boolean } {
+  const statusId = override?.statusId ?? task.statusId;
+  const statusInfo = statusId != null ? statusMap.get(statusId) : undefined;
+
+  return {
+    action: normalizeStatusAction(override?.statusAction ?? statusInfo?.action ?? task.statusAction ?? null),
+    final: statusInfo?.final === true,
+    initial: statusInfo?.initial === true,
+  };
+}
+
+function isTaskEligibleForWorkingList(
+  task: TaskItem,
+  override: Partial<TaskItem> | undefined,
+  myTaskIds: Set<string>,
+  statusMap: Map<AnyId, { name: string; color?: string | null; final?: boolean; initial?: boolean; icon?: string | null; action?: string | null }>,
+): boolean {
+  if (!task.id || !myTaskIds.has(task.id)) return false;
+  const statusMeta = resolveTaskStatusMeta(task, override, statusMap);
+  return statusMeta.action === 'WORKING' && !statusMeta.final && !statusMeta.initial;
+}
+
 function mapTaskToItem(
   task: SyncedTask,
   spotMap: Map<AnyId, string>,
@@ -547,26 +583,30 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.statusTransitions]);
 
-  const categoryStatusIdsMap = useMemo(() => {
+  const transitionGroupStatusIdsMap = useMemo(() => {
     const m = new Map<AnyId, Set<AnyId>>();
-    const groupStatusIds = new Map<AnyId, Set<AnyId>>();
     for (const t of data.statusTransitions) {
-      let set = groupStatusIds.get(t.status_transition_group_id);
+      let set = m.get(t.status_transition_group_id);
       if (!set) {
         set = new Set();
-        groupStatusIds.set(t.status_transition_group_id, set);
+        m.set(t.status_transition_group_id, set);
       }
       set.add(t.from_status);
       set.add(t.to_status);
     }
+    return m;
+  }, [data.statusTransitions]);
+
+  const categoryStatusIdsMap = useMemo(() => {
+    const m = new Map<AnyId, Set<AnyId>>();
     for (const c of data.categories) {
       if (c.status_transition_group_id) {
-        const ids = groupStatusIds.get(c.status_transition_group_id);
+        const ids = transitionGroupStatusIdsMap.get(c.status_transition_group_id);
         if (ids) m.set(c.id, ids);
       }
     }
     return m;
-  }, [data.categories, data.statusTransitions]);
+  }, [data.categories, transitionGroupStatusIdsMap]);
 
   const getAllowedStatuses = useCallback((task: TaskItem): StatusOption[] => {
     const categoryId = task.categoryId;
@@ -583,12 +623,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const groupId = categoryTransitionGroupMap.get(categoryId);
     if (!groupId) return fallback;
 
+    const groupStatusIds = transitionGroupStatusIdsMap.get(groupId);
+    if (!groupStatusIds || groupStatusIds.size === 0) return fallback;
+
     const key = `${groupId}:${statusId}`;
     const allowedIds = transitionMap.get(key);
-    if (!allowedIds || allowedIds.size === 0) return fallback;
+    if (!allowedIds || allowedIds.size === 0) {
+      return statuses.filter((s) => s.id === statusId);
+    }
 
     return statuses.filter((s) => s.id === statusId || allowedIds.has(s.id));
-  }, [statuses, categoryTransitionGroupMap, transitionMap, categoryStatusIdsMap]);
+  }, [statuses, categoryTransitionGroupMap, transitionMap, categoryStatusIdsMap, transitionGroupStatusIdsMap]);
 
   // ---------------------------------------------------------------------------
   // Map tasks
@@ -869,79 +914,80 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [allMappedTasks]);
 
-  const workingTasks = useMemo(() => {
-    const result: TaskItem[] = [];
-    for (const id of workingTaskIds) {
-      const task = allMappedTaskMap.get(id);
-      if (task) {
-        const override = localOverrides.get(id);
-        result.push(override ? { ...task, ...override } : task);
-      }
-    }
-    return result;
-  }, [workingTaskIds, allMappedTaskMap, localOverrides]);
-
-  useEffect(() => {
-    if (allMappedTasks.length === 0) return;
-    const validIds = workingTaskIds.filter((id) => {
-      const task = allMappedTaskMap.get(id);
-      if (!task) return false; // task deleted
-      // Remove tasks that reached a final or initial status
-      if (task.statusId != null) {
-        const statusInfo = statusMap.get(task.statusId);
-        if (statusInfo?.final || statusInfo?.initial) return false;
-      }
-      return true;
-    });
-    if (validIds.length !== workingTaskIds.length) {
-      setWorkingTaskIds(validIds);
-    }
-  }, [allMappedTaskMap, allMappedTasks, statusMap]);
-
   // Build set of task IDs the current user is assigned to
   const myTaskIds = useMemo(() => {
     const currentUserId = authUser?.id;
     if (!currentUserId) return new Set<string>();
     const s = new Set<string>();
     for (const tu of data.taskUsers) {
-      if (tu.user_id === currentUserId) s.add(String(tu.task_id));
+      if (String(tu.user_id) === String(currentUserId)) s.add(String(tu.task_id));
     }
     return s;
   }, [data.taskUsers, authUser]);
 
-  // Auto-populate working tasks: any task assigned to me with a WORKING status action
+  const workingTasks = useMemo(() => {
+    const result: TaskItem[] = [];
+    for (const id of workingTaskIds) {
+      const task = allMappedTaskMap.get(id);
+      if (!task) continue;
+      const override = localOverrides.get(id);
+      if (!isTaskEligibleForWorkingList(task, override, myTaskIds, statusMap)) continue;
+      result.push(override ? { ...task, ...override } : task);
+    }
+    return result;
+  }, [workingTaskIds, allMappedTaskMap, localOverrides, myTaskIds, statusMap]);
+
+  // Keep the working strip tied to real eligibility: assigned to me + WORKING action.
   useEffect(() => {
     if (!workingTaskIdsLoaded.current) return;
-    if (allMappedTasks.length === 0) return;
 
-    const autoWorkingIds = new Set<string>();
+    const eligibleIds: string[] = [];
     for (const task of allMappedTasks) {
       if (!task.id) continue;
-      if (task.statusAction?.toUpperCase() !== 'WORKING') continue;
-      if (!myTaskIds.has(task.id)) continue;
-      autoWorkingIds.add(task.id);
+      const override = localOverrides.get(task.id);
+      if (isTaskEligibleForWorkingList(task, override, myTaskIds, statusMap)) {
+        eligibleIds.push(task.id);
+      }
     }
 
-    if (autoWorkingIds.size === 0) return;
-
     setWorkingTaskIds((prev) => {
-      const existing = new Set(prev);
-      let changed = false;
-      for (const id of autoWorkingIds) {
-        if (!existing.has(id)) {
-          existing.add(id);
-          changed = true;
+      const next: string[] = [];
+      const seen = new Set<string>();
+
+      for (const id of prev) {
+        const task = allMappedTaskMap.get(id);
+        const override = localOverrides.get(id);
+        if (!task || !isTaskEligibleForWorkingList(task, override, myTaskIds, statusMap) || seen.has(id)) {
+          continue;
+        }
+        next.push(id);
+        seen.add(id);
+        if (next.length >= MAX_WORKING_TASKS) break;
+      }
+
+      if (next.length < MAX_WORKING_TASKS) {
+        for (const id of eligibleIds) {
+          if (seen.has(id)) continue;
+          next.push(id);
+          seen.add(id);
+          if (next.length >= MAX_WORKING_TASKS) break;
         }
       }
-      if (!changed) return prev;
-      return Array.from(existing).slice(0, MAX_WORKING_TASKS);
+
+      if (prev.length === next.length && prev.every((id, index) => id === next[index])) {
+        return prev;
+      }
+
+      return next;
     });
-  }, [allMappedTasks, myTaskIds]);
+  }, [allMappedTaskMap, allMappedTasks, localOverrides, myTaskIds, statusMap]);
 
   const activeTask = workingTasks.length > 0 ? workingTasks[0] : null;
 
   const addWorkingTask = useCallback((task: TaskItem) => {
     if (!task.id) return;
+    const override = localOverrides.get(task.id);
+    if (!isTaskEligibleForWorkingList(task, override, myTaskIds, statusMap)) return;
     setWorkingTaskIds((prev) => {
       if (prev.includes(task.id!)) return prev;
       if (prev.length >= MAX_WORKING_TASKS) {
@@ -953,7 +999,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       return [...prev, task.id!];
     });
-  }, []);
+  }, [localOverrides, myTaskIds, statusMap]);
 
   const removeWorkingTask = useCallback((taskId: string) => {
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
@@ -963,8 +1009,14 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!finalStatus) return;
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
+    const finalStatusAction = readStringValue((finalStatusObj as Record<string, unknown> | undefined)?.action);
 
-    setTimedOverride(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
+    setTimedOverride(taskId, {
+      status: finalStatus.name,
+      statusColor: finalStatus.color,
+      statusId: finalStatusId ?? null,
+      statusAction: finalStatusAction,
+    });
 
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 
@@ -984,8 +1036,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [finalStatus, data.statuses, tenantId, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap]);
 
   const isTaskWorking = useCallback((taskId: string) => {
-    return workingTaskIds.includes(taskId);
-  }, [workingTaskIds]);
+    if (!workingTaskIds.includes(taskId)) return false;
+    const task = allMappedTaskMap.get(taskId);
+    if (!task) return false;
+    const override = localOverrides.get(taskId);
+    return isTaskEligibleForWorkingList(task, override, myTaskIds, statusMap);
+  }, [workingTaskIds, allMappedTaskMap, localOverrides, myTaskIds, statusMap]);
 
   const setActiveTask = useCallback((task: TaskItem | null, markDone = false) => {
     if (markDone && task?.id && finalStatus) {
@@ -1038,20 +1094,34 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const changeTaskStatus = useCallback((taskId: string, status: StatusOption) => {
-    setTimedOverride(taskId, { status: status.name, statusColor: status.color, statusId: status.id });
+    const currentTask = allMappedTaskMap.get(taskId);
+    if (currentTask) {
+      const allowedStatuses = getAllowedStatuses(currentTask);
+      const isAllowed = allowedStatuses.some((candidate) => String(candidate.id) === String(status.id));
+      if (!isAllowed) {
+        Alert.alert('Invalid status change', 'This task cannot move to that status from its current state.');
+        return;
+      }
+    }
 
     const fullStatus = data.statuses.find((s) => s.id === status.id);
-    const isFinal = status.final ?? fullStatus?.final ?? false;
-    const isInitial = status.initial ?? fullStatus?.initial ?? false;
+    const nextStatusAction = status.action ?? readStringValue((fullStatus as Record<string, unknown> | undefined)?.action);
 
-    if (isFinal || isInitial) {
-      setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
-    } else {
+    setTimedOverride(taskId, {
+      status: status.name,
+      statusColor: status.color,
+      statusId: status.id,
+      statusAction: nextStatusAction,
+    });
+
+    if (normalizeStatusAction(nextStatusAction) === 'WORKING' && myTaskIds.has(taskId)) {
       setWorkingTaskIds((prev) => {
         if (prev.includes(taskId)) return prev;
         if (prev.length >= MAX_WORKING_TASKS) return prev;
         return [...prev, taskId];
       });
+    } else {
+      setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
     }
 
     if (tenantId) {
@@ -1070,7 +1140,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         console.warn('[TaskContext] Could not resolve Convex IDs for status change', { taskId, taskConvexId, statusId: status.id, statusConvexId });
       }
     }
-  }, [data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
+  }, [data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, myTaskIds]);
 
   const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
     const priorityInfo = priorityMap.get(priorityId);
@@ -1099,8 +1169,14 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!finalStatus) return;
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
+    const finalStatusAction = readStringValue((finalStatusObj as Record<string, unknown> | undefined)?.action);
 
-    setTimedOverride(taskId, { status: finalStatus.name, statusColor: finalStatus.color });
+    setTimedOverride(taskId, {
+      status: finalStatus.name,
+      statusColor: finalStatus.color,
+      statusId: finalStatusId ?? null,
+      statusAction: finalStatusAction,
+    });
 
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 

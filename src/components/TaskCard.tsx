@@ -107,8 +107,11 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const tertiaryText = isDarkMode ? 'rgba(255, 255, 255, 0.45)' : '#9CA3AF';
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
-  const statusType = classifyStatus(task.status);
-  const working = isTaskWorking(task.id ?? '') || statusType === 'working';
+  const statusAction = task.statusAction?.trim().toUpperCase() ?? null;
+  const statusType = statusAction === 'FINISHED' || statusAction === 'DONE'
+    ? 'done'
+    : classifyStatus(task.status);
+  const working = Boolean(task.id && isTaskWorking(task.id));
   const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
   const hasSeen = isCreator && task.firstViewedAt != null;
 
@@ -152,7 +155,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
     }).start();
   }, [scaleAnim]);
 
-  const isDone = statusType === 'done';
+  const isDone = statusAction === 'FINISHED' || statusAction === 'DONE' || statusType === 'done';
   const stColor = statusColor(task.status, task.statusColor);
 
   const workingOverlayOpacity = working
