@@ -10,6 +10,8 @@ import {
   Alert,
   ActivityIndicator,
   InteractionManager,
+  Modal,
+  Pressable,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -46,6 +48,7 @@ export const SettingsScreen: React.FC = () => {
   const { forceResync } = useData();
   const { language, setLanguage, t } = useLanguage();
   const [isSwitching, setIsSwitching] = useState(false);
+  const [languageModalVisible, setLanguageModalVisible] = useState(false);
 
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [autoBackup, setAutoBackup] = useState(true);
@@ -72,19 +75,21 @@ export const SettingsScreen: React.FC = () => {
   };
 
   const showLanguageDialog = () => {
-    const languages: { label: string; code: SupportedLanguage }[] = [
-      { label: t('settings.languageEnglish'), code: 'en' },
-      { label: t('settings.languageSpanish'), code: 'es' },
-    ];
-    Alert.alert(
-      t('settings.selectLanguageTitle'),
-      t('settings.selectLanguageMessage'),
-      languages.map(lang => ({
-        text: lang.label,
-        onPress: () => setLanguage(lang.code),
-      }))
-    );
+    setLanguageModalVisible(true);
   };
+
+  const languageOptions: { label: string; code: SupportedLanguage; description: string }[] = [
+    {
+      label: t('settings.languageEnglish'),
+      code: 'en',
+      description: 'English',
+    },
+    {
+      label: t('settings.languageSpanish'),
+      code: 'es',
+      description: 'Español',
+    },
+  ];
 
   const showClearCacheDialog = () => {
     Alert.alert(
@@ -548,6 +553,77 @@ export const SettingsScreen: React.FC = () => {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <Modal
+        visible={languageModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setLanguageModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => setLanguageModalVisible(false)} />
+          <View
+            style={[
+              styles.languageSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <Text style={[styles.languageTitle, { color: colors.text }]}>{t('settings.selectLanguageTitle')}</Text>
+            <Text style={[styles.languageSubtitle, { color: colors.textSecondary }]}>{t('settings.selectLanguageMessage')}</Text>
+
+            {languageOptions.map((option) => {
+              const selected = language === option.code;
+
+              return (
+                <TouchableOpacity
+                  key={option.code}
+                  style={[
+                    styles.languageOption,
+                    {
+                      backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5EF',
+                      borderColor: selected ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
+                    },
+                  ]}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setLanguage(option.code);
+                    setLanguageModalVisible(false);
+                  }}
+                >
+                  <View style={styles.languageOptionContent}>
+                    <Text style={[styles.languageOptionTitle, { color: colors.text }]}>{option.label}</Text>
+                    <Text style={[styles.languageOptionDescription, { color: colors.textSecondary }]}>{option.description}</Text>
+                  </View>
+                  {selected && (
+                    <View style={[styles.languageCheck, { backgroundColor: primaryColor }]}> 
+                      <MaterialIcons name="check" size={16} color="#FFFFFF" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+
+            <TouchableOpacity
+              style={[
+                styles.languageCancel,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F3EEE4',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                },
+              ]}
+              activeOpacity={0.85}
+              onPress={() => setLanguageModalVisible(false)}
+            >
+              <Text style={[styles.languageCancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -660,5 +736,81 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#F5F5F5',
     marginLeft: 56,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  modalScrim: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+  },
+  languageSheet: {
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 32,
+    ...shadows.lifted,
+  },
+  languageHandle: {
+    width: 44,
+    height: 5,
+    borderRadius: radius.pill,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  languageTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+  },
+  languageSubtitle: {
+    marginTop: 4,
+    marginBottom: 16,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  languageOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    marginBottom: 10,
+  },
+  languageOptionContent: {
+    flex: 1,
+  },
+  languageOptionTitle: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  languageOptionDescription: {
+    marginTop: 2,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  languageCheck: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 12,
+  },
+  languageCancel: {
+    height: 50,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+  },
+  languageCancelText: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
   },
 });

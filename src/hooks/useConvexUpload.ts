@@ -4,13 +4,15 @@
  * Handles image picking (camera + gallery), document picking, and
  * uploading to Convex's file storage via generateUploadUrl.
  */
-import { useState, useCallback } from 'react';
-import { Alert, Platform } from 'react-native';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from './useTenant';
+import { useLanguage } from '../context/LanguageContext';
+import type { AttachmentPickerSheetProps } from '../components/AttachmentPickerSheet';
 
 export interface ConvexAttachment {
   storageId: string;
@@ -28,8 +30,22 @@ interface PendingFile {
 
 export function useConvexUpload() {
   const { tenantId } = useTenant();
+  const { t } = useLanguage();
   const generateUploadUrl = useMutation(api.taskResources.generateUploadUrl);
   const [uploading, setUploading] = useState(false);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const pickerResolverRef = useRef<((attachments: ConvexAttachment[]) => void) | null>(null);
+
+  const resolvePicker = useCallback((attachments: ConvexAttachment[]) => {
+    pickerResolverRef.current?.(attachments);
+    pickerResolverRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      resolvePicker([]);
+    };
+  }, [resolvePicker]);
 
   /**
    * Upload a single local file URI to Convex storage.
@@ -126,7 +142,7 @@ export function useConvexUpload() {
   const takePhoto = useCallback(async (): Promise<PendingFile | null> => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (permission.status !== 'granted') {
-      Alert.alert('Permission required', 'Camera permission is required to take photos');
+      Alert.alert(t('attachmentPicker.permissionTitle'), t('attachmentPicker.permissionMessage'));
       return null;
     }
 
@@ -165,55 +181,69 @@ export function useConvexUpload() {
    * Show action sheet to pick images or files, then upload all selected.
    * Returns ConvexAttachment[] ready to attach to a note/message.
    */
+  const closeAttachmentPicker = useCallback(() => {
+    setPickerVisible(false);
+    resolvePicker([]);
+  }, [resolvePicker]);
+
+  const handleTakePhotoSelection = useCallback(async () => {
+    setPickerVisible(false);
+    const photo = await takePhoto();
+    if (!photo) {
+      resolvePicker([]);
+      return;
+    }
+
+    setUploading(true);
+    try {
+      resolvePicker([await uploadFile(photo)]);
+    } catch (err: any) {
+      Alert.alert(t('attachmentPicker.uploadFailedTitle'), err?.message || t('attachmentPicker.uploadFailedPhoto'));
+      resolvePicker([]);
+    } finally {
+      setUploading(false);
+    }
+  }, [resolvePicker, t, takePhoto, uploadFile]);
+
+  const handleChoosePhotosSelection = useCallback(async () => {
+    setPickerVisible(false);
+    const images = await pickImages();
+    if (!images.length) {
+      resolvePicker([]);
+      return;
+    }
+
+    try {
+      resolvePicker(await uploadFiles(images));
+    } catch (err: any) {
+      Alert.alert(t('attachmentPicker.uploadFailedTitle'), err?.message || t('attachmentPicker.uploadFailedImages'));
+      resolvePicker([]);
+    }
+  }, [pickImages, resolvePicker, t, uploadFiles]);
+
+  const handleChooseFilesSelection = useCallback(async () => {
+    setPickerVisible(false);
+    const docs = await pickDocuments();
+    if (!docs.length) {
+      resolvePicker([]);
+      return;
+    }
+
+    try {
+      resolvePicker(await uploadFiles(docs));
+    } catch (err: any) {
+      Alert.alert(t('attachmentPicker.uploadFailedTitle'), err?.message || t('attachmentPicker.uploadFailedFile'));
+      resolvePicker([]);
+    }
+  }, [pickDocuments, resolvePicker, t, uploadFiles]);
+
   const pickAndUpload = useCallback((): Promise<ConvexAttachment[]> => {
     return new Promise((resolve) => {
-      Alert.alert('Attach', 'Choose an option', [
-        {
-          text: 'Take Photo',
-          onPress: async () => {
-            const photo = await takePhoto();
-            if (!photo) return resolve([]);
-            setUploading(true);
-            try {
-              resolve([await uploadFile(photo)]);
-            } catch (err: any) {
-              Alert.alert('Upload failed', err?.message || 'Could not upload photo');
-              resolve([]);
-            } finally {
-              setUploading(false);
-            }
-          },
-        },
-        {
-          text: 'Photo Library',
-          onPress: async () => {
-            const images = await pickImages();
-            if (!images.length) return resolve([]);
-            try {
-              resolve(await uploadFiles(images));
-            } catch (err: any) {
-              Alert.alert('Upload failed', err?.message || 'Could not upload images');
-              resolve([]);
-            }
-          },
-        },
-        {
-          text: 'Choose File',
-          onPress: async () => {
-            const docs = await pickDocuments();
-            if (!docs.length) return resolve([]);
-            try {
-              resolve(await uploadFiles(docs));
-            } catch (err: any) {
-              Alert.alert('Upload failed', err?.message || 'Could not upload file');
-              resolve([]);
-            }
-          },
-        },
-        { text: 'Cancel', style: 'cancel', onPress: () => resolve([]) },
-      ]);
+      resolvePicker([]);
+      pickerResolverRef.current = resolve;
+      setPickerVisible(true);
     });
-  }, [takePhoto, pickImages, pickDocuments, uploadFile, uploadFiles]);
+  }, [resolvePicker]);
 
   /**
    * Take a photo and upload it immediately. Returns a single ConvexAttachment or null.
@@ -225,12 +255,21 @@ export function useConvexUpload() {
     try {
       return await uploadFile(photo);
     } catch (err: any) {
-      Alert.alert('Upload failed', err?.message || 'Could not upload photo');
+      Alert.alert(t('attachmentPicker.uploadFailedTitle'), err?.message || t('attachmentPicker.uploadFailedPhoto'));
       return null;
     } finally {
       setUploading(false);
     }
-  }, [takePhoto, uploadFile]);
+  }, [t, takePhoto, uploadFile]);
+
+  const attachmentPickerProps: AttachmentPickerSheetProps = {
+    visible: pickerVisible,
+    busy: uploading,
+    onClose: closeAttachmentPicker,
+    onTakePhoto: handleTakePhotoSelection,
+    onChoosePhotos: handleChoosePhotosSelection,
+    onChooseFiles: handleChooseFilesSelection,
+  };
 
   return {
     uploading,
@@ -241,5 +280,6 @@ export function useConvexUpload() {
     pickDocuments,
     pickAndUpload,
     takePhotoAndUpload,
+    attachmentPickerProps,
   };
 }

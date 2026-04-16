@@ -17,7 +17,11 @@ import notifee, {
   EventType,
 } from '@notifee/react-native';
 import { getApp } from '@react-native-firebase/app';
-import { getChannelIdForTone, getAllToneChannelConfigs } from '../utils/notificationTones';
+import {
+  getAllToneChannelConfigs,
+  getChannelIdForTone,
+  getIosSoundForTone,
+} from '../utils/notificationTones';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -223,6 +227,7 @@ export function setupForegroundMessageHandler(): () => void {
     const notificationTone = data?.notification_tone as string | undefined;
     const type = data?.type as string | undefined;
     const channelId = resolveNotificationChannelId(type, notificationTone);
+    const iosSound = getIosSoundForTone(notificationTone);
 
     try {
       await notifee.displayNotification({
@@ -238,7 +243,7 @@ export function setupForegroundMessageHandler(): () => void {
           importance: AndroidImportance.HIGH,
         },
         ios: {
-          sound: 'default',
+          sound: iosSound,
           foregroundPresentationOptions: {
             alert: true,
             badge: true,
@@ -276,6 +281,7 @@ export function registerBackgroundMessageHandler(): void {
       const notificationTone = data?.notification_tone as string | undefined;
       const type = data?.type as string | undefined;
       const channelId = resolveNotificationChannelId(type, notificationTone);
+      const iosSound = getIosSoundForTone(notificationTone);
 
       try {
         await notifee.displayNotification({
@@ -290,7 +296,7 @@ export function registerBackgroundMessageHandler(): void {
             },
           },
           ios: {
-            sound: 'default',
+            sound: iosSound,
           },
         });
       } catch (err) {

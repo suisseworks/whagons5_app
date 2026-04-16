@@ -8,7 +8,7 @@
  */
 
 import { getApp } from '@react-native-firebase/app';
-import { getAuth } from '@react-native-firebase/auth';
+import { getAuth, getIdToken as getFirebaseIdToken } from '@react-native-firebase/auth';
 
 const app = getApp();
 const auth = getAuth(app);
@@ -29,5 +29,5 @@ export function currentFirebaseUser() {
 export async function getIdToken(forceRefresh = false): Promise<string | null> {
   const user = auth.currentUser;
   if (!user) return null;
-  return user.getIdToken(forceRefresh);
+  return getFirebaseIdToken(user, forceRefresh);
 }

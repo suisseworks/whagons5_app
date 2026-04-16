@@ -5,14 +5,16 @@
 #
 # Output:
 #   android/app/src/main/res/raw/tone_<name>.wav
-#   ios/WhagonsApp/Sounds/tone_<name>.caf   (placeholder — iOS uses .caf or .aiff)
+#   assets/notification-sounds/tone_<name>.wav
 #
 # After running, rebuild the native app.
 
 set -euo pipefail
 
 ANDROID_RAW="$(dirname "$0")/../android/app/src/main/res/raw"
+IOS_ASSETS="$(dirname "$0")/../assets/notification-sounds"
 mkdir -p "$ANDROID_RAW"
+mkdir -p "$IOS_ASSETS"
 
 echo "Generating notification tones..."
 
@@ -45,4 +47,7 @@ echo "  triple ✓"
 
 echo ""
 echo "Done! Files in: $ANDROID_RAW"
-echo "Rebuild the app with: cd app && npx expo run:android"
+cp "$ANDROID_RAW"/tone_*.wav "$IOS_ASSETS"/
+echo "Copied iOS bundle assets to: $IOS_ASSETS"
+echo "Rebuild the native app with: cd app && npx expo run:android"
+echo "or: cd app && npx expo run:ios"

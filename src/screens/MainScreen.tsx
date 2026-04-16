@@ -190,6 +190,7 @@ export const MainScreen: React.FC = () => {
   const { isAuthenticated } = useConvexAuth();
   const {
     tasks,
+    unfilteredTasks,
     totalTaskCount,
     loadMoreTasks,
     hasMoreTasks,
@@ -209,7 +210,6 @@ export const MainScreen: React.FC = () => {
     hasActiveFilters,
     filters,
     setFilters,
-    unfilteredTasks,
     availableStatuses,
   } = useTasks();
 
@@ -303,7 +303,7 @@ export const MainScreen: React.FC = () => {
     }
     return map;
   }, [workspaceObjects]);
-  const { unreadCount: notificationCount } = useNotifications();
+  const { unreadCount: notificationCount, lastTapPayload, clearTapPayload } = useNotifications();
   const { user: authUser } = useAuth();
   const boardUnreadCount = useMemo(() => {
     return (convexNotifications ?? []).filter((notification: any) => {
@@ -389,6 +389,59 @@ export const MainScreen: React.FC = () => {
       navigation.setParams({ tab: undefined, conversationId: undefined } as any);
     }
   }, [route.params]);
+
+  useEffect(() => {
+    if (!lastTapPayload) return;
+
+    const type = lastTapPayload.type;
+    const taskNotificationTypes = new Set([
+      'task',
+      'task_updated',
+      'task_shared',
+      'task_completed',
+      'task_assigned',
+      'task_created_unassigned',
+      'task_unassigned',
+      'reported_task_seen',
+      'assignment',
+      'sla',
+      'approval',
+      'done',
+    ]);
+
+    if (type && taskNotificationTypes.has(type)) {
+      const taskId = lastTapPayload.taskId || lastTapPayload.task_id;
+      if (!taskId) return;
+
+      const task = unfilteredTasks.find((candidate) =>
+        candidate.convexId === taskId || String(candidate.id) === String(taskId),
+      );
+
+      if (!task) return;
+
+      navigation.navigate('TaskDetail', { task });
+      clearTapPayload();
+      return;
+    }
+
+    if (type === 'message' || type === 'chat' || type === 'comment') {
+      const conversationId = lastTapPayload.chatId || lastTapPayload.chat_id;
+      if (!conversationId) return;
+
+      setSelectedNav(1);
+      setInitialConversationId(conversationId);
+      clearTapPayload();
+      return;
+    }
+
+    if (type === 'board_message') {
+      const boardId = lastTapPayload.boardPgId || lastTapPayload.board_pg_id || lastTapPayload.boardId || lastTapPayload.board_id;
+      if (!boardId) return;
+
+      navigation.navigate('BoardDetail', { boardId });
+      clearTapPayload();
+    }
+  }, [clearTapPayload, lastTapPayload, navigation, unfilteredTasks]);
 
   // Handle back navigation when inside a workspace or workspaces list.
   // useFocusEffect ensures the handler is only active when MainScreen is the

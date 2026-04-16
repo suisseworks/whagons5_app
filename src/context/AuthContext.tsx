@@ -21,6 +21,7 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useConvexAuth, useQuery } from 'convex/react';
+import { getIdToken as getFirebaseIdToken } from '@react-native-firebase/auth';
 import { api } from '../../../convex/_generated/api';
 import {
   signInWithGoogle as fbSignInWithGoogle,
@@ -286,7 +287,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const fbUser = getCurrentUser();
     if (!fbUser) throw new Error('Not signed in');
-    const firebaseIdToken = await fbUser.getIdToken(true);
+    const firebaseIdToken = await getFirebaseIdToken(fbUser, true);
 
     if (!myTenants || myTenants.length === 0) {
       throw new Error('No workspaces found for your account');

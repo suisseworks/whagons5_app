@@ -29,6 +29,7 @@ import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
+import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 import { FaIcon } from '../components/FaIcon';
 import { Toast, ToastRef } from '../components/Toast';
 import { parseWorkspaceIcon } from '../utils/helpers';
@@ -215,6 +216,7 @@ export const CreateTaskScreen: React.FC = () => {
   const [selectedPriorityConvexId, setSelectedPriorityConvexId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
+  const [photoPickerVisible, setPhotoPickerVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Template state
@@ -540,28 +542,24 @@ export const CreateTaskScreen: React.FC = () => {
   }, [pickDocuments, addAttachmentFiles]);
 
   const handlePickPhoto = useCallback(async () => {
-    Alert.alert(t('createTask.addPhotoTitle'), t('createTask.addPhotoMessage'), [
-      {
-        text: t('createTask.takePhoto'),
-        onPress: async () => {
-          const photo = await takePhoto();
-          if (photo) {
-            addAttachmentFiles([{ uri: photo.uri, fileName: photo.fileName, fileSize: photo.fileSize, fileType: photo.fileType }]);
-          }
-        },
-      },
-      {
-        text: t('createTask.photoLibrary'),
-        onPress: async () => {
-          const images = await pickImages();
-          if (images.length > 0) {
-            addAttachmentFiles(images.map(img => ({ uri: img.uri, fileName: img.fileName, fileSize: img.fileSize, fileType: img.fileType })));
-          }
-        },
-      },
-      { text: t('common.cancel'), style: 'cancel' },
-    ]);
-  }, [takePhoto, pickImages, addAttachmentFiles, t]);
+    setPhotoPickerVisible(true);
+  }, []);
+
+  const handleTakeTaskPhoto = useCallback(async () => {
+    setPhotoPickerVisible(false);
+    const photo = await takePhoto();
+    if (photo) {
+      addAttachmentFiles([{ uri: photo.uri, fileName: photo.fileName, fileSize: photo.fileSize, fileType: photo.fileType }]);
+    }
+  }, [takePhoto, addAttachmentFiles]);
+
+  const handleChooseTaskPhotos = useCallback(async () => {
+    setPhotoPickerVisible(false);
+    const images = await pickImages();
+    if (images.length > 0) {
+      addAttachmentFiles(images.map(img => ({ uri: img.uri, fileName: img.fileName, fileSize: img.fileSize, fileType: img.fileType })));
+    }
+  }, [pickImages, addAttachmentFiles]);
 
   const handleRetryAttachment = useCallback(async (item: AttachmentItem) => {
     if (!item.uri) return;
@@ -1154,6 +1152,18 @@ export const CreateTaskScreen: React.FC = () => {
           )}
         </View>
       </Modal>
+
+      <AttachmentPickerSheet
+        visible={photoPickerVisible}
+        busy={false}
+        title={t('createTask.addPhotoTitle')}
+        subtitle={t('createTask.addPhotoMessage')}
+        showFiles={false}
+        onClose={() => setPhotoPickerVisible(false)}
+        onTakePhoto={handleTakeTaskPhoto}
+        onChoosePhotos={handleChooseTaskPhotos}
+        onChooseFiles={() => {}}
+      />
 
       {/* Workspace Modal */}
       <SelectorModal

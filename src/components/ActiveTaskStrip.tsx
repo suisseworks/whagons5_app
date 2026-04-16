@@ -14,7 +14,7 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import { TaskItem } from '../models/types';
 import { StatusOption } from '../context/TaskContext';
-import { statusColor } from '../utils/helpers';
+import { priorityColor, statusColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
@@ -34,6 +34,15 @@ interface ActiveTaskStripProps {
   onStatusChange?: (taskId: string, status: StatusOption) => void;
 }
 
+function getPriorityTextColor(task: TaskItem, fallbackColor: string): string {
+  if (task.priorityColor) return task.priorityColor;
+  return task.priority ? priorityColor(task.priority) : fallbackColor;
+}
+
+function formatTaskId(task: TaskItem): string | null {
+  return task.id ? `#${task.id}` : null;
+}
+
 // Row for a single task in the expanded multi-task list
 const TaskRow: React.FC<{
   task: TaskItem;
@@ -46,9 +55,9 @@ const TaskRow: React.FC<{
   colors: ReturnType<typeof useTheme>['colors'];
   isDarkMode: boolean;
 }> = ({ task, doneLabel, onDone, onRemove, onPress, onCheckPress, primaryColor, colors, isDarkMode }) => {
-  const { t } = useLanguage();
   const sColor = statusColor(task.status, task.statusColor);
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.12)' : 'rgba(0, 0, 0, 0.08)';
+  const taskIdLabel = formatTaskId(task);
 
   return (
     <TouchableOpacity
@@ -64,9 +73,16 @@ const TaskRow: React.FC<{
       onPress={onPress}
     >
       <View style={styles.taskRowInfo}>
-        <Text style={[styles.taskRowTitle, { color: colors.text }]} numberOfLines={1}>
-          {task.title}
-        </Text>
+        <View style={styles.taskRowHeader}>
+          <Text style={[styles.taskRowTitle, { color: colors.text }]} numberOfLines={1}>
+            {task.title}
+          </Text>
+          {taskIdLabel ? (
+            <Text style={[styles.taskIdText, { color: colors.textSecondary }]} numberOfLines={1}>
+              {taskIdLabel}
+            </Text>
+          ) : null}
+        </View>
         <View style={styles.taskRowMeta}>
           {task.spot ? (
             <View style={styles.taskRowMetaItem}>
@@ -85,12 +101,9 @@ const TaskRow: React.FC<{
           {task.priority ? (
             <Text style={[
               styles.taskRowMetaText,
-              {
-                color: task.priority === 'High' ? '#EF4444' :
-                       task.priority === 'Medium' ? '#F59E0B' : colors.textSecondary,
-              },
+              { color: getPriorityTextColor(task, colors.textSecondary) },
             ]}>
-              {task.priority === 'High' ? t('component.activeTaskStrip.priorityHigh') : task.priority === 'Medium' ? t('component.activeTaskStrip.priorityMedium') : t('component.activeTaskStrip.priorityLow')}
+              {task.priority}
             </Text>
           ) : null}
         </View>
@@ -188,6 +201,7 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
     inputRange: [0, 1],
     outputRange: ['0deg', '180deg'],
   });
+  const singleTaskIdLabel = formatTaskId(tasks[0]);
 
   return (
     <Animated.View
@@ -225,9 +239,16 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
             <Text style={[styles.singleLabel, { color: colors.textSecondary }]}>
               {t('component.activeTaskStrip.workingOnLabel')}
             </Text>
-            <Text style={[styles.singleTitle, { color: colors.text }]} numberOfLines={1}>
-              {tasks[0].title}
-            </Text>
+            <View style={styles.taskRowHeader}>
+              <Text style={[styles.singleTitle, { color: colors.text }]} numberOfLines={1}>
+                {tasks[0].title}
+              </Text>
+              {singleTaskIdLabel ? (
+                <Text style={[styles.taskIdText, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {singleTaskIdLabel}
+                </Text>
+              ) : null}
+            </View>
             <View style={styles.singleMeta}>
               {tasks[0].spot ? (
                 <View style={styles.taskRowMetaItem}>
@@ -246,12 +267,9 @@ export const ActiveTaskStrip: React.FC<ActiveTaskStripProps> = ({
               {tasks[0].priority ? (
                 <Text style={[
                   styles.taskRowMetaText,
-                  {
-                    color: tasks[0].priority === 'High' ? '#EF4444' :
-                           tasks[0].priority === 'Medium' ? '#F59E0B' : colors.textSecondary,
-                  },
+                  { color: getPriorityTextColor(tasks[0], colors.textSecondary) },
                 ]}>
-                  {tasks[0].priority === 'High' ? t('component.activeTaskStrip.priorityHigh') : tasks[0].priority === 'Medium' ? t('component.activeTaskStrip.priorityMedium') : t('component.activeTaskStrip.priorityLow')}
+                  {tasks[0].priority}
                 </Text>
               ) : null}
             </View>
@@ -448,10 +466,20 @@ const styles = StyleSheet.create({
   taskRowInfo: {
     flex: 1,
   },
+  taskRowHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   taskRowTitle: {
+    flex: 1,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
     lineHeight: 18,
+  },
+  taskIdText: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
   },
   taskRowMeta: {
     flexDirection: 'row',

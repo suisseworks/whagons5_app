@@ -56,6 +56,7 @@ import { useCall } from '../context/CallContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { getInitials } from '../utils/helpers';
 import { Toast, ToastRef } from '../components/Toast';
+import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -113,6 +114,12 @@ function formatConversationTime(ts: string | null | undefined, _t?: (key: string
   const diffDays = Math.floor(diffMs / 86400000);
   if (diffDays < 7) return _t ? _t('colab.timeDays', { count: diffDays }) : `${diffDays}d`;
   return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function formatPreviewMessage(text: string, t: (key: string, opts?: any) => string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, `📷 ${t('colab.photoPreview')}`)
+    .replace(/\[([^\]]*)\]\([^)]+\)/g, `📎 ${t('colab.filePreview')}`);
 }
 
 function extractUrls(text: string): string[] {
@@ -339,6 +346,134 @@ const QuickReactionBar: React.FC<{
   );
 });
 
+function mapWorkspaceChatDoc(
+  doc: any,
+  workspaceConvexToLegacyId: Map<string, number | string>,
+  userConvexToLegacyId: Map<string, number | string>,
+): SyncedWorkspaceChat {
+  return {
+    ...doc,
+    id: doc.pgId ?? doc._id,
+    workspace_id: workspaceConvexToLegacyId.get(String(doc.workspaceId)) ?? doc.workspaceId,
+    user_id: userConvexToLegacyId.get(String(doc.userId)) ?? doc.userId,
+    created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
+    updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
+  };
+}
+
+const WorkspaceListItem: React.FC<{
+  ws: SyncedWorkspace;
+  tenantId: string | null;
+  currentUserId: number | string;
+  getUser: (id: number | string) => SyncedUser | undefined;
+  userConvexToLegacyId: Map<string, number | string>;
+  workspaceConvexToLegacyId: Map<string, number | string>;
+  cachedMessages: SyncedWorkspaceChat[];
+  onMessagesLoaded: (workspaceId: number | string, messages: SyncedWorkspaceChat[]) => void;
+  primaryColor: string;
+  colors: any;
+  isDarkMode: boolean;
+  t: (key: string, opts?: any) => string;
+  onPress: () => void;
+}> = React.memo(({
+  ws,
+  tenantId,
+  currentUserId,
+  getUser,
+  userConvexToLegacyId,
+  workspaceConvexToLegacyId,
+  cachedMessages,
+  onMessagesLoaded,
+  primaryColor,
+  colors,
+  isDarkMode,
+  t,
+  onPress,
+}) => {
+  const wsColor = ws.color || primaryColor;
+  const convexWorkspaceId = (ws as any)._id;
+  const rawWorkspaceMessages = useQuery(
+    api.chat.listWorkspaceChat,
+    tenantId && convexWorkspaceId
+      ? { tenantId, workspaceId: convexWorkspaceId as any }
+      : 'skip',
+  );
+
+  const mappedWorkspaceMessages = useMemo(() => {
+    if (!rawWorkspaceMessages) return [];
+    return rawWorkspaceMessages.map((doc: any) =>
+      mapWorkspaceChatDoc(doc, workspaceConvexToLegacyId, userConvexToLegacyId),
+    );
+  }, [rawWorkspaceMessages, userConvexToLegacyId, workspaceConvexToLegacyId]);
+
+  const workspaceMessages = rawWorkspaceMessages === undefined ? cachedMessages : mappedWorkspaceMessages;
+  const isWorkspaceMessagesLoading = rawWorkspaceMessages === undefined && cachedMessages.length === 0;
+
+  useEffect(() => {
+    if (rawWorkspaceMessages !== undefined) {
+      onMessagesLoaded(ws.id, mappedWorkspaceMessages);
+    }
+  }, [rawWorkspaceMessages, mappedWorkspaceMessages, onMessagesLoaded, ws.id]);
+
+  const lastMsg = useMemo(() => {
+    if (workspaceMessages.length === 0) return null;
+    return [...workspaceMessages].sort((a, b) => utcMs(b.created_at) - utcMs(a.created_at))[0] ?? null;
+  }, [workspaceMessages]);
+
+  const senderId = lastMsg
+    ? lastMsg.user_id ?? null
+    : null;
+  const sender = senderId != null ? getUser(senderId) : null;
+  const preview = isWorkspaceMessagesLoading
+    ? t('colab.loading')
+    : lastMsg
+      ? `${String(senderId) === String(currentUserId) ? t('colab.senderYou') : sender?.name?.split(' ')[0] || t('colab.fallbackSomeone')}: ${formatPreviewMessage(lastMsg.message, t)}`
+      : t('colab.noMessagesPreview');
+  const lastCreatedAt = lastMsg ? lastMsg.created_at : null;
+
+  return (
+    <TouchableOpacity
+      style={[
+        styles.conversationItem,
+        {
+          backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
+          borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
+        },
+      ]}
+      activeOpacity={0.7}
+      onPress={onPress}
+    >
+      <View style={[styles.groupAvatar, { backgroundColor: `${wsColor}20` }]}>
+        <MaterialIcons name="forum" size={20} color={wsColor} />
+      </View>
+      <View style={styles.conversationInfo}>
+        <View style={styles.conversationTopRow}>
+          <Text
+            style={[styles.conversationName, { color: colors.text }]}
+            numberOfLines={1}
+          >
+            {ws.name}
+          </Text>
+          {lastCreatedAt && (
+            <Text style={[styles.conversationTime, { color: colors.textSecondary }]}>
+              {formatConversationTime(lastCreatedAt, t)}
+            </Text>
+          )}
+        </View>
+        <View style={styles.conversationBottomRow}>
+          <Text
+            style={[styles.conversationPreview, { color: colors.textSecondary }]}
+            numberOfLines={1}
+          >
+            {preview}
+          </Text>
+        </View>
+      </View>
+      <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
+    </TouchableOpacity>
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Fix Convex storage URLs for self-hosted (dashboard domain → backend domain)
 // ---------------------------------------------------------------------------
@@ -422,7 +557,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const insets = useSafeAreaInsets();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
-  const { data, isSyncing, refresh } = useData();
+  const { data, isSyncing, refresh, hasEverSynced, isInitialSync } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
   const { selectedWorkspace, workspaceObjects } = useTasks();
@@ -437,9 +572,33 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const cvxDeleteWsMessage = useMutation(api.chat.deleteWorkspaceChatMessage);
   const cvxAddReaction = useMutation(api.chat.addReaction);
   const cvxRemoveReaction = useMutation(api.chat.removeReaction);
-  const { pickAndUpload, uploading: uploadingFile } = useConvexUpload();
+  const { pickAndUpload, uploading: uploadingFile, attachmentPickerProps } = useConvexUpload();
   const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const toastRef = useRef<ToastRef>(null);
+
+  const availableWorkspaces = useMemo(
+    () => (data.workspaces.length > 0 ? data.workspaces : workspaceObjects),
+    [data.workspaces, workspaceObjects],
+  );
+  const showWorkspaceLoadingState = isInitialSync && isSyncing && availableWorkspaces.length === 0 && !hasEverSynced;
+
+  const workspaceConvexToLegacyId = useMemo(() => {
+    const map = new Map<string, number | string>();
+    for (const workspace of availableWorkspaces) {
+      const convexId = (workspace as any)._id;
+      if (convexId) map.set(String(convexId), workspace.id);
+    }
+    return map;
+  }, [availableWorkspaces]);
+
+  const userConvexToLegacyId = useMemo(() => {
+    const map = new Map<string, number | string>();
+    for (const user of data.users) {
+      const convexId = (user as any)._id;
+      if (convexId) map.set(String(convexId), user.id);
+    }
+    return map;
+  }, [data.users]);
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
   const { width: screenWidth } = useWindowDimensions();
@@ -507,6 +666,52 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const [isSending, setIsSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const chatListRef = useRef<FlatList>(null);
+  const [workspaceChatCache, setWorkspaceChatCache] = useState<Record<string, SyncedWorkspaceChat[]>>({});
+
+  const cacheWorkspaceMessages = useCallback((workspaceId: number | string, messages: SyncedWorkspaceChat[]) => {
+    const cacheKey = String(workspaceId);
+    setWorkspaceChatCache((prev) => {
+      const existing = prev[cacheKey] ?? [];
+      const sameLength = existing.length === messages.length;
+      const sameTail = sameLength
+        && existing[0]?.id === messages[0]?.id
+        && existing[existing.length - 1]?.id === messages[messages.length - 1]?.id;
+      if (sameTail) return prev;
+      return { ...prev, [cacheKey]: messages };
+    });
+  }, []);
+
+  const activeSpaceWorkspace = useMemo(() => {
+    if (chatView.type !== 'spaceChat') return null;
+    return availableWorkspaces.find((workspace) => String(workspace.id) === String(chatView.workspaceId)) || null;
+  }, [chatView, availableWorkspaces]);
+
+  const activeSpaceConvexId = activeSpaceWorkspace ? (activeSpaceWorkspace as any)._id : null;
+
+  const cachedActiveWorkspaceChat = useMemo(() => {
+    if (!activeSpaceWorkspace) return [];
+    return workspaceChatCache[String(activeSpaceWorkspace.id)] ?? [];
+  }, [activeSpaceWorkspace, workspaceChatCache]);
+
+  const rawActiveWorkspaceChat = useQuery(
+    api.chat.listWorkspaceChat,
+    tenantId && activeSpaceConvexId
+      ? { tenantId, workspaceId: activeSpaceConvexId as any }
+      : 'skip',
+  );
+
+  const activeWorkspaceChat = useMemo<SyncedWorkspaceChat[]>(() => {
+    if (rawActiveWorkspaceChat === undefined) return cachedActiveWorkspaceChat;
+    return rawActiveWorkspaceChat.map((doc: any) =>
+      mapWorkspaceChatDoc(doc, workspaceConvexToLegacyId, userConvexToLegacyId),
+    );
+  }, [cachedActiveWorkspaceChat, rawActiveWorkspaceChat, userConvexToLegacyId, workspaceConvexToLegacyId]);
+
+  useEffect(() => {
+    if (activeSpaceWorkspace && rawActiveWorkspaceChat !== undefined) {
+      cacheWorkspaceMessages(activeSpaceWorkspace.id, activeWorkspaceChat);
+    }
+  }, [activeSpaceWorkspace, activeWorkspaceChat, cacheWorkspaceMessages, rawActiveWorkspaceChat]);
 
   // Handle deep-link from notification tap: open a specific conversation
   useEffect(() => {
@@ -549,10 +754,15 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
   useEffect(() => {
     if (pendingSpaceMessages.length > 0) {
-      const syncedUuids = new Set(data.workspaceChat.map((m) => m.uuid));
+      const syncedUuids = new Set(
+        Object.values(workspaceChatCache)
+          .flat()
+          .map((m) => m.uuid)
+          .filter(Boolean),
+      );
       setPendingSpaceMessages((prev) => prev.filter((m) => !syncedUuids.has(m.uuid)));
     }
-  }, [data.workspaceChat]);
+  }, [workspaceChatCache]);
 
   // Notify parent when chat view changes (for hiding bottom bar)
   const isInChat = chatView.type !== 'list';
@@ -580,8 +790,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   // Current workspace object
   const currentWorkspace = useMemo((): SyncedWorkspace | null => {
     if (selectedWorkspace === 'Everything') return null;
-    return workspaceObjects.find((w: SyncedWorkspace) => w.name === selectedWorkspace) || null;
-  }, [selectedWorkspace, workspaceObjects]);
+    return availableWorkspaces.find((w: SyncedWorkspace) => w.name === selectedWorkspace) || null;
+  }, [selectedWorkspace, availableWorkspaces]);
 
   // ---- Workspace chat data ----
 
@@ -805,28 +1015,58 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
   // Attach file to conversation
   const handleAttachFile = useCallback(async () => {
-    if (!activeConversationId || !currentUserId || !tenantId) return;
+    if (!currentUserId || !tenantId) return;
+
+    const isWorkspaceChat = chatView.type === 'spaceChat';
+    const spaceWsId = isWorkspaceChat ? chatView.workspaceId : currentWorkspace?.id;
+
+    if (!isWorkspaceChat && !activeConversationId) return;
+    if (isWorkspaceChat && !spaceWsId) return;
+
     const attachments = await pickAndUpload();
     if (attachments.length === 0) return;
+
     // Send each attachment as a markdown-style link message
     for (const a of attachments) {
-      const uuid = generateUUID();
-      const now = new Date().toISOString();
-      // Get the Convex serving URL
       const text = a.fileType.startsWith('image/')
         ? `![${a.fileName}](convex-file:${a.storageId})`
         : `[${a.fileName}](convex-file:${a.storageId})`;
+
       try {
-        const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
-        const convexConvId = (conv as any)?._id;
-        if (tenantId && convexConvId) {
+        if (isWorkspaceChat) {
+          const ws = availableWorkspaces.find((w) => String(w.id) === String(spaceWsId));
+          const convexWsId = (ws as any)?._id;
+          if (!convexWsId) throw new Error('Workspace not found');
+
+          await cvxSendWorkspaceChat({
+            tenantId,
+            workspaceId: convexWsId as any,
+            message: text,
+          });
+        } else {
+          const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
+          const convexConvId = (conv as any)?._id;
+          if (!convexConvId) throw new Error('Conversation not found');
+
           await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
         }
       } catch {
         Alert.alert('Error', t('colab.failedToSendFile', { fileName: a.fileName }));
       }
     }
-  }, [activeConversationId, currentUserId, tenantId, data.conversations, pickAndUpload, t]);
+  }, [
+    activeConversationId,
+    availableWorkspaces,
+    chatView,
+    currentUserId,
+    currentWorkspace,
+    cvxSendMessage,
+    cvxSendWorkspaceChat,
+    data.conversations,
+    pickAndUpload,
+    t,
+    tenantId,
+  ]);
 
   // Send message (DM/group)
   const handleSendConversationMessage = useCallback(async () => {
@@ -866,7 +1106,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     setIsSending(true);
 
     try {
-      const ws = data.workspaces.find((w) => String(w.id) === String(spaceWsId));
+      const ws = availableWorkspaces.find((w) => String(w.id) === String(spaceWsId));
       const convexWsId = (ws as any)?._id;
       if (!tenantId || !convexWsId) throw new Error('Workspace not found');
 
@@ -882,7 +1122,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     } finally {
       setIsSending(false);
     }
-  }, [inputText, chatView, currentWorkspace, currentUserId, tenantId, data.workspaces, cvxSendWorkspaceChat]);
+  }, [inputText, chatView, currentWorkspace, currentUserId, tenantId, availableWorkspaces, cvxSendWorkspaceChat]);
 
   const handleStartConversationCall = useCallback(async (mode: 'audio' | 'video') => {
     if (!activeConversation) return;
@@ -1236,7 +1476,10 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                             <ConvexFileImage
                               key={idx}
                               storageId={part.storageId}
-                              style={styles.messageImage}
+                              style={[
+                                styles.messageImage,
+                                { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.82, 320) },
+                              ]}
                               onPress={(url) => setViewerMedia({ url, type: 'image' })}
                             />
                           );
@@ -1244,14 +1487,28 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                         if (part.type === 'image') {
                           return (
                             <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'image' })}>
-                              <ExpoImage source={{ uri: part.url }} style={styles.messageImage} contentFit="cover" cachePolicy="disk" transition={200} />
+                              <ExpoImage
+                                source={{ uri: part.url }}
+                                style={[
+                                  styles.messageImage,
+                                  { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.82, 320) },
+                                ]}
+                                contentFit="cover"
+                                cachePolicy="disk"
+                                transition={200}
+                              />
                             </Pressable>
                           );
                         }
                         if (part.type === 'video') {
                           return (
                             <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'video' })}>
-                              <View style={styles.messageVideoThumb}>
+                              <View
+                                style={[
+                                  styles.messageVideoThumb,
+                                  { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.52, 210) },
+                                ]}
+                              >
                                 <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
                                 <Text style={styles.messageVideoLabel} numberOfLines={1}>{part.label || t('colab.videoLabel')}</Text>
                               </View>
@@ -1411,45 +1668,66 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   // ---------------------------------------------------------------------------
 
   const renderChatInput = useCallback(
-    (onSend: () => void) => (
-      <View
-        style={[
-          styles.inputContainer,
-          {
-            backgroundColor: colors.surface,
-            borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
-          },
-        ]}
-      >
-        <TextInput
+    (onSend: () => void) => {
+      const composerSurfaceColor = isDarkMode ? '#343438' : '#F3F2EF';
+
+      return (
+        <View
           style={[
-            styles.textInput,
+            styles.inputContainer,
             {
-              backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
-              color: colors.text,
+              backgroundColor: colors.surface,
+              borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
             },
           ]}
-          placeholder={t('colab.messagePlaceholder')}
-          placeholderTextColor={colors.textSecondary}
-          value={inputText}
-          onChangeText={setInputText}
-          onSubmitEditing={onSend}
-          returnKeyType="send"
-          editable={!isSending}
-          multiline
-          blurOnSubmit={false}
-        />
-        <TouchableOpacity
-          style={{ padding: 8 }}
-          onPress={handleAttachFile}
-          disabled={uploadingFile}
         >
-          {uploadingFile ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
-          )}
-        </TouchableOpacity>
+          <View
+            style={[
+              styles.inputShell,
+              {
+                backgroundColor: composerSurfaceColor,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+              },
+            ]}
+          >
+          <TextInput
+            style={[
+              styles.textInput,
+              Platform.OS === 'android' && styles.textInputAndroid,
+              {
+                backgroundColor: composerSurfaceColor,
+                color: colors.text,
+              },
+            ]}
+            placeholder={t('colab.messagePlaceholder')}
+            placeholderTextColor={colors.textSecondary}
+            value={inputText}
+            onChangeText={setInputText}
+            onSubmitEditing={onSend}
+            returnKeyType="send"
+            editable={!isSending}
+            multiline
+            blurOnSubmit={false}
+            underlineColorAndroid="transparent"
+          />
+          <TouchableOpacity
+            style={[
+              styles.attachButton,
+              {
+                backgroundColor: 'transparent',
+                borderColor: 'transparent',
+              },
+            ]}
+            onPress={handleAttachFile}
+            disabled={uploadingFile}
+          >
+            {uploadingFile ? (
+              <ActivityIndicator size="small" color={primaryColor} />
+            ) : (
+              <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+            )}
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
           style={[
             styles.sendButton,
@@ -1471,7 +1749,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           )}
         </TouchableOpacity>
       </View>
-    ),
+      );
+    },
     [inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile, t],
   );
 
@@ -1554,7 +1833,18 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   // ---------------------------------------------------------------------------
 
   const renderWorkspacesTab = () => {
-    if (workspaceObjects.length === 0) {
+    if (showWorkspaceLoadingState) {
+      return (
+        <View style={styles.emptyContainer}>
+          <ActivityIndicator size="large" color={primaryColor} />
+          <Text style={[styles.emptySubtitle, { color: colors.textSecondary, marginTop: 16 }]}>
+            {t('colab.loading')}
+          </Text>
+        </View>
+      );
+    }
+
+    if (availableWorkspaces.length === 0) {
       return (
         <View style={styles.emptyContainer}>
           <MaterialIcons
@@ -1574,7 +1864,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
     return (
       <FlatList
-        data={workspaceObjects}
+        data={availableWorkspaces}
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.listContent}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
@@ -1587,57 +1877,25 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           />
         }
         renderItem={({ item: ws }) => {
-          const wsColor = ws.color || primaryColor;
-          const wsMessages = data.workspaceChat.filter((m) => String(m.workspace_id) === String(ws.id));
-          const lastMsg = wsMessages.sort((a, b) => utcMs(b.created_at) - utcMs(a.created_at))[0];
-          const sender = lastMsg ? getUser(lastMsg.user_id) : null;
-          const preview = lastMsg
-            ? `${String(lastMsg.user_id) === String(currentUserId) ? t('colab.senderYou') : sender?.name?.split(' ')[0] || t('colab.fallbackSomeone')}: ${lastMsg.message}`
-            : t('colab.noMessagesPreview');
-
           return (
-            <TouchableOpacity
-              style={[
-                styles.conversationItem,
-                {
-                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)',
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
-                },
-              ]}
-              activeOpacity={0.7}
+            <WorkspaceListItem
+              ws={ws}
+              tenantId={tenantId}
+              currentUserId={currentUserId}
+              getUser={getUser}
+              userConvexToLegacyId={userConvexToLegacyId}
+              workspaceConvexToLegacyId={workspaceConvexToLegacyId}
+              cachedMessages={workspaceChatCache[String(ws.id)] ?? []}
+              onMessagesLoaded={cacheWorkspaceMessages}
+              primaryColor={primaryColor}
+              colors={colors}
+              isDarkMode={isDarkMode}
+              t={t}
               onPress={() => {
                 setChatView({ type: 'spaceChat', workspaceId: ws.id });
                 setInputText('');
               }}
-            >
-              <View style={[styles.groupAvatar, { backgroundColor: `${wsColor}20` }]}>
-                <MaterialIcons name="forum" size={20} color={wsColor} />
-              </View>
-              <View style={styles.conversationInfo}>
-                <View style={styles.conversationTopRow}>
-                  <Text
-                    style={[styles.conversationName, { color: colors.text }]}
-                    numberOfLines={1}
-                  >
-                    {ws.name}
-                  </Text>
-                  {lastMsg && (
-                    <Text style={[styles.conversationTime, { color: colors.textSecondary }]}>
-                      {formatConversationTime(lastMsg.created_at, t)}
-                    </Text>
-                  )}
-                </View>
-                <View style={styles.conversationBottomRow}>
-                  <Text
-                    style={[styles.conversationPreview, { color: colors.textSecondary }]}
-                    numberOfLines={1}
-                  >
-                    {preview}
-                  </Text>
-                </View>
-              </View>
-              <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
+            />
           );
         }}
         ListEmptyComponent={
@@ -1662,11 +1920,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
   const renderSpaceChatView = () => {
     const spaceWsId = chatView.type === 'spaceChat' ? chatView.workspaceId : null;
-    const spaceWs = spaceWsId ? workspaceObjects.find((w: SyncedWorkspace) => w.id === spaceWsId) : null;
+    const spaceWs = spaceWsId ? availableWorkspaces.find((w: SyncedWorkspace) => w.id === spaceWsId) : null;
     if (!spaceWs) return null;
 
     // Messages for this specific workspace (sorted newest-first for inverted list)
-    const synced = data.workspaceChat.filter((m) => String(m.workspace_id) === String(spaceWs.id));
+    const synced = activeWorkspaceChat.filter((m) => String(m.workspace_id) === String(spaceWs.id));
     const syncedIds = new Set(synced.map((m) => m.uuid));
     const pending = pendingSpaceMessages.filter(
       (m) => String(m.workspace_id) === String(spaceWs.id) && !syncedIds.has(m.uuid),
@@ -1775,10 +2033,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           String(lastMsg.user_id) === String(currentUserId)
             ? t('colab.senderYou')
             : sender?.name.split(' ')[0] || t('colab.fallbackSomeone');
-        // Strip markdown file links for preview
-        let msgText = lastMsg.message
-          .replace(/!\[([^\]]*)\]\([^)]+\)/g, `📷 ${t('colab.photoPreview')}`)
-          .replace(/\[([^\]]*)\]\([^)]+\)/g, `📎 ${t('colab.filePreview')}`);
+        const msgText = formatPreviewMessage(lastMsg.message, t);
         preview = isGroup ? `${senderName}: ${msgText}` : msgText;
       }
 
@@ -2346,6 +2601,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         {renderConversationChatView()}
         {renderNewChatModal()}
         {imageViewerModal}
+        <AttachmentPickerSheet {...attachmentPickerProps} />
         <Toast ref={toastRef} />
       </View>
     );
@@ -2356,6 +2612,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       <View style={{ flex: 1 }}>
         {renderSpaceChatView()}
         {imageViewerModal}
+        <AttachmentPickerSheet {...attachmentPickerProps} />
         <Toast ref={toastRef} />
       </View>
     );
@@ -2378,6 +2635,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       </Animated.View>
       {renderNewChatModal()}
       {imageViewerModal}
+      <AttachmentPickerSheet {...attachmentPickerProps} />
       <Toast ref={toastRef} />
     </View>
   );
@@ -2753,18 +3011,44 @@ const styles = StyleSheet.create({
   // Input
   inputContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     padding: 16,
     borderTopWidth: 1,
   },
+  inputShell: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingLeft: 4,
+    paddingRight: 6,
+    paddingVertical: 4,
+    ...shadows.subtle,
+  },
   textInput: {
     flex: 1,
-    borderRadius: radius.pill,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
     maxHeight: 100,
+  },
+  textInputAndroid: {
+    paddingTop: 0,
+    paddingBottom: 0,
+    marginVertical: 0,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
+  },
+  attachButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sendButton: {
     marginLeft: 8,

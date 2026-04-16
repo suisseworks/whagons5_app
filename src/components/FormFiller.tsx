@@ -34,6 +34,7 @@ import { SignaturePad } from './SignaturePad';
 import { fontFamilies, fontSizes, radius } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
 import { useConvexUpload } from '../hooks/useConvexUpload';
+import { AttachmentPickerSheet } from './AttachmentPickerSheet';
 
 /** Fix self-hosted Convex storage URLs (dashboard domain → backend domain) */
 function fixConvexStorageUrl(url: string): string {
@@ -931,7 +932,7 @@ const ImageUploadField: React.FC<{
   primaryColor: string;
 }> = ({ onUploaded, borderColor, textColor, primaryColor }) => {
   const { t } = useLanguage();
-  const { pickAndUpload, uploading } = useConvexUpload();
+  const { pickAndUpload, uploading, attachmentPickerProps } = useConvexUpload();
 
   const handlePress = async () => {
     const attachments = await pickAndUpload();
@@ -941,23 +942,26 @@ const ImageUploadField: React.FC<{
   };
 
   return (
-    <TouchableOpacity
-      style={[styles.placeholderField, styles.imageUploadField, { borderColor }]}
-      onPress={handlePress}
-      disabled={uploading}
-      activeOpacity={0.7}
-    >
-      {uploading ? (
-        <ActivityIndicator size="small" color={primaryColor} />
-      ) : (
-        <>
-          <MaterialIcons name="add-a-photo" size={28} color={primaryColor} />
-          <Text style={[styles.placeholderText, { color: textColor, marginTop: 8 }]}>
-            {t('component.formFiller.tapToUploadImage', 'Tap to upload image')}
-          </Text>
-        </>
-      )}
-    </TouchableOpacity>
+    <>
+      <TouchableOpacity
+        style={[styles.placeholderField, styles.imageUploadField, { borderColor }]}
+        onPress={handlePress}
+        disabled={uploading}
+        activeOpacity={0.7}
+      >
+        {uploading ? (
+          <ActivityIndicator size="small" color={primaryColor} />
+        ) : (
+          <>
+            <MaterialIcons name="add-a-photo" size={28} color={primaryColor} />
+            <Text style={[styles.placeholderText, { color: textColor, marginTop: 8 }]}> 
+              {t('component.formFiller.tapToUploadImage', 'Tap to upload image')}
+            </Text>
+          </>
+        )}
+      </TouchableOpacity>
+      <AttachmentPickerSheet {...attachmentPickerProps} />
+    </>
   );
 };
 

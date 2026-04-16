@@ -5,9 +5,9 @@
  * one channel per predefined tone at startup. When a push notification arrives
  * with a `notification_tone` data field, we route it to the matching channel.
  *
- * On iOS, custom sounds require bundled audio files. For now the 'default'
- * system sound is used; per-tone playback can be added later by bundling
- * audio assets.
+ * On iOS, custom sounds require bundled audio files. We bundle the predefined
+ * tone wav files with the native app and map `notification_tone` to the
+ * matching filename for both remote and local notifications.
  */
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,8 @@ export const NOTIFICATION_TONES: ToneDefinition[] = [
   { id: 'triple',  name: 'Triple Beep',  description: 'Three quick ascending beeps' },
   { id: 'none',    name: 'Silent',       description: 'No sound' },
 ];
+
+const KNOWN_TONE_IDS = new Set(NOTIFICATION_TONES.map(t => t.id));
 
 // ---------------------------------------------------------------------------
 // Channel ID mapping
@@ -59,6 +61,28 @@ export function getChannelIdForTone(toneId?: string | null): string {
 
   // Unknown tone → default channel
   return 'whagons_default';
+}
+
+/**
+ * Get the iOS notification sound filename for a given tone.
+ * - `default`/unknown -> system default
+ * - `none` -> silent
+ * - known tones -> bundled wav filename
+ */
+export function getIosSoundForTone(toneId?: string | null): string | undefined {
+  if (!toneId || toneId === '' || toneId === 'default') {
+    return 'default';
+  }
+
+  if (toneId === 'none') {
+    return undefined;
+  }
+
+  if (!KNOWN_TONE_IDS.has(toneId)) {
+    return 'default';
+  }
+
+  return `tone_${toneId}.wav`;
 }
 
 /**

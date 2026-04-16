@@ -105,6 +105,10 @@ function resolveTaskStatusMeta(
   };
 }
 
+function isWorkingListAction(action: string | null): boolean {
+  return action === 'WORKING' || action === 'PAUSED';
+}
+
 function isTaskEligibleForWorkingList(
   task: TaskItem,
   override: Partial<TaskItem> | undefined,
@@ -113,7 +117,7 @@ function isTaskEligibleForWorkingList(
 ): boolean {
   if (!task.id || !myTaskIds.has(task.id)) return false;
   const statusMeta = resolveTaskStatusMeta(task, override, statusMap);
-  return statusMeta.action === 'WORKING' && !statusMeta.final && !statusMeta.initial;
+  return isWorkingListAction(statusMeta.action) && !statusMeta.final && !statusMeta.initial;
 }
 
 function mapTaskToItem(
@@ -144,6 +148,7 @@ function mapTaskToItem(
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
     spotId: task.spot_id ?? null,
     priority: mapPriority(task.priority_id, priorityMap),
+    priorityColor: task.priority_id ? (priorityMap.get(task.priority_id)?.color ?? null) : null,
     priorityId: task.priority_id ?? null,
     status: status.name,
     statusColor: status.color,
@@ -937,7 +942,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return result;
   }, [workingTaskIds, allMappedTaskMap, localOverrides, myTaskIds, statusMap]);
 
-  // Keep the working strip tied to real eligibility: assigned to me + WORKING action.
+  // Keep the working strip tied to real eligibility: assigned to me + active status action.
   useEffect(() => {
     if (!workingTaskIdsLoaded.current) return;
 
@@ -1114,7 +1119,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       statusAction: nextStatusAction,
     });
 
-    if (normalizeStatusAction(nextStatusAction) === 'WORKING' && myTaskIds.has(taskId)) {
+    if (isWorkingListAction(normalizeStatusAction(nextStatusAction)) && myTaskIds.has(taskId)) {
       setWorkingTaskIds((prev) => {
         if (prev.includes(taskId)) return prev;
         if (prev.length >= MAX_WORKING_TASKS) return prev;
@@ -1145,7 +1150,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
     const priorityInfo = priorityMap.get(priorityId);
     if (priorityInfo) {
-      setTimedOverride(taskId, { priority: priorityInfo.name, priorityId });
+      setTimedOverride(taskId, { priority: priorityInfo.name, priorityColor: priorityInfo.color ?? null, priorityId });
     }
 
     if (tenantId) {

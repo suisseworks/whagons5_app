@@ -29,6 +29,7 @@ import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
+import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 
 type BoardDetailRouteProp = RouteProp<RootStackParamList, 'BoardDetail'>;
 type BoardDetailNavProp = NativeStackNavigationProp<RootStackParamList, 'BoardDetail'>;
@@ -44,7 +45,7 @@ export const BoardDetailScreen: React.FC = () => {
   const { tenantId } = useTenant();
   const createBoardMessage = useMutation(api.boards.createMessage);
   const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
-  const { pickAndUpload, uploading: uploadingAttachment } = useConvexUpload();
+  const { pickAndUpload, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
 
   const { boardId } = route.params;
 
@@ -312,32 +313,47 @@ export const BoardDetailScreen: React.FC = () => {
             },
           ]}
         >
-          <TouchableOpacity
-            style={{ padding: 8 }}
-            onPress={handleAttachFile}
-            disabled={uploadingAttachment}
-          >
-            {uploadingAttachment ? (
-              <ActivityIndicator size="small" color={primaryColor} />
-            ) : (
-              <MaterialIcons name="attach-file" size={22} color={primaryColor} />
-            )}
-          </TouchableOpacity>
-          <TextInput
+          <View
             style={[
-              styles.composerInput,
+              styles.composerShell,
               {
                 backgroundColor: isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4',
-                color: colors.text,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
               },
             ]}
-            placeholder={t('boardDetail.composerPlaceholder')}
-            placeholderTextColor={colors.textSecondary}
-            value={messageInput}
-            onChangeText={setMessageInput}
-            multiline
-            maxLength={5000}
-          />
+          >
+            <TextInput
+              style={[
+                styles.composerInput,
+                {
+                  color: colors.text,
+                },
+              ]}
+              placeholder={t('boardDetail.composerPlaceholder')}
+              placeholderTextColor={colors.textSecondary}
+              value={messageInput}
+              onChangeText={setMessageInput}
+              multiline
+              maxLength={5000}
+            />
+            <TouchableOpacity
+              style={[
+                styles.attachButton,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                },
+              ]}
+              onPress={handleAttachFile}
+              disabled={uploadingAttachment}
+            >
+              {uploadingAttachment ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+              )}
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             style={[
               styles.sendButton,
@@ -357,6 +373,7 @@ export const BoardDetailScreen: React.FC = () => {
             />
           </TouchableOpacity>
         </View>
+        <AttachmentPickerSheet {...attachmentPickerProps} />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -479,15 +496,34 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     ...shadows.subtle,
   },
+  composerShell: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingLeft: 4,
+    paddingRight: 6,
+    paddingVertical: 4,
+  },
   composerInput: {
     flex: 1,
-    borderRadius: radius.lg,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
     maxHeight: 120,
     minHeight: 44,
+  },
+  attachButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 2,
   },
   sendButton: {
     marginLeft: 8,

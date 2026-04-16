@@ -37,6 +37,7 @@ import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { useTenant } from '../hooks/useTenant';
+import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 import { RootStackParamList, TaskItem } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import TaskNavigationMap from '../components/TaskNavigationMap';
@@ -352,6 +353,17 @@ function timeAgo(dateStr: string, t?: (key: string, opts?: Record<string, any>) 
   return date.toLocaleDateString();
 }
 
+function formatViewedAt(dateStr: string): string {
+  const date = new Date(
+    dateStr.includes('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z',
+  );
+  if (Number.isNaN(date.getTime())) return dateStr;
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  })}`;
+}
+
 type TaskDetailRouteProp = RouteProp<RootStackParamList, 'TaskDetail'>;
 
 export const TaskDetailScreen: React.FC = () => {
@@ -378,7 +390,6 @@ export const TaskDetailScreen: React.FC = () => {
     getAllowedStatuses,
     changeTaskStatus,
     changeTaskPriority,
-    assignTaskToUser,
     getFormSchema,
     getTaskFormSubmission,
     getFormVersionId,
@@ -403,6 +414,33 @@ export const TaskDetailScreen: React.FC = () => {
     }
     return map;
   }, [data.users]);
+
+  const taskCreator = useMemo(() => {
+    if (task.createdBy == null) return null;
+
+    const creatorId = String(task.createdBy);
+    const matchedUser = data.users.find((user: any) => (
+      String(user.id) === creatorId ||
+      String(user.pgId ?? '') === creatorId ||
+      String(user._id ?? '') === creatorId
+    ));
+
+    const isSelf = (
+      (authUser?.id != null && String(authUser.id) === creatorId) ||
+      ((authUser as any)?._id != null && String((authUser as any)._id) === creatorId)
+    );
+    const name = matchedUser?.name
+      ? String(matchedUser.name)
+      : isSelf
+        ? t('common.you')
+        : t('common.unknown');
+
+    return {
+      name,
+      picture: matchedUser?.url_picture ?? null,
+      isSelf,
+    };
+  }, [task.createdBy, data.users, authUser, t]);
 
   // Resolve workspace for this task
   const taskWorkspace = useMemo(() => {
@@ -449,6 +487,9 @@ export const TaskDetailScreen: React.FC = () => {
   // Assignee picker state
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState('');
+  const [selectedViewerKey, setSelectedViewerKey] = useState<string | null>(null);
+  const [draftAssigneeIds, setDraftAssigneeIds] = useState<string[]>([]);
+  const [savingAssignees, setSavingAssignees] = useState(false);
 
   const sortedUsers = useMemo(() => {
     const currentUserId = authUser?.id ?? 0;
@@ -489,7 +530,9 @@ export const TaskDetailScreen: React.FC = () => {
   const formHasMountedRef = useRef(false);
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
 
-  const convexTaskId = task.convexId ?? null;
+  const convexTaskId = task.convexId ?? task.taskConvexId ?? null;
+  const assignUserMutation = useMutation(api.taskResources.assignUser);
+  const unassignUserMutation = useMutation(api.taskResources.unassignUser);
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
@@ -533,7 +576,7 @@ export const TaskDetailScreen: React.FC = () => {
   const commentsScrollRef = useRef<ScrollView>(null);
   const commentEditInputRef = useRef<TextInput>(null);
 
-  const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment } = useConvexUpload();
+  const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
 
   // ─── Task views ("Seen by") — Convex taskViews table ───────────────────────
@@ -549,6 +592,32 @@ export const TaskDetailScreen: React.FC = () => {
   );
   const taskViewsLoading = viewsQueryArgs !== 'skip' && taskViewsRaw === undefined;
   const taskViews = viewsQueryArgs === 'skip' ? [] : (taskViewsRaw ?? []);
+
+  const taskAssignmentRows = useMemo(() => {
+    if (!task.id) return [];
+    return data.taskUsers.filter((assignment: any) => String(assignment.task_id) === String(task.id));
+  }, [data.taskUsers, task.id]);
+
+  const assignedUserIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const assignment of taskAssignmentRows) {
+      if (assignment.user_id != null) ids.add(String(assignment.user_id));
+    }
+    return ids;
+  }, [taskAssignmentRows]);
+
+  const assignmentRowsByUserId = useMemo(() => {
+    const rows = new Map<string, any>();
+    for (const assignment of taskAssignmentRows) {
+      if (assignment.user_id != null) rows.set(String(assignment.user_id), assignment);
+    }
+    return rows;
+  }, [taskAssignmentRows]);
+
+  const hasAssigneeChanges = useMemo(() => {
+    if (draftAssigneeIds.length !== assignedUserIds.size) return true;
+    return draftAssigneeIds.some((id) => !assignedUserIds.has(id));
+  }, [draftAssigneeIds, assignedUserIds]);
 
   const currentUserId = authUser?.id != null ? Number(authUser.id) : null;
   const currentUserConvexId = useMemo(() => {
@@ -568,6 +637,7 @@ export const TaskDetailScreen: React.FC = () => {
   }, [authUser, data.users]);
 
   type TaskViewer = {
+    key: string;
     id: number;
     name: string;
     picture: string | null;
@@ -575,7 +645,7 @@ export const TaskDetailScreen: React.FC = () => {
     isSelf: boolean;
   };
 
-  const viewersForDisplay = useMemo(() => {
+  const viewersForDisplay = useMemo<TaskViewer[]>(() => {
     if (!taskViews.length) return [];
     return taskViews
       .map((v: any) => {
@@ -588,7 +658,14 @@ export const TaskDetailScreen: React.FC = () => {
           id === currentUserId ||
           (v.convex_user_id && v.convex_user_id === (authUser as any)?._id)
         );
-        return { id, name, picture, viewedAt: v.viewed_at, isSelf } satisfies TaskViewer;
+        return {
+          key: `${id}-${v.viewed_at}`,
+          id,
+          name,
+          picture,
+          viewedAt: v.viewed_at,
+          isSelf,
+        } satisfies TaskViewer;
       })
       .sort((a: TaskViewer, b: TaskViewer) => {
         if (a.isSelf && !b.isSelf) return -1;
@@ -596,6 +673,22 @@ export const TaskDetailScreen: React.FC = () => {
         return new Date(a.viewedAt).getTime() - new Date(b.viewedAt).getTime();
       });
   }, [taskViews, userMap, currentUserId, data.users, authUser]);
+
+  const selectedViewer = useMemo<TaskViewer | null>(
+    () => viewersForDisplay.find((viewer: TaskViewer) => viewer.key === selectedViewerKey) ?? viewersForDisplay[0] ?? null,
+    [viewersForDisplay, selectedViewerKey],
+  );
+
+  useEffect(() => {
+    if (!viewersForDisplay.length) {
+      if (selectedViewerKey !== null) setSelectedViewerKey(null);
+      return;
+    }
+
+    if (!selectedViewerKey || !viewersForDisplay.some((viewer: TaskViewer) => viewer.key === selectedViewerKey)) {
+      setSelectedViewerKey(viewersForDisplay[0].key);
+    }
+  }, [viewersForDisplay, selectedViewerKey]);
 
   const canManageNote = useCallback((note: TaskNoteResponse) => {
     const noteUserId = note.userId ?? note.user_id;
@@ -611,6 +704,11 @@ export const TaskDetailScreen: React.FC = () => {
     const timer = setTimeout(() => commentEditInputRef.current?.focus(), 50);
     return () => clearTimeout(timer);
   }, [editingCommentId]);
+
+  useEffect(() => {
+    if (!assigneePickerVisible) return;
+    setDraftAssigneeIds(Array.from(assignedUserIds));
+  }, [assigneePickerVisible, assignedUserIds]);
 
   const seenTaskIdRef = useRef<number | null>(null);
   useEffect(() => {
@@ -639,17 +737,66 @@ export const TaskDetailScreen: React.FC = () => {
     setPriorityPickerVisible(false);
   };
 
-  const handleAssigneeSelect = (user: { id: number; name: string }) => {
-    if (task.id) {
-      if (displayAssignees.some((a) => a.name === user.name)) {
-        // Already assigned — just close
-      } else {
-        assignTaskToUser(task.id, user.id, user.name);
-      }
-    }
+  const closeAssigneePicker = useCallback(() => {
+    if (savingAssignees) return;
     setAssigneePickerVisible(false);
     setAssigneeSearch('');
-  };
+  }, [savingAssignees]);
+
+  const handleAssigneeToggle = useCallback((userId: number | string) => {
+    const nextId = String(userId);
+    setDraftAssigneeIds((prev) => (
+      prev.includes(nextId)
+        ? prev.filter((id) => id !== nextId)
+        : [...prev, nextId]
+    ));
+  }, []);
+
+  const handleSaveAssignees = useCallback(async () => {
+    if (!tenantId || !convexTaskId) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCannotUpdateAssignees') });
+      return;
+    }
+
+    const nextIds = new Set(draftAssigneeIds);
+    const idsToAdd = draftAssigneeIds.filter((id) => !assignedUserIds.has(id));
+    const idsToRemove = Array.from(assignedUserIds).filter((id) => !nextIds.has(id));
+
+    if (idsToAdd.length === 0 && idsToRemove.length === 0) {
+      closeAssigneePicker();
+      return;
+    }
+
+    setSavingAssignees(true);
+    try {
+      for (const userId of idsToAdd) {
+        const user = data.users.find((candidate: any) => String(candidate.id) === userId);
+        const userConvexId = (user as any)?._id;
+        if (!userConvexId) continue;
+        await assignUserMutation({
+          tenantId,
+          taskId: convexTaskId as any,
+          userId: userConvexId as any,
+        });
+      }
+
+      for (const userId of idsToRemove) {
+        const assignment = assignmentRowsByUserId.get(userId);
+        const assignmentId = assignment?._id ?? assignment?.id;
+        if (!assignmentId) continue;
+        await unassignUserMutation({
+          tenantId,
+          id: assignmentId as any,
+        });
+      }
+
+      closeAssigneePicker();
+    } catch (err: any) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('taskDetail.errorCannotUpdateAssignees') });
+    } finally {
+      setSavingAssignees(false);
+    }
+  }, [tenantId, convexTaskId, draftAssigneeIds, assignedUserIds, data.users, assignUserMutation, assignmentRowsByUserId, unassignUserMutation, closeAssigneePicker, t]);
 
   const handleAddComment = async () => {
     const text = commentText.trim();
@@ -1214,32 +1361,71 @@ export const TaskDetailScreen: React.FC = () => {
       ) : viewersForDisplay.length > 0 ? (
         <View style={styles.seenList}>
           {viewersForDisplay.map((viewer: TaskViewer) => (
-            <View key={`${viewer.id}-${viewer.viewedAt}`} style={[styles.seenRow, { backgroundColor: secondarySurface }]}>
+            <TouchableOpacity
+              key={viewer.key}
+              activeOpacity={0.8}
+              onPress={() => setSelectedViewerKey(viewer.key)}
+              style={[
+                styles.seenAvatarButton,
+                { backgroundColor: secondarySurface },
+                selectedViewer?.key === viewer.key && [styles.seenAvatarButtonActive, { borderColor: primaryColor }],
+              ]}
+            >
               {viewer.picture ? (
                 <Image source={{ uri: viewer.picture }} style={styles.seenAvatarImg} />
               ) : (
                 <View style={[styles.seenAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}>
                   <Text style={[styles.seenAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}>
-                    {getInitials(viewer.isSelf ? 'You' : viewer.name)}
+                    {getInitials(viewer.isSelf ? t('common.you') : viewer.name)}
                   </Text>
                 </View>
               )}
-              <View style={styles.seenInfo}>
+            </TouchableOpacity>
+          ))}
+          {selectedViewer ? (
+            <View style={[styles.seenSelectedCard, { backgroundColor: secondarySurface }]}>
+              <View style={styles.seenSelectedHeader}>
+                <MaterialIcons name="visibility" size={14} color={primaryColor} />
                 <Text style={[styles.seenName, { color: colors.text }]}>
-                  {viewer.isSelf ? 'You' : viewer.name}
-                </Text>
-                <Text style={[styles.seenTime, { color: tertiaryText }]}>
-                  {timeAgo(viewer.viewedAt, t)}
+                  {selectedViewer.isSelf ? t('common.you') : selectedViewer.name}
                 </Text>
               </View>
-              <MaterialIcons name="visibility" size={12} color={isDarkMode ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'} />
+              <Text style={[styles.seenTime, { color: tertiaryText }]}>
+                {timeAgo(selectedViewer.viewedAt, t)}
+              </Text>
+              <Text style={[styles.seenExactTime, { color: tertiaryText }]}>
+                {formatViewedAt(selectedViewer.viewedAt)}
+              </Text>
             </View>
-          ))}
+          ) : null}
         </View>
       ) : (
-        <View style={[styles.seenEmptyRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+        <View style={[styles.seenEmptyRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}> 
           <MaterialIcons name="visibility-off" size={16} color={tertiaryText} />
           <Text style={[styles.seenEmptyText, { color: tertiaryText }]}>{t('taskDetail.noOneViewed')}</Text>
+        </View>
+      )}
+
+      <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.createdByLabel')}</Text>
+      {taskCreator ? (
+        <View style={[styles.assigneeRow, { backgroundColor: secondarySurface }]}> 
+          {taskCreator.picture ? (
+            <Image source={{ uri: taskCreator.picture }} style={styles.assigneeAvatarImg} />
+          ) : (
+            <View style={[styles.assigneeAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}> 
+              <Text style={[styles.assigneeAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}> 
+                {getInitials(taskCreator.name)}
+              </Text>
+            </View>
+          )}
+          <Text style={[styles.assigneeNameText, { color: colors.text }]}> 
+            {taskCreator.isSelf ? t('common.you') : taskCreator.name}
+          </Text>
+        </View>
+      ) : (
+        <View style={[styles.seenEmptyRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}> 
+          <MaterialIcons name="person-outline" size={16} color={tertiaryText} />
+          <Text style={[styles.seenEmptyText, { color: tertiaryText }]}>{t('common.unknown')}</Text>
         </View>
       )}
     </ScrollView>
@@ -1434,9 +1620,9 @@ export const TaskDetailScreen: React.FC = () => {
       )}
 
       {pendingAttachments.length > 0 && (
-        <View style={[styles.attachmentPreview, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}>
+        <View style={[styles.attachmentPreview, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}> 
           {pendingAttachments.map((a, i) => (
-            <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}>
+            <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7', borderColor: cardBorder }]}>
               <MaterialIcons
                 name={a.fileType.startsWith('image/') ? 'image' : 'attach-file'}
                 size={14}
@@ -1458,32 +1644,47 @@ export const TaskDetailScreen: React.FC = () => {
           { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
         ]}
       >
-        <TextInput
+        <View
           style={[
-            styles.commentInput,
+            styles.commentComposerShell,
             {
               backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
-              color: colors.text,
+              borderColor: cardBorder,
             },
           ]}
-          placeholder={t('taskDetail.addCommentPlaceholder')}
-          placeholderTextColor={colors.textSecondary}
-          value={commentText}
-          onChangeText={setCommentText}
-          onSubmitEditing={handleAddComment}
-          editable={!sendingComment}
-        />
-        <TouchableOpacity
-          style={styles.attachButton}
-          onPress={handleAttach}
-          disabled={uploadingAttachment}
         >
-          {uploadingAttachment ? (
-            <ActivityIndicator size="small" color={primaryColor} />
-          ) : (
-            <MaterialIcons name="attach-file" size={22} color={primaryColor} />
-          )}
-        </TouchableOpacity>
+          <TextInput
+            style={[
+              styles.commentInput,
+              {
+                color: colors.text,
+              },
+            ]}
+            placeholder={t('taskDetail.addCommentPlaceholder')}
+            placeholderTextColor={colors.textSecondary}
+            value={commentText}
+            onChangeText={setCommentText}
+            onSubmitEditing={handleAddComment}
+            editable={!sendingComment}
+          />
+          <TouchableOpacity
+            style={[
+              styles.attachButton,
+              {
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                borderColor: cardBorder,
+              },
+            ]}
+            onPress={handleAttach}
+            disabled={uploadingAttachment}
+          >
+            {uploadingAttachment ? (
+              <ActivityIndicator size="small" color={primaryColor} />
+            ) : (
+              <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+            )}
+          </TouchableOpacity>
+        </View>
         <TouchableOpacity
           style={[
             styles.sendButton,
@@ -1507,6 +1708,7 @@ export const TaskDetailScreen: React.FC = () => {
           )}
         </TouchableOpacity>
       </View>
+      <AttachmentPickerSheet {...attachmentPickerProps} />
     </View>
   );
 
@@ -1736,8 +1938,7 @@ export const TaskDetailScreen: React.FC = () => {
         transparent={true}
         statusBarTranslucent
         onRequestClose={() => {
-          setAssigneePickerVisible(false);
-          setAssigneeSearch('');
+          closeAssigneePicker();
         }}
       >
         <KeyboardAvoidingView
@@ -1749,8 +1950,7 @@ export const TaskDetailScreen: React.FC = () => {
             style={styles.statusPickerOverlay}
             activeOpacity={1}
             onPress={() => {
-              setAssigneePickerVisible(false);
-              setAssigneeSearch('');
+              closeAssigneePicker();
             }}
           >
             <View
@@ -1805,7 +2005,7 @@ export const TaskDetailScreen: React.FC = () => {
               <ScrollView style={{ maxHeight: 300 }} bounces={false} keyboardShouldPersistTaps="handled">
                 <View style={styles.statusPickerList}>
                   {sortedUsers.map((u) => {
-                    const isAssigned = displayAssignees.some((a) => a.name === u.name);
+                    const isAssigned = draftAssigneeIds.includes(String(u.id));
                     const isCurrentUser = u.id === (authUser?.id ?? 0);
                     return (
                       <TouchableOpacity
@@ -1819,7 +2019,7 @@ export const TaskDetailScreen: React.FC = () => {
                             backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
                           },
                         ]}
-                        onPress={() => handleAssigneeSelect({ id: u.id as number, name: u.name })}
+                        onPress={() => handleAssigneeToggle(u.id as number)}
                         activeOpacity={0.7}
                       >
                         <View
@@ -1827,15 +2027,19 @@ export const TaskDetailScreen: React.FC = () => {
                             width: 28,
                             height: 28,
                             borderRadius: 14,
-                            backgroundColor: primaryColor,
+                            backgroundColor: u.url_picture ? 'transparent' : primaryColor,
                             alignItems: 'center',
                             justifyContent: 'center',
                             marginRight: 12,
                           }}
                         >
-                          <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
-                            {u.name.charAt(0).toUpperCase()}
-                          </Text>
+                          {u.url_picture ? (
+                            <Image source={{ uri: u.url_picture }} style={styles.assigneeAvatarImg} />
+                          ) : (
+                            <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
+                              {getInitials(u.name)}
+                            </Text>
+                          )}
                         </View>
                         <Text
                           style={[
@@ -1854,6 +2058,26 @@ export const TaskDetailScreen: React.FC = () => {
                   })}
                 </View>
               </ScrollView>
+              <View style={[styles.assigneePickerFooter, { borderTopColor: cardBorder }]}> 
+                <TouchableOpacity
+                  style={[
+                    styles.assigneePickerSaveButton,
+                    {
+                      backgroundColor: hasAssigneeChanges ? primaryColor : colors.textSecondary,
+                      opacity: savingAssignees ? 0.7 : 1,
+                    },
+                  ]}
+                  onPress={handleSaveAssignees}
+                  disabled={savingAssignees}
+                  activeOpacity={0.8}
+                >
+                  {savingAssignees ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.assigneePickerSaveText}>{t('common.save')}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </TouchableOpacity>
         </KeyboardAvoidingView>
@@ -2204,6 +2428,21 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
     fontStyle: 'italic',
   },
+  assigneePickerFooter: {
+    borderTopWidth: 1,
+    padding: 12,
+  },
+  assigneePickerSaveButton: {
+    minHeight: 44,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  assigneePickerSaveText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontFamily: fontFamilies.bodySemibold,
+  },
 
   /* ── Tags ── */
   tagsWrap: {
@@ -2236,43 +2475,64 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
   },
   seenList: {
-    gap: 4,
-  },
-  seenRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
     alignItems: 'center',
-    paddingVertical: 7,
-    paddingHorizontal: 10,
-    borderRadius: 8,
+  },
+  seenAvatarButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  seenAvatarButtonActive: {
+    borderWidth: 2,
   },
   seenAvatarImg: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
   },
   seenAvatarCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     justifyContent: 'center',
     alignItems: 'center',
   },
   seenAvatarInitial: {
-    fontSize: 9,
+    fontSize: 11,
     fontFamily: fontFamilies.bodySemibold,
   },
-  seenInfo: {
-    flex: 1,
-    marginLeft: 8,
+  seenSelectedCard: {
+    width: '100%',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginTop: 4,
+  },
+  seenSelectedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   seenName: {
-    fontSize: 12,
-    fontFamily: fontFamilies.bodyMedium,
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
   },
   seenTime: {
-    fontSize: 10,
+    fontSize: 12,
     fontFamily: fontFamilies.bodyRegular,
-    marginTop: 0,
+    marginTop: 4,
+  },
+  seenExactTime: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
   },
   seenEmptyRow: {
     flexDirection: 'row',
@@ -2486,39 +2746,57 @@ const styles = StyleSheet.create({
   },
   commentInputContainer: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     padding: 16,
+  },
+  commentComposerShell: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    paddingLeft: 4,
+    paddingRight: 6,
+    paddingVertical: 4,
+    ...shadows.subtle,
   },
   commentInput: {
     flex: 1,
-    borderRadius: radius.pill,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
   },
   attachButton: {
-    marginRight: 4,
-    padding: 8,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 2,
   },
   attachmentPreview: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     paddingHorizontal: 16,
-    paddingTop: 8,
-    gap: 6,
+    paddingTop: 10,
+    paddingBottom: 2,
+    gap: 8,
   },
   attachmentChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
-    maxWidth: 160,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    gap: 6,
+    maxWidth: 220,
   },
   attachmentChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontFamily: fontFamilies.bodyRegular,
     flex: 1,
   },

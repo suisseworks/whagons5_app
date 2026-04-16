@@ -38,10 +38,11 @@ type DraftTemplate = DraftContextItem & {
   categoryId?: string;
   defaultSpotId?: string;
   priorityId?: string;
+  defaultUserIds?: string[];
   spotsNotApplicable: boolean;
 };
 type DraftSpot = DraftContextItem & { parentId?: string };
-type DraftPriority = DraftContextItem & { color?: string | null };
+type DraftPriority = DraftContextItem & { color?: string | null; categoryId?: string };
 type DraftUser = DraftContextItem;
 type VoiceDraftContext = {
   selectedWorkspaceId?: string;
@@ -140,6 +141,28 @@ async function getOptionalCapturedLocation() {
   }
 }
 
+function isLowPriorityName(name: string | undefined): boolean {
+  const normalized = name?.trim().toLowerCase();
+  return normalized === 'low' || normalized === 'baja';
+}
+
+function resolveDefaultPriorityId(
+  context: VoiceDraftContext,
+  workspaceId: string | null | undefined,
+  templateId: string | null | undefined,
+): string | null {
+  const template = context.templates.find((item) => item.id === templateId) ?? null;
+  const workspace = context.workspaces.find((item) => item.id === workspaceId) ?? null;
+  const targetCategoryId = template?.categoryId ?? workspace?.categoryId;
+
+  return context.priorities.find((priority) =>
+    priority.categoryId === targetCategoryId && isLowPriorityName(priority.name),
+  )?.id
+    ?? context.priorities.find((priority) => !priority.categoryId && isLowPriorityName(priority.name))?.id
+    ?? context.priorities.find((priority) => isLowPriorityName(priority.name))?.id
+    ?? null;
+}
+
 export const VoiceTaskReviewScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<ScreenRouteProp>();
@@ -188,15 +211,46 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     const draftId = String(draft._id);
     if (initializedDraftId === draftId) return;
 
+    const initialWorkspaceId = proposal.workspaceId ?? context.selectedWorkspaceId ?? context.workspaces[0]?.id ?? null;
+    const initialTemplateId = proposal.templateId ?? null;
+    const initialTemplate = context.templates.find((item) => item.id === initialTemplateId) ?? null;
     setInitializedDraftId(draftId);
-    setSelectedWorkspaceId(proposal.workspaceId ?? context.selectedWorkspaceId ?? context.workspaces[0]?.id ?? null);
-    setSelectedTemplateId(proposal.templateId ?? null);
+    setSelectedWorkspaceId(initialWorkspaceId);
+    setSelectedTemplateId(initialTemplateId);
     setTaskName(proposal.taskName ?? '');
     setDescription(proposal.description ?? '');
     setSelectedSpotId(proposal.spotId ?? null);
-    setSelectedPriorityId(proposal.priorityId ?? null);
-    setSelectedAssigneeIds(proposal.assigneeUserIds ?? []);
+    setSelectedPriorityId(
+      proposal.priorityId
+        ?? initialTemplate?.priorityId
+        ?? resolveDefaultPriorityId(context, initialWorkspaceId, initialTemplateId),
+    );
+    setSelectedAssigneeIds(
+      proposal.assigneeUserIds && proposal.assigneeUserIds.length > 0
+        ? proposal.assigneeUserIds
+        : (initialTemplate?.defaultUserIds ?? []),
+    );
   }, [context, draft, initializedDraftId, proposal]);
+
+  useEffect(() => {
+    if (!context || selectedPriorityId) return;
+    const selectedTemplate = context.templates.find((item) => item.id === selectedTemplateId) ?? null;
+    const fallbackPriorityId = selectedTemplate?.priorityId
+      ?? resolveDefaultPriorityId(context, selectedWorkspaceId, selectedTemplateId);
+    if (fallbackPriorityId) {
+      setSelectedPriorityId(fallbackPriorityId);
+    }
+  }, [context, selectedPriorityId, selectedTemplateId, selectedWorkspaceId]);
+
+  useEffect(() => {
+    if (!context || selectedAssigneeIds.length > 0 || !selectedTemplateId) return;
+    const selectedTemplate = context.templates.find((item) => item.id === selectedTemplateId) ?? null;
+    if (selectedTemplate?.defaultUserIds?.length) {
+      setSelectedAssigneeIds(selectedTemplate.defaultUserIds);
+    }
+  }, [context, selectedAssigneeIds.length, selectedTemplateId]);
+
+  const selectedTemplateFromContext = context?.templates.find((template: DraftTemplate) => template.id === selectedTemplateId) ?? null;
 
   const availableTemplates = useMemo(() => {
     if (!context) return [];
@@ -208,9 +262,19 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     if (!selectedTemplateId) return;
     const exists = availableTemplates.some((template: DraftTemplate) => template.id === selectedTemplateId);
     if (!exists) {
+      if (selectedTemplateFromContext?.workspaceId && selectedTemplateFromContext.workspaceId !== selectedWorkspaceId) {
+        setSelectedWorkspaceId(selectedTemplateFromContext.workspaceId);
+        return;
+      }
       setSelectedTemplateId(null);
     }
-  }, [availableTemplates, selectedTemplateId]);
+  }, [availableTemplates, selectedTemplateFromContext, selectedTemplateId, selectedWorkspaceId]);
+
+  const selectedWorkspace = context?.workspaces.find((workspace: DraftWorkspace) => workspace.id === selectedWorkspaceId) ?? null;
+  const selectedTemplate = selectedTemplateFromContext;
+  const selectedSpot = context?.spots.find((spot: DraftSpot) => spot.id === selectedSpotId) ?? null;
+  const selectedPriority = context?.priorities.find((priority: DraftPriority) => priority.id === selectedPriorityId) ?? null;
+  const selectedAssignees = context?.users.filter((user: DraftUser) => selectedAssigneeIds.includes(user.id)) ?? [];
 
   useEffect(() => {
     if (!selectedTemplate?.workspaceId) return;
@@ -218,12 +282,6 @@ export const VoiceTaskReviewScreen: React.FC = () => {
       setSelectedWorkspaceId(selectedTemplate.workspaceId);
     }
   }, [selectedTemplate, selectedWorkspaceId]);
-
-  const selectedWorkspace = context?.workspaces.find((workspace: DraftWorkspace) => workspace.id === selectedWorkspaceId) ?? null;
-  const selectedTemplate = availableTemplates.find((template: DraftTemplate) => template.id === selectedTemplateId) ?? null;
-  const selectedSpot = context?.spots.find((spot: DraftSpot) => spot.id === selectedSpotId) ?? null;
-  const selectedPriority = context?.priorities.find((priority: DraftPriority) => priority.id === selectedPriorityId) ?? null;
-  const selectedAssignees = context?.users.filter((user: DraftUser) => selectedAssigneeIds.includes(user.id)) ?? [];
 
   const liveMissingFields = useMemo(() => {
     const normalizedMissing = ((draft?.missingFields ?? []) as string[])
@@ -261,7 +319,8 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     const effectivePriorityId = selectedPriorityId || selectedTemplate?.priorityId || null;
     if (effectivePriorityId) missing.delete('priority');
 
-    if (selectedAssigneeIds.length > 0) missing.delete('assignees');
+    const effectiveAssigneeIds = selectedAssigneeIds.length > 0 ? selectedAssigneeIds : (selectedTemplate?.defaultUserIds ?? []);
+    if (effectiveAssigneeIds.length > 0) missing.delete('assignees');
 
     return Array.from(missing);
   }, [
@@ -276,11 +335,16 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     taskName,
   ]);
 
+  const liveBlockingFields = useMemo(
+    () => liveMissingFields.filter((field) => field !== 'priority' && field !== 'assignees'),
+    [liveMissingFields],
+  );
+
   const canConfirm =
     !!draft &&
     draft.status === 'ready' &&
     proposal.intent !== 'unsupported' &&
-    liveMissingFields.length === 0 &&
+    liveBlockingFields.length === 0 &&
     !isSubmitting;
 
   const workspaceItems = context?.workspaces.map((workspace: DraftWorkspace) => ({ id: workspace.id, name: workspace.name })) ?? [];
@@ -305,7 +369,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
 
   const handleConfirm = useCallback(async () => {
     if (!tenantId || !draft || !selectedWorkspaceId) return;
-    if (liveMissingFields.length > 0) {
+    if (liveBlockingFields.length > 0) {
       Alert.alert('Missing information', 'Please resolve the missing fields before creating the task.');
       return;
     }
@@ -337,7 +401,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     confirmDraft,
     description,
     draft,
-    liveMissingFields.length,
+    liveBlockingFields.length,
     navigation,
     selectedAssigneeIds,
     selectedPriorityId,

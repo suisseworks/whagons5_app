@@ -7,6 +7,7 @@
  */
 import React, { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { ConvexReactClient, ConvexProviderWithAuth } from 'convex/react';
+import { getIdToken as getFirebaseIdToken } from '@react-native-firebase/auth';
 import { auth } from '../firebase/firebaseConfig';
 
 const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL;
@@ -31,7 +32,7 @@ function useFirebaseAuth() {
   const fetchAccessToken = useCallback(
     async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
       if (!user) return null;
-      return user.getIdToken(forceRefreshToken);
+      return getFirebaseIdToken(user, forceRefreshToken);
     },
     [user],
   );

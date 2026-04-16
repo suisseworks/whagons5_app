@@ -681,12 +681,12 @@ function mapLinkPreview(doc: any): SyncedLinkPreview {
   };
 }
 
-function mapWorkspaceChat(doc: any): SyncedWorkspaceChat {
+function mapWorkspaceChat(doc: any, fk: FkLookups): SyncedWorkspaceChat {
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    workspace_id: doc.workspaceId,
-    user_id: doc.userId,
+    workspace_id: resolveFk(fk.workspaces, doc.workspaceId),
+    user_id: resolveFk(fk.users, doc.userId),
     created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
     updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : '',
   };

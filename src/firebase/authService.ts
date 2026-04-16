@@ -10,12 +10,13 @@
  *   - signOut()            -> Firebase sign-out
  *
  * After any sign-in, the caller should:
- *   1. Get the Firebase idToken via user.getIdToken()
+ *   1. Get the Firebase idToken via getIdToken(user)
  *   2. POST it to the backend /login endpoint to get a Sanctum token
  */
 
 import {
   getAuth,
+  getIdToken as getFirebaseIdToken,
   signInWithCredential,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -137,7 +138,7 @@ export function getCurrentUser(): FirebaseAuthTypes.User | null {
 export async function getIdToken(forceRefresh = false): Promise<string | null> {
   const user = auth.currentUser;
   if (!user) return null;
-  return user.getIdToken(forceRefresh);
+  return getFirebaseIdToken(user, forceRefresh);
 }
 
 /**

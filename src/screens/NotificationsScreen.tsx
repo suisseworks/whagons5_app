@@ -51,7 +51,7 @@ export const NotificationsScreen: React.FC = () => {
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const { tenantId } = useTenant();
-  const { tasks } = useTasks();
+  const { unfilteredTasks } = useTasks();
   const { isAuthenticated } = useConvexAuth();
   const {
     notifications: localNotifications,
@@ -145,15 +145,25 @@ export const NotificationsScreen: React.FC = () => {
 
     // Task-related notification types (backend sends "task_updated", "task_shared", etc.)
     const isTaskType = [
-      'task', 'task_updated', 'task_shared', 'task_completed',
-      'assignment', 'sla', 'approval', 'done',
+      'task',
+      'task_updated',
+      'task_shared',
+      'task_completed',
+      'task_assigned',
+      'task_created_unassigned',
+      'task_unassigned',
+      'reported_task_seen',
+      'assignment',
+      'sla',
+      'approval',
+      'done',
     ].includes(type ?? '');
 
     if (isTaskType) {
       // Backend uses snake_case (task_id), Convex uses camelCase (taskId)
       const taskId = data.taskId || data.task_id;
       if (taskId) {
-        const task = tasks.find(t => t.convexId === taskId || String(t.id) === String(taskId));
+        const task = unfilteredTasks.find(t => t.convexId === taskId || String(t.id) === String(taskId));
         if (task) {
           navigation.navigate('TaskDetail', { task });
           return;
@@ -165,7 +175,7 @@ export const NotificationsScreen: React.FC = () => {
       const msgMatch = notification.message?.match(/(?:on:|created:)\s*(.+)$/i);
       if (msgMatch) {
         const taskName = msgMatch[1].trim();
-        const task = tasks.find(t => t.title === taskName);
+        const task = unfilteredTasks.find(t => t.title === taskName);
         if (task) {
           navigation.navigate('TaskDetail', { task });
           return;

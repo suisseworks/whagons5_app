@@ -50,7 +50,18 @@ play-store-service-account.json
 
 # generated native folders
 /ios
-/android
+/android/*
+!/android/app/
+/android/app/*
+!/android/app/src/
+/android/app/src/*
+!/android/app/src/main/
+/android/app/src/main/*
+!/android/app/src/main/res/
+/android/app/src/main/res/*
+!/android/app/src/main/res/raw/
+/android/app/src/main/res/raw/*
+!/android/app/src/main/res/raw/tone_*.wav
 
 # accidental local Convex codegen from running commands inside app/
 /convex/
