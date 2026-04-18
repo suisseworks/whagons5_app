@@ -18,7 +18,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useNotifications, AppNotification, getNotificationMeta } from '../context/NotificationContext';
 import { useTasks } from '../context/TaskContext';
 import { useTenant } from '../hooks/useTenant';
-import { formatTimestamp } from '../utils/helpers';
+import { formatTimestamp, resolveNotificationNavigation } from '../utils/helpers';
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 
@@ -140,63 +140,22 @@ export const NotificationsScreen: React.FC = () => {
   const handleNotificationPress = (notification: AppNotification) => {
     markAsRead(notification.id);
 
-    const data = notification.data ?? {};
-    const type = notification.type || data.type;
+    const target = resolveNotificationNavigation(notification as any, unfilteredTasks);
+    if (target?.screen === 'TaskDetail') {
+      navigation.navigate('TaskDetail', target.params);
+      return;
+    }
+    if (target?.screen === 'BoardDetail') {
+      navigation.navigate('BoardDetail', target.params);
+      return;
+    }
+    if (target?.screen === 'Main') {
+      navigation.navigate('Main', target.params);
+      return;
+    }
 
-    // Task-related notification types (backend sends "task_updated", "task_shared", etc.)
-    const isTaskType = [
-      'task',
-      'task_updated',
-      'task_shared',
-      'task_completed',
-      'task_assigned',
-      'task_created_unassigned',
-      'task_unassigned',
-      'reported_task_seen',
-      'assignment',
-      'sla',
-      'approval',
-      'done',
-    ].includes(type ?? '');
-
-    if (isTaskType) {
-      // Backend uses snake_case (task_id), Convex uses camelCase (taskId)
-      const taskId = data.taskId || data.task_id;
-      if (taskId) {
-        const task = unfilteredTasks.find(t => t.convexId === taskId || String(t.id) === String(taskId));
-        if (task) {
-          navigation.navigate('TaskDetail', { task });
-          return;
-        }
-      }
-
-      // Fallback: try to find task by name from the notification message
-      // Messages often end with "on: Task Name" or "created: Task Name"
-      const msgMatch = notification.message?.match(/(?:on:|created:)\s*(.+)$/i);
-      if (msgMatch) {
-        const taskName = msgMatch[1].trim();
-        const task = unfilteredTasks.find(t => t.title === taskName);
-        if (task) {
-          navigation.navigate('TaskDetail', { task });
-          return;
-        }
-      }
-
-      Alert.alert(notification.title, notification.message);
-    } else if (type === 'message' || type === 'chat' || type === 'comment') {
-      const conversationId = data.chatId || data.chat_id;
-      if (conversationId) {
-        navigation.navigate('Main', { tab: 1, conversationId });
-        return;
-      }
-      Alert.alert(notification.title, notification.message);
-    } else if (type === 'board_message') {
-      const boardId = data.boardPgId || data.board_pg_id || data.boardId || data.board_id;
-      if (boardId) {
-        navigation.navigate('BoardDetail', { boardId });
-        return;
-      }
-      Alert.alert(notification.title, notification.message);
+    if (notification.type === 'message' || notification.type === 'chat' || notification.type === 'comment' || notification.type === 'task_comment' || notification.type === 'mention' || notification.type === 'call') {
+      navigation.navigate('Main', { tab: 1 });
     } else {
       Alert.alert(notification.title, notification.message);
     }

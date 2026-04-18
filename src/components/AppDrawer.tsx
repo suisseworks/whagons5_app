@@ -26,9 +26,10 @@ type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 interface AppDrawerProps {
   onClose: () => void;
+  onWorkspaceSelect?: (workspaceName: string) => void;
 }
 
-export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
+export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect }) => {
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
   const { t } = useLanguage();
@@ -67,7 +68,11 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
   };
 
   const handleWorkspaceSelect = (name: string) => {
-    setSelectedWorkspace(name);
+    if (onWorkspaceSelect) {
+      onWorkspaceSelect(name);
+    } else {
+      setSelectedWorkspace(name);
+    }
     onClose();
   };
 
@@ -96,17 +101,25 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
           </View>
 
           {user && (
-            <View style={styles.userRow}>
-              <View style={[styles.userAvatar, { backgroundColor: primaryColor }]}>
-                <Text style={styles.userAvatarText}>{userInitial}</Text>
-              </View>
+            <TouchableOpacity
+              style={styles.userRow}
+              onPress={() => handleNavigate('Profile')}
+              activeOpacity={0.7}
+            >
+              {user.photo_url ? (
+                <Image source={{ uri: user.photo_url }} style={styles.userAvatarImage} />
+              ) : (
+                <View style={[styles.userAvatar, { backgroundColor: primaryColor }]}>
+                  <Text style={styles.userAvatarText}>{userInitial}</Text>
+                </View>
+              )}
               <Text style={[styles.userName, { color: colors.textSecondary }]} numberOfLines={1}>
                 {user.name ?? user.email}
               </Text>
               <View style={[styles.rolePill, { backgroundColor: `${primaryColor}15` }]}>
                 <Text style={[styles.roleText, { color: primaryColor }]}>{t('component.appDrawer.roleMember')}</Text>
               </View>
-            </View>
+            </TouchableOpacity>
           )}
         </View>
 
@@ -185,7 +198,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose }) => {
         </TouchableOpacity>
 
         {/* Profile */}
-        <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Settings')} activeOpacity={0.6}>
+        <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Profile')} activeOpacity={0.6}>
           <MaterialIcons name="person-outline" size={20} color={colors.textSecondary} />
           <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuProfile')}</Text>
           <MaterialIcons name="chevron-right" size={14} color={textTertiary} />
@@ -329,6 +342,12 @@ const styles = StyleSheet.create({
     borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 8,
+  },
+  userAvatarImage: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     marginRight: 8,
   },
   userAvatarText: {

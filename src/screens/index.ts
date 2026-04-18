@@ -2,6 +2,7 @@ export { SplashScreen } from './SplashScreen';
 export { InitialSyncScreen } from './InitialSyncScreen';
 export { LoginScreen } from './LoginScreen';
 export { MainScreen } from './MainScreen';
+export { ProfileScreen } from './ProfileScreen';
 export { ColabScreen } from './ColabScreen';
 export { TaskDetailScreen } from './TaskDetailScreen';
 export { CreateTaskScreen } from './CreateTaskScreen';

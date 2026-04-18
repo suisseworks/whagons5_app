@@ -230,10 +230,27 @@
     "errorCannotAddComment": "No se puede agregar comentario: falta el ID de la tarea o el tenant.",
     "errorFailedToPostComment": "Error al publicar comentario",
     "errorCouldNotOpenFile": "No se pudo abrir este archivo.",
+    "shareUnavailable": "Esta tarea aún no se puede compartir.",
+    "shareMissingBaseUrl": "Falta `EXPO_PUBLIC_CONVEX_URL` para compartir tareas.",
+    "shareFailed": "No se pudo crear un enlace para compartir esta tarea.",
     "timeJustNow": "Justo ahora",
     "timeMinutesAgo": "hace %{count}m",
     "timeHoursAgo": "hace %{count}h",
     "timeDaysAgo": "hace %{count}d"
+  },
+  "taskShareLink": {
+    "eyebrow": "Tarea compartida",
+    "openingTitle": "Abriendo tarea",
+    "openingSubtitle": "Preparando la tarea compartida dentro de Whagons.",
+    "invalidTitle": "Enlace de tarea no disponible",
+    "invalidSubtitle": "Este enlace es inválido, fue revocado o ya no está disponible.",
+    "openTaskButton": "Abrir tarea",
+    "goToLoginButton": "Inicia sesión para abrir",
+    "openFailed": "No pudimos abrir esta tarea en este momento.",
+    "workspaceLabel": "Espacio",
+    "statusLabel": "Estado",
+    "priorityLabel": "Prioridad",
+    "dueLabel": "Vence"
   },
   "sharedTask": {
     "approvedSuccessfully": "Aprobado exitosamente",

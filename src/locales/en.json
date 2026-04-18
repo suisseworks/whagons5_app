@@ -230,10 +230,27 @@
     "errorCannotAddComment": "Cannot add comment: task ID or tenant is missing.",
     "errorFailedToPostComment": "Failed to post comment",
     "errorCouldNotOpenFile": "Could not open this file.",
+    "shareUnavailable": "This task cannot be shared yet.",
+    "shareMissingBaseUrl": "Task sharing is missing `EXPO_PUBLIC_CONVEX_URL`.",
+    "shareFailed": "Failed to create a share link for this task.",
     "timeJustNow": "Just now",
     "timeMinutesAgo": "%{count}m ago",
     "timeHoursAgo": "%{count}h ago",
     "timeDaysAgo": "%{count}d ago"
+  },
+  "taskShareLink": {
+    "eyebrow": "Shared task",
+    "openingTitle": "Opening task",
+    "openingSubtitle": "Preparing the shared task inside Whagons.",
+    "invalidTitle": "Task link unavailable",
+    "invalidSubtitle": "This task link is invalid, revoked, or no longer available.",
+    "openTaskButton": "Open task",
+    "goToLoginButton": "Sign in to open",
+    "openFailed": "We couldn't open this task right now.",
+    "workspaceLabel": "Workspace",
+    "statusLabel": "Status",
+    "priorityLabel": "Priority",
+    "dueLabel": "Due"
   },
   "sharedTask": {
     "approvedSuccessfully": "Approved successfully",

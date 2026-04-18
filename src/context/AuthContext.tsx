@@ -70,7 +70,7 @@ export class TenantChoiceRequired extends Error {
 interface AuthContextType extends AuthState {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (params: { email: string; password: string }) => Promise<void>;
-  selectTenant: (tenant: string, firebaseIdToken: string) => Promise<void>;
+  selectTenant: (tenant: string, firebaseIdToken?: string) => Promise<void>;
   switchTenant: () => Promise<{ tenants: string[]; firebaseIdToken: string }>;
   logout: () => Promise<void>;
   /** Non-null when user has multiple tenants and needs to pick one */

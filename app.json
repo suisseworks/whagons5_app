@@ -2,6 +2,7 @@
   "expo": {
     "name": "Whagons",
     "slug": "whagons",
+    "scheme": "whagons",
     "version": "5.1.7",
     "orientation": "portrait",
     "icon": "./assets/icon.png",

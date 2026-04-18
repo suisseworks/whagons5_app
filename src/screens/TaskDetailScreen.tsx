@@ -9,6 +9,7 @@ import {
   Image,
   Modal,
   ActivityIndicator,
+  Alert,
   PanResponder,
   GestureResponderEvent,
   PanResponderGestureState,
@@ -17,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Linking,
+  Share,
 } from 'react-native';
 import Animated, {
   useSharedValue,
@@ -364,6 +366,20 @@ function formatViewedAt(dateStr: string): string {
   })}`;
 }
 
+function buildTaskShareUrl(token: string): string | null {
+  const baseUrl = process.env.EXPO_PUBLIC_CONVEX_URL?.trim() || null;
+
+  if (!baseUrl) return null;
+
+  try {
+    const url = new URL('/share/task', baseUrl);
+    url.searchParams.set('token', token);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 type TaskDetailRouteProp = RouteProp<RootStackParamList, 'TaskDetail'>;
 
 export const TaskDetailScreen: React.FC = () => {
@@ -411,6 +427,19 @@ export const TaskDetailScreen: React.FC = () => {
       map.set(String(u.id), u.name);
       const convexId = (u as any)._id;
       if (convexId) map.set(convexId, u.name);
+    }
+    return map;
+  }, [data.users]);
+
+  const userPictureMap = useMemo(() => {
+    const map = new Map<number | string, string>();
+    for (const u of data.users) {
+      if (!u.url_picture) continue;
+      const numId = Number(u.id);
+      if (!isNaN(numId)) map.set(numId, u.url_picture);
+      map.set(String(u.id), u.url_picture);
+      const convexId = (u as any)._id;
+      if (convexId) map.set(convexId, u.url_picture);
     }
     return map;
   }, [data.users]);
@@ -549,6 +578,7 @@ export const TaskDetailScreen: React.FC = () => {
   const createNoteMutation = useMutation(api.taskResources.createNote);
   const updateNoteMutation = useMutation(api.taskResources.updateNote);
   const removeNoteMutation = useMutation(api.taskResources.removeNote);
+  const createPublicShareMutation = useMutation(api.taskPublicShares.createOrGet);
 
   const notes: TaskNoteResponse[] = useMemo(() => {
     if (!rawNotes) return [];
@@ -564,6 +594,34 @@ export const TaskDetailScreen: React.FC = () => {
 
   const notesLoading = tenantId && hasValidConvexId ? rawNotes === undefined : false;
   const notesError: string | null = null;
+  const handleShareTask = useCallback(async () => {
+    if (!tenantId || !hasValidConvexId) {
+      Alert.alert(t('common.error'), t('taskDetail.shareUnavailable'));
+      return;
+    }
+
+    try {
+      const result = await createPublicShareMutation({
+        tenantId,
+        taskId: convexTaskId as any,
+      });
+      const shareUrl = buildTaskShareUrl(result.token);
+
+      if (!shareUrl) {
+        Alert.alert(t('common.error'), t('taskDetail.shareMissingBaseUrl'));
+        return;
+      }
+
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { url: shareUrl }
+          : { message: shareUrl }
+      );
+    } catch (error) {
+      console.error('[TaskDetail] Failed to share task', error);
+      Alert.alert(t('common.error'), t('taskDetail.shareFailed'));
+    }
+  }, [convexTaskId, createPublicShareMutation, hasValidConvexId, t, tenantId]);
   const taskDocuments = useMemo(
     () => (taskDocumentAssociations ?? []).map((association) => association.document).filter(Boolean),
     [taskDocumentAssociations]
@@ -1508,6 +1566,9 @@ export const TaskDetailScreen: React.FC = () => {
             const isMe = canManageNote(note);
             const isEditingThisNote = editingCommentId === noteId;
             const isCommentBusy = commentActionId === noteId;
+            const authorPicture = noteUid != null
+              ? userPictureMap.get(noteUid) || userPictureMap.get(String(noteUid)) || null
+              : null;
             const authorName = isMe
               ? 'You'
               : (noteUid != null
@@ -1515,11 +1576,15 @@ export const TaskDetailScreen: React.FC = () => {
                   : 'Unknown user');
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
-                <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}> 
-                  <Text style={styles.commentAvatarText}>
-                    {getInitials(authorName)}
-                  </Text>
-                </View>
+                {authorPicture ? (
+                  <Image source={{ uri: authorPicture }} style={styles.commentAvatarImage} />
+                ) : (
+                  <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}> 
+                    <Text style={styles.commentAvatarText}>
+                      {getInitials(authorName)}
+                    </Text>
+                  </View>
+                )}
                 <View style={styles.commentContent}>
                   <View style={styles.commentHeader}>
                     <View style={styles.commentHeaderMeta}>
@@ -1718,7 +1783,7 @@ export const TaskDetailScreen: React.FC = () => {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={[styles.header, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.background }]}> 
           <TouchableOpacity
             onPress={() => navigation.goBack()}
             hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -1727,9 +1792,18 @@ export const TaskDetailScreen: React.FC = () => {
             <MaterialIcons name="arrow-back" size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.headerTitle, { color: colors.text }]}>{t('taskDetail.headerTitle')}</Text>
-          <TouchableOpacity>
-            <MaterialIcons name="more-vert" size={24} color={colors.text} />
-          </TouchableOpacity>
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              onPress={() => void handleShareTask()}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={styles.headerActionButton}
+            >
+              <MaterialIcons name="share" size={22} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.headerActionButton}>
+              <MaterialIcons name="more-vert" size={24} color={colors.text} />
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={[styles.tabBar, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
@@ -2222,6 +2296,15 @@ const styles = StyleSheet.create({
     padding: 8,
     margin: -8,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerActionButton: {
+    padding: 8,
+    margin: -8,
+  },
   headerTitle: {
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
@@ -2617,6 +2700,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#BDBDBD',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  commentAvatarImage: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
   commentAvatarText: {
     fontSize: fontSizes.sm,
