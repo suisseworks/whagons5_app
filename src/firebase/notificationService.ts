@@ -48,10 +48,13 @@ const TASK_NOTIFICATION_TYPES = new Set([
   'assignment',
   'task_assigned',
   'task_created_unassigned',
+  'task_status_changed',
   'task_shared',
   'task_unassigned',
   'task_updated',
   'reported_task_seen',
+  'status_changed',
+  'status_change',
 ]);
 
 function resolveNotificationChannelId(

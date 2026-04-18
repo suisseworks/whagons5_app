@@ -1,3 +1,5 @@
+import type { TaskItem } from '../models/types';
+
 // Parse FontAwesome class string from backend (e.g. "fas fa-broom") into
 // a name and solid/brand flag for use with the FaIcon component (FA6 Pro).
 export const parseWorkspaceIcon = (
@@ -173,6 +175,138 @@ export const getDailyIndex = (listLength: number): number => {
   const daysSinceEpoch = Math.floor(now.getTime() / (1000 * 60 * 60 * 24));
   return daysSinceEpoch % listLength;
 };
+
+type NotificationNavigationInput = {
+  type?: string;
+  notification_kind?: string;
+  title?: string;
+  message?: string;
+  data?: Record<string, any>;
+  taskId?: string;
+  task_id?: string;
+  taskPgId?: string | number;
+  task_pg_id?: string | number;
+  taskConvexId?: string;
+  task_convex_id?: string;
+  chatId?: string | number;
+  chat_id?: string | number;
+  boardPgId?: string | number;
+  board_pg_id?: string | number;
+  boardId?: string | number;
+  board_id?: string | number;
+};
+
+export type NotificationNavigationTarget =
+  | { screen: 'TaskDetail'; params: { task: TaskItem } }
+  | { screen: 'Main'; params: { tab: number; conversationId?: string | number } }
+  | { screen: 'BoardDetail'; params: { boardId: string | number } };
+
+const TASK_NOTIFICATION_TYPES = new Set([
+  'task',
+  'task_updated',
+  'task_status_changed',
+  'task_shared',
+  'task_completed',
+  'task_assigned',
+  'task_created_unassigned',
+  'task_unassigned',
+  'reported_task_seen',
+  'status_changed',
+  'status_change',
+  'assignment',
+  'sla',
+  'approval',
+  'done',
+]);
+
+const COMMUNICATION_NOTIFICATION_TYPES = new Set([
+  'message',
+  'chat',
+  'comment',
+  'task_comment',
+  'mention',
+  'call',
+]);
+
+function findTaskByNotificationId(tasks: TaskItem[], taskId: string | number): TaskItem | undefined {
+  return tasks.find((candidate) => (
+    candidate.convexId === taskId
+    || candidate.taskConvexId === taskId
+    || String(candidate.id) === String(taskId)
+  ));
+}
+
+function findTaskByTitle(tasks: TaskItem[], rawTitle?: string | null): TaskItem | undefined {
+  const title = rawTitle?.trim();
+  if (!title) return undefined;
+  return tasks.find((candidate) => candidate.title.trim() === title);
+}
+
+export function resolveNotificationNavigation(
+  input: NotificationNavigationInput,
+  tasks: TaskItem[],
+): NotificationNavigationTarget | null {
+  const data = input.data ?? {};
+  const type = input.type || input.notification_kind || data.type || data.notification_kind;
+  const title = input.title || data.title || '';
+  const message = input.message || data.message || '';
+
+  const taskIds = [
+    data.taskId,
+    data.task_id,
+    data.taskPgId,
+    data.task_pg_id,
+    data.taskConvexId,
+    data.task_convex_id,
+    input.taskId,
+    input.task_id,
+    input.taskPgId,
+    input.task_pg_id,
+    input.taskConvexId,
+    input.task_convex_id,
+  ].filter((value): value is string | number => value != null && value !== '');
+
+  for (const taskId of taskIds) {
+    const task = findTaskByNotificationId(tasks, taskId);
+    if (task) return { screen: 'TaskDetail', params: { task } };
+  }
+
+  const looksLikeTaskNotification = TASK_NOTIFICATION_TYPES.has(type ?? '')
+    || taskIds.length > 0
+    || /\s-\sMoved to\b/i.test(title);
+
+  if (looksLikeTaskNotification) {
+    const titlePrefixMatch = title.match(/^(.+?)\s+-\s+.+$/i);
+    const messageMatch = message.match(/(?:on:|created:)\s*(.+)$/i);
+    const taskNameCandidates = [
+      data?.i18n?.taskName,
+      data.taskName,
+      data.task_name,
+      titlePrefixMatch?.[1],
+      messageMatch?.[1],
+    ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+    for (const taskName of taskNameCandidates) {
+      const task = findTaskByTitle(tasks, taskName);
+      if (task) return { screen: 'TaskDetail', params: { task } };
+    }
+  }
+
+  const boardId = data.boardPgId || data.board_pg_id || data.boardId || data.board_id || input.boardPgId || input.board_pg_id || input.boardId || input.board_id;
+  if (boardId) {
+    return { screen: 'BoardDetail', params: { boardId } };
+  }
+
+  const conversationId = data.chatId || data.chat_id || input.chatId || input.chat_id;
+  if (COMMUNICATION_NOTIFICATION_TYPES.has(type ?? '') || conversationId) {
+    return {
+      screen: 'Main',
+      params: conversationId ? { tab: 1, conversationId } : { tab: 1 },
+    };
+  }
+
+  return null;
+}
 
 // Inspirational quotes
 export const quotes = [

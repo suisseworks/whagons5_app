@@ -51,8 +51,8 @@ android-apk-debug: android-clean
 android-apk-release: android-clean
 	cd android && ./gradlew assembleRelease
 
-android-apk-dev-backend:
-	set -a && . ./.env.dev-backend && set +a && cd android && ./gradlew assembleRelease
+android-apk-dev-backend: android-clean
+	set -a && . ./.env.dev-backend && set +a && export EXPO_NO_DOTENV=1 && cd android && ./gradlew --no-daemon assembleRelease
 
 android-clean:
 	rm -rf android/app/.cxx android/app/build android/build android/.gradle
@@ -111,6 +111,7 @@ version:
 # ===========================================================================
 release:
 	@set -e && \
+	set -a && . ./.env.production && set +a && export EXPO_NO_DOTENV=1 && \
 	\
 	echo "=== Step 1: Determine version ===" && \
 	latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1) && \
@@ -151,7 +152,7 @@ release:
 	echo "  hash: $$git_hash" && \
 	\
 	echo "=== Step 6: Build AAB ===" && \
-	cd android && ./gradlew bundleRelease && cd .. && \
+	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
 	\
 	echo "=== Step 7: Upload to Google Play Console ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
@@ -173,6 +174,7 @@ release:
 # ===========================================================================
 release-prod:
 	@set -e && \
+	set -a && . ./.env.production && set +a && export EXPO_NO_DOTENV=1 && \
 	\
 	echo "=== Step 1: Determine version ===" && \
 	latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1) && \
@@ -213,7 +215,7 @@ release-prod:
 	echo "  hash: $$git_hash" && \
 	\
 	echo "=== Step 6: Build AAB ===" && \
-	cd android && ./gradlew bundleRelease && cd .. && \
+	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
 	\
 	echo "=== Step 7: Upload to Google Play Console (PRODUCTION) ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab --track production --publish && cd .. && \

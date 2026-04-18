@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { StatusBar } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme, Theme } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
@@ -9,6 +9,8 @@ import { useTheme } from '../context/ThemeContext';
 import { SplashScreen } from '../screens/SplashScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { MainScreen } from '../screens/MainScreen';
+import { ProfileScreen } from '../screens/ProfileScreen';
+import { TaskShareLinkScreen } from '../screens/TaskShareLinkScreen';
 import { TaskDetailScreen } from '../screens/TaskDetailScreen';
 import { SharedTaskDetailScreen } from '../screens/SharedTaskDetailScreen';
 import { CreateTaskScreen } from '../screens/CreateTaskScreen';
@@ -32,6 +34,7 @@ const AppStatusBar = () => {
 
 export const AppNavigator: React.FC = () => {
   const { isDarkMode, colors } = useTheme();
+  const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
 
   const navigationTheme: Theme = useMemo(
     () => ({
@@ -47,8 +50,32 @@ export const AppNavigator: React.FC = () => {
     [isDarkMode, colors],
   );
 
+  const linking = useMemo<LinkingOptions<RootStackParamList>>(() => {
+    const prefixes = ['whagons://'];
+
+    if (shareBaseUrl) {
+      try {
+        prefixes.push(new URL(shareBaseUrl).origin);
+      } catch {}
+    }
+
+    return {
+      prefixes,
+      config: {
+        screens: {
+          TaskShareLink: {
+            path: 'task-share/:token',
+            parse: {
+              token: (value: string) => decodeURIComponent(value),
+            },
+          },
+        },
+      },
+    };
+  }, [shareBaseUrl]);
+
   return (
-    <NavigationContainer theme={navigationTheme}>
+    <NavigationContainer theme={navigationTheme} linking={linking}>
       <AppStatusBar />
       <Stack.Navigator
         initialRouteName="Splash"
@@ -62,6 +89,8 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="TenantSelect" component={TenantSelectScreen} />
         <Stack.Screen name="Main" component={MainScreen} />
+        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="TaskShareLink" component={TaskShareLinkScreen} />
         <Stack.Screen name="TaskDetail" component={TaskDetailScreen} />
         <Stack.Screen name="SharedTaskDetail" component={SharedTaskDetailScreen} />
         <Stack.Screen name="CreateTask" component={CreateTaskScreen} />

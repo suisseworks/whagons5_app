@@ -273,6 +273,8 @@ export type RootStackParamList = {
   Login: undefined;
   TenantSelect: { tenants: string[]; firebaseIdToken: string };
   Main: { tab?: number; conversationId?: string | number } | undefined;
+  Profile: undefined;
+  TaskShareLink: { token: string };
   TaskDetail: { task: TaskItem };
   SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;

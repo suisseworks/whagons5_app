@@ -108,10 +108,13 @@ export function getNotificationMeta(type?: string): { icon: string; color: strin
   switch (type) {
     case 'task':
     case 'task_updated':
+    case 'task_status_changed':
     case 'task_assigned':
     case 'task_created_unassigned':
     case 'task_unassigned':
     case 'reported_task_seen':
+    case 'status_changed':
+    case 'status_change':
     case 'assignment':
       return { icon: 'assignment-turned-in', color: '#2196F3' };
     case 'task_completed':

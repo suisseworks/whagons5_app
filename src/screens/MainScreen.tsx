@@ -14,7 +14,6 @@ import {
   ScrollView,
   TextInput,
   ActivityIndicator,
-  Image,
   BackHandler,
   KeyboardAvoidingView,
   Platform,
@@ -43,7 +42,7 @@ import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
 import { SchedulingScreen } from './SchedulingScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
-import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
+import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, resolveNotificationNavigation } from '../utils/helpers';
 import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
@@ -373,6 +372,11 @@ export const MainScreen: React.FC = () => {
   // Status chip selection is now driven by filters.statuses from context
   // so it stays in sync with the filter sheet
   const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
+  const handleDrawerWorkspaceSelect = useCallback((workspaceName: string) => {
+    setSelectedNav(0);
+    setSelectedWorkspace(workspaceName);
+    setTasksTab(workspaceName === 'Everything' ? 'everything' : 'workspace');
+  }, [setSelectedWorkspace]);
   const selectedNavKey = navItems[selectedNav]?.key ?? 'tasks';
 
   // Handle navigation params from notification taps (e.g., switch to Colab tab + open conversation)
@@ -393,52 +397,20 @@ export const MainScreen: React.FC = () => {
   useEffect(() => {
     if (!lastTapPayload) return;
 
-    const type = lastTapPayload.type;
-    const taskNotificationTypes = new Set([
-      'task',
-      'task_updated',
-      'task_shared',
-      'task_completed',
-      'task_assigned',
-      'task_created_unassigned',
-      'task_unassigned',
-      'reported_task_seen',
-      'assignment',
-      'sla',
-      'approval',
-      'done',
-    ]);
-
-    if (type && taskNotificationTypes.has(type)) {
-      const taskId = lastTapPayload.taskId || lastTapPayload.task_id;
-      if (!taskId) return;
-
-      const task = unfilteredTasks.find((candidate) =>
-        candidate.convexId === taskId || String(candidate.id) === String(taskId),
-      );
-
-      if (!task) return;
-
-      navigation.navigate('TaskDetail', { task });
+    const target = resolveNotificationNavigation(lastTapPayload as any, unfilteredTasks);
+    if (target?.screen === 'TaskDetail') {
+      navigation.navigate('TaskDetail', target.params);
       clearTapPayload();
       return;
     }
-
-    if (type === 'message' || type === 'chat' || type === 'comment') {
-      const conversationId = lastTapPayload.chatId || lastTapPayload.chat_id;
-      if (!conversationId) return;
-
+    if (target?.screen === 'BoardDetail') {
+      navigation.navigate('BoardDetail', target.params);
+      clearTapPayload();
+      return;
+    }
+    if (target?.screen === 'Main') {
       setSelectedNav(1);
-      setInitialConversationId(conversationId);
-      clearTapPayload();
-      return;
-    }
-
-    if (type === 'board_message') {
-      const boardId = lastTapPayload.boardPgId || lastTapPayload.board_pg_id || lastTapPayload.boardId || lastTapPayload.board_id;
-      if (!boardId) return;
-
-      navigation.navigate('BoardDetail', { boardId });
+      setInitialConversationId(target.params.conversationId);
       clearTapPayload();
     }
   }, [clearTapPayload, lastTapPayload, navigation, unfilteredTasks]);
@@ -1273,18 +1245,7 @@ export const MainScreen: React.FC = () => {
             style={styles.iconButton}
             onPress={() => navigation.navigate('Notifications')}
           >
-            {authUser?.photo_url ? (
-              <Image
-                source={{ uri: authUser.photo_url }}
-                style={styles.avatarImage}
-              />
-            ) : (
-              <View style={[styles.avatarFallback, { backgroundColor: colors.textSecondary }]}>
-                <Text style={styles.avatarInitials}>
-                  {(authUser?.name ?? '?').charAt(0).toUpperCase()}
-                </Text>
-              </View>
-            )}
+            <MaterialIcons name="notifications-none" size={22} color={colors.text} />
             {notificationCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -1496,7 +1457,7 @@ export const MainScreen: React.FC = () => {
       )}
 
       {/* Drawer */}
-      <AnimatedDrawer ref={drawerRef} />
+      <AnimatedDrawer ref={drawerRef} onWorkspaceSelect={handleDrawerWorkspaceSelect} />
 
       {/* Filter Sheet */}
       <TaskFilterSheet
@@ -1756,23 +1717,6 @@ const styles = StyleSheet.create({
     height: 44,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarImage: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-  },
-  avatarFallback: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarInitials: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontFamily: fontFamilies.bodySemibold,
   },
   filterCountBadge: {
     position: 'absolute',

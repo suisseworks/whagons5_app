@@ -32,7 +32,11 @@ export interface AnimatedDrawerRef {
   close: () => void;
 }
 
-export const AnimatedDrawer = forwardRef<AnimatedDrawerRef>((_props, ref) => {
+interface AnimatedDrawerProps {
+  onWorkspaceSelect?: (workspaceName: string) => void;
+}
+
+export const AnimatedDrawer = forwardRef<AnimatedDrawerRef, AnimatedDrawerProps>(({ onWorkspaceSelect }, ref) => {
   // Controls whether the drawer tree is mounted at all.
   // We only mount when open, so AppDrawer doesn't subscribe to contexts while hidden.
   const [mounted, setMounted] = useState(false);
@@ -131,7 +135,7 @@ export const AnimatedDrawer = forwardRef<AnimatedDrawerRef>((_props, ref) => {
       {/* Drawer panel */}
       <GestureDetector gesture={pan}>
         <Animated.View style={[styles.drawer, drawerStyle]}>
-          <AppDrawer onClose={close} />
+          <AppDrawer onClose={close} onWorkspaceSelect={onWorkspaceSelect} />
         </Animated.View>
       </GestureDetector>
     </>
