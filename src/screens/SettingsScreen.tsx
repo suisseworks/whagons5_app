@@ -26,6 +26,7 @@ import { VERSION_DISPLAY } from '../config/version';
 import { useData } from '../context/DataContext';
 import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
 
 export const GPS_CAPTURE_STORAGE_KEY = '@whagons/gps_capture_enabled';
 
@@ -267,7 +268,7 @@ export const SettingsScreen: React.FC = () => {
           <TouchableOpacity style={styles.profileTile} onPress={() => showComingSoon('Profile editing')}>
             {user?.photo_url ? (
               <Image
-                source={{ uri: user.photo_url as string }}
+                source={{ uri: getOptimizedImageUrl(user.photo_url as string, { width: 56, height: 56, mode: 'fill' }) || (user.photo_url as string) }}
                 style={styles.profileAvatarImage}
               />
             ) : (

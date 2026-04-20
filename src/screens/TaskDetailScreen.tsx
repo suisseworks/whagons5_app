@@ -96,6 +96,8 @@ import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTe
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { Toast, ToastRef } from '../components/Toast';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
+import { ProgressiveImage } from '../components/ProgressiveImage';
 
 /** Parse markdown checklist items from a description string */
 function parseChecklistItems(desc: string): { label: string; checked: boolean }[] | null {
@@ -251,10 +253,13 @@ const NoteAttachmentView: React.FC<{
   if (isImage && url) {
     return (
       <TouchableOpacity activeOpacity={0.8} onPress={handleFilePress}>
-        <Image
-          source={{ uri: url }}
+        <ProgressiveImage
+          uri={url}
+          width={720}
+          height={360}
+          mode="fill"
           style={noteAttachStyles.image}
-          resizeMode="cover"
+          contentFit="cover"
         />
       </TouchableOpacity>
     );
@@ -960,7 +965,7 @@ export const TaskDetailScreen: React.FC = () => {
 
   // Tab swipe – smooth spring animation (matches ColabScreen)
   const tabs: TabKey[] = hasForm ? ['details', 'form', 'comments'] : ['details', 'comments'];
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const tabTranslateX = useSharedValue(0);
   const dragStartX = useRef(0);
 
@@ -1300,7 +1305,7 @@ export const TaskDetailScreen: React.FC = () => {
           {displayAssignees.map((assignee, index) => (
             <View key={index} style={[styles.assigneeRow, { backgroundColor: secondarySurface }]}> 
               {assignee.picture ? (
-                <Image source={{ uri: assignee.picture }} style={styles.assigneeAvatarImg} />
+                <Image source={{ uri: getOptimizedImageUrl(assignee.picture, { width: 48, height: 48, mode: 'fill' }) || assignee.picture }} style={styles.assigneeAvatarImg} />
               ) : (
                 <View style={[styles.assigneeAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}>
                   <Text style={[styles.assigneeAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}>
@@ -1430,7 +1435,7 @@ export const TaskDetailScreen: React.FC = () => {
               ]}
             >
               {viewer.picture ? (
-                <Image source={{ uri: viewer.picture }} style={styles.seenAvatarImg} />
+                <Image source={{ uri: getOptimizedImageUrl(viewer.picture, { width: 48, height: 48, mode: 'fill' }) || viewer.picture }} style={styles.seenAvatarImg} />
               ) : (
                 <View style={[styles.seenAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}>
                   <Text style={[styles.seenAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}>
@@ -1468,7 +1473,7 @@ export const TaskDetailScreen: React.FC = () => {
       {taskCreator ? (
         <View style={[styles.assigneeRow, { backgroundColor: secondarySurface }]}> 
           {taskCreator.picture ? (
-            <Image source={{ uri: taskCreator.picture }} style={styles.assigneeAvatarImg} />
+            <Image source={{ uri: getOptimizedImageUrl(taskCreator.picture, { width: 48, height: 48, mode: 'fill' }) || taskCreator.picture }} style={styles.assigneeAvatarImg} />
           ) : (
             <View style={[styles.assigneeAvatarCircle, { backgroundColor: isDarkMode ? '#374151' : '#DCEEFB' }]}> 
               <Text style={[styles.assigneeAvatarInitial, { color: isDarkMode ? '#90C2FF' : '#185FA5' }]}> 
@@ -1577,7 +1582,7 @@ export const TaskDetailScreen: React.FC = () => {
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
                 {authorPicture ? (
-                  <Image source={{ uri: authorPicture }} style={styles.commentAvatarImage} />
+                  <Image source={{ uri: getOptimizedImageUrl(authorPicture, { width: 44, height: 44, mode: 'fill' }) || authorPicture }} style={styles.commentAvatarImage} />
                 ) : (
                   <View style={[styles.commentAvatar, isMe && { backgroundColor: primaryColor }]}> 
                     <Text style={styles.commentAvatarText}>
@@ -2108,7 +2113,7 @@ export const TaskDetailScreen: React.FC = () => {
                           }}
                         >
                           {u.url_picture ? (
-                            <Image source={{ uri: u.url_picture }} style={styles.assigneeAvatarImg} />
+                            <Image source={{ uri: getOptimizedImageUrl(u.url_picture, { width: 40, height: 40, mode: 'fill' }) || u.url_picture }} style={styles.assigneeAvatarImg} />
                           ) : (
                             <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
                               {getInitials(u.name)}
@@ -2169,10 +2174,13 @@ export const TaskDetailScreen: React.FC = () => {
             <MaterialIcons name="close" size={28} color="#fff" />
           </TouchableOpacity>
           {imageViewerUri && (
-            <Image
-              source={{ uri: imageViewerUri }}
+            <ProgressiveImage
+              uri={imageViewerUri}
+              width={Math.round(screenWidth * 0.95)}
+              height={Math.round(screenHeight * 0.8)}
+              mode="fit"
               style={styles.imageViewerImage}
-              resizeMode="contain"
+              contentFit="contain"
             />
           )}
           <TouchableOpacity

@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Assignee } from '../models/types';
 import { getInitials } from '../utils/helpers';
 import { fontFamilies, fontSizes } from '../config/designTokens';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
 
 interface AssigneeAvatarsProps {
   assignees: Assignee[];
@@ -24,7 +25,7 @@ export const AssigneeAvatars: React.FC<AssigneeAvatarsProps> = ({
           style={[styles.avatar, { backgroundColor: avatarColors[index % avatarColors.length] }]}
         >
           {assignee.picture ? (
-            <Image source={{ uri: assignee.picture }} style={styles.avatarImage} />
+            <Image source={{ uri: getOptimizedImageUrl(assignee.picture, { width: 28, height: 28, mode: 'fill' }) || assignee.picture }} style={styles.avatarImage} />
           ) : (
             <Text style={styles.initial}>{getInitials(assignee.name)}</Text>
           )}

@@ -30,6 +30,7 @@ import { useTheme } from './ThemeContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { CALL_RING_TONE_DATA_URI } from '../utils/callToneData';
 import { getInitials } from '../utils/helpers';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
 import {
   getMobileCallService,
   IncomingMobileCall,
@@ -87,7 +88,7 @@ function Avatar({
   if (picture) {
     return (
       <ExpoImage
-        source={{ uri: picture }}
+        source={{ uri: getOptimizedImageUrl(picture, { width: size, height: size, mode: 'fill' }) || picture }}
         style={{ width: size, height: size, borderRadius: size / 2 }}
         contentFit="cover"
         transition={150}

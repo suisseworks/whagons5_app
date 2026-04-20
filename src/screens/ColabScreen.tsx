@@ -57,6 +57,8 @@ import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/des
 import { getInitials } from '../utils/helpers';
 import { Toast, ToastRef } from '../components/Toast';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
+import { ProgressiveImage } from '../components/ProgressiveImage';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -220,7 +222,7 @@ const UserAvatar: React.FC<{
   if (imageUrl) {
     return (
       <ExpoImage
-        source={{ uri: imageUrl }}
+        source={{ uri: getOptimizedImageUrl(imageUrl, { width: size, height: size, mode: 'fill' }) || imageUrl }}
         style={{
           width: size,
           height: size,
@@ -286,7 +288,7 @@ const LinkPreviewCard: React.FC<{
     >
       {preview.image_url && (
         <ExpoImage
-          source={{ uri: preview.image_url }}
+          source={{ uri: getOptimizedImageUrl(preview.image_url, { width: 720, height: 360, mode: 'fill' }) || preview.image_url }}
           style={styles.linkPreviewImage}
           contentFit="cover"
           cachePolicy="disk"
@@ -522,7 +524,7 @@ const ConvexFileImage = memo(({
   if (!url) return <View style={[style, { backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator size="small" /></View>;
   return (
     <TouchableOpacity activeOpacity={0.8} onPress={() => { onPress?.(url); }}>
-      <ExpoImage source={{ uri: url }} style={style} contentFit="cover" cachePolicy="disk" transition={200} />
+      <ProgressiveImage uri={url} width={720} height={720} mode="fill" style={style} contentFit="cover" cachePolicy="disk" transition={200} />
     </TouchableOpacity>
   );
 });
@@ -601,7 +603,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   }, [data.users]);
 
   const [activeTab, setActiveTab] = useState<ColabTab>('workspaces');
-  const { width: screenWidth } = useWindowDimensions();
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
 
   // Continuous drag between tabs using PanResponder (doesn't steal focus from TextInput)
   const tabTranslateX = useSharedValue(0);
@@ -1485,13 +1487,18 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                           );
                         }
                         if (part.type === 'image') {
+                          const mediaWidth = Math.min(screenWidth * 0.68, 280);
+                          const mediaHeight = Math.min(screenWidth * 0.82, 320);
                           return (
                             <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'image' })}>
-                              <ExpoImage
-                                source={{ uri: part.url }}
+                              <ProgressiveImage
+                                uri={part.url}
+                                width={mediaWidth}
+                                height={mediaHeight}
+                                mode="fill"
                                 style={[
                                   styles.messageImage,
-                                  { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.82, 320) },
+                                  { width: mediaWidth, height: mediaHeight },
                                 ]}
                                 contentFit="cover"
                                 cachePolicy="disk"
@@ -2581,8 +2588,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           <MaterialIcons name="close" size={28} color="#FFFFFF" />
         </TouchableOpacity>
         {viewerMedia?.type === 'image' && (
-          <ExpoImage
-            source={{ uri: viewerMedia.url }}
+          <ProgressiveImage
+            uri={viewerMedia.url}
+            width={Math.round(screenWidth * 0.95)}
+            height={Math.round(screenHeight * 0.8)}
+            mode="fit"
             style={{ width: '100%', height: '80%' }}
             contentFit="contain"
             cachePolicy="disk"

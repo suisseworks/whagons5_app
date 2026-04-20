@@ -15,6 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
 
 type ProfileNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Profile'>;
 
@@ -46,7 +47,7 @@ export const ProfileScreen: React.FC = () => {
 
       <View style={styles.content}>
         {user?.photo_url ? (
-          <Image source={{ uri: user.photo_url }} style={styles.avatarImage} />
+          <Image source={{ uri: getOptimizedImageUrl(user.photo_url, { width: 112, height: 112, mode: 'fill' }) || user.photo_url }} style={styles.avatarImage} />
         ) : (
           <View style={[styles.avatarFallback, { backgroundColor: primaryColor }]}>
             <Text style={styles.avatarInitials}>{userInitial}</Text>

@@ -21,6 +21,7 @@ import { RootStackParamList, CardDensity } from '../models/types';
 import { DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -107,7 +108,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
               activeOpacity={0.7}
             >
               {user.photo_url ? (
-                <Image source={{ uri: user.photo_url }} style={styles.userAvatarImage} />
+                <Image source={{ uri: getOptimizedImageUrl(user.photo_url, { width: 52, height: 52, mode: 'fill' }) || user.photo_url }} style={styles.userAvatarImage} />
               ) : (
                 <View style={[styles.userAvatar, { backgroundColor: primaryColor }]}>
                   <Text style={styles.userAvatarText}>{userInitial}</Text>

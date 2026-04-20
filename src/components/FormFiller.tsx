@@ -35,6 +35,7 @@ import { fontFamilies, fontSizes, radius } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
 import { useConvexUpload } from '../hooks/useConvexUpload';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
+import { getOptimizedImageUrl } from '../utils/imgproxy';
 
 /** Fix self-hosted Convex storage URLs (dashboard domain → backend domain) */
 function fixConvexStorageUrl(url: string): string {
@@ -68,7 +69,13 @@ const ConvexImage: React.FC<{ storageId: string; style?: any; resizeMode?: any }
       </View>
     );
   }
-  return <Image source={{ uri }} style={style} resizeMode={resizeMode} />;
+  return (
+    <Image
+      source={{ uri: getOptimizedImageUrl(uri, { width: 1200, height: 1200, mode: resizeMode === 'cover' ? 'fill' : 'fit' }) || uri }}
+      style={style}
+      resizeMode={resizeMode}
+    />
+  );
 };
 
 // ---------------------------------------------------------------------------
