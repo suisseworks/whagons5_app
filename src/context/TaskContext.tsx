@@ -171,6 +171,7 @@ function mapTaskToItem(
     firstViewedAt: (task as any).firstViewedAt ?? null,
     latitude: (task as any).latitude ?? null,
     longitude: (task as any).longitude ?? null,
+    requiresSignature: (task as any).requiresSignature === true || (task as any).requires_signature === true,
   };
 }
 
@@ -237,6 +238,8 @@ export interface FormSchemaField {
     imageUrl?: string | null;
     imageId?: string | null;
     allowDecimals?: boolean;
+    min?: number;
+    max?: number;
     listItemType?: string;
     [key: string]: unknown;
   };

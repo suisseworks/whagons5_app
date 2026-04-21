@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  TextInput,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SignaturePad } from './SignaturePad';
@@ -16,31 +17,85 @@ import { useTenant } from '../hooks/useTenant';
 import { useTheme } from '../context/ThemeContext';
 import { fontFamilies, radius } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 
 interface SignatureModalProps {
   visible: boolean;
   onClose: () => void;
-  onSigned: (storageId: string) => void;
+  onSigned: (payload: { storageId: string; signerName: string; comment?: string }) => void;
+  title?: string;
+  subtitle?: string;
+  taskLabel?: string;
 }
 
-export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose, onSigned }) => {
+export const SignatureModal: React.FC<SignatureModalProps> = ({
+  visible,
+  onClose,
+  onSigned,
+  title,
+  subtitle,
+  taskLabel,
+}) => {
   const { tenantId } = useTenant();
   const { colors, isDarkMode } = useTheme();
   const { t } = useLanguage();
+  const { user } = useAuth();
   const generateUploadUrl = useMutation(api.taskResources.generateUploadUrl);
 
   const [signatureData, setSignatureData] = useState<string | null>(null);
+  const [signerName, setSignerName] = useState('');
+  const [comment, setComment] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [lastErrorDetails, setLastErrorDetails] = useState<string | null>(null);
+
+  const resolveUploadUrl = useCallback((rawUrl: string): string => {
+    const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
+    if (!convexUrl) return rawUrl;
+    try {
+      const expected = new URL(convexUrl);
+      const actual = new URL(rawUrl);
+      if (actual.origin !== expected.origin) {
+        actual.protocol = expected.protocol;
+        actual.hostname = expected.hostname;
+        actual.port = expected.port;
+        return actual.toString();
+      }
+    } catch {}
+    return rawUrl;
+  }, []);
+
+  const signatureDataToBlob = useCallback(async (dataUri: string): Promise<Blob> => {
+    const base64Prefix = 'data:image/svg+xml;base64,';
+    if (dataUri.startsWith(base64Prefix)) {
+      const svgXml = atob(dataUri.slice(base64Prefix.length));
+      return new Blob([svgXml], { type: 'image/svg+xml' });
+    }
+
+    const response = await fetch(dataUri);
+    return response.blob();
+  }, []);
+
+  React.useEffect(() => {
+    if (!visible) return;
+    if (!signerName.trim()) {
+      setSignerName(user?.name || user?.email || '');
+    }
+  }, [visible, signerName, user?.name, user?.email]);
 
   const handleConfirm = useCallback(async () => {
     if (!signatureData || !tenantId) return;
+    const finalSignerName = signerName.trim();
+    if (!finalSignerName) {
+      Alert.alert(t('component.signatureModal.nameRequired'));
+      return;
+    }
     setUploading(true);
+    setLastErrorDetails(null);
     try {
-      const uploadUrl = await generateUploadUrl({ tenantId });
+      const rawUploadUrl = await generateUploadUrl({ tenantId });
+      const uploadUrl = resolveUploadUrl(rawUploadUrl);
 
-      // Convert SVG data URI to blob
-      const response = await fetch(signatureData);
-      const blob = await response.blob();
+      const blob = await signatureDataToBlob(signatureData);
 
       const uploadResponse = await fetch(uploadUrl, {
         method: 'POST',
@@ -48,20 +103,40 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
         body: blob,
       });
 
-      if (!uploadResponse.ok) throw new Error('Upload failed');
+      if (!uploadResponse.ok) {
+        const body = await uploadResponse.text().catch(() => '');
+        throw new Error(
+          [
+            `upload_status=${uploadResponse.status}`,
+            `upload_url=${uploadUrl}`,
+            `upload_body=${body || '<empty>'}`,
+          ].join('\n'),
+        );
+      }
 
       const { storageId } = await uploadResponse.json();
-      onSigned(storageId);
+      onSigned({
+        storageId,
+        signerName: finalSignerName,
+        comment: comment.trim() || undefined,
+      });
       setSignatureData(null);
+      setComment('');
     } catch (err: any) {
-      Alert.alert(t('component.signatureModal.uploadError'), t('component.signatureModal.uploadErrorMessage'));
+      const details = err?.message || String(err);
+      setLastErrorDetails(details);
+      Alert.alert(
+        t('component.signatureModal.uploadError'),
+        `${t('component.signatureModal.uploadErrorMessage')}\n\n${details}`,
+      );
     } finally {
       setUploading(false);
     }
-  }, [signatureData, tenantId, generateUploadUrl, onSigned]);
+  }, [signatureData, tenantId, signerName, comment, generateUploadUrl, onSigned, t, resolveUploadUrl, signatureDataToBlob]);
 
   const handleClose = useCallback(() => {
     setSignatureData(null);
+    setComment('');
     onClose();
   }, [onClose]);
 
@@ -70,15 +145,36 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
       <View style={styles.overlay}>
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>{t('component.signatureModal.title')}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{title || t('component.signatureModal.title')}</Text>
             <TouchableOpacity onPress={handleClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <MaterialIcons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <Text style={[styles.subtitle, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#6B7280' }]}>
-            {t('component.signatureModal.subtitle')}
+            {subtitle || t('component.signatureModal.subtitle')}
           </Text>
+          {!!taskLabel && (
+            <Text style={[styles.taskLabel, { color: colors.text }]} numberOfLines={1}>
+              {taskLabel}
+            </Text>
+          )}
+
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>{t('component.signatureModal.nameLabel')}</Text>
+          <TextInput
+            value={signerName}
+            onChangeText={setSignerName}
+            placeholder={t('component.signatureModal.namePlaceholder')}
+            placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.35)' : '#9CA3AF'}
+            style={[
+              styles.input,
+              {
+                color: colors.text,
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#FAFAFA',
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#E5E7EB',
+              },
+            ]}
+          />
 
           <View style={styles.padWrapper}>
             <SignaturePad
@@ -90,6 +186,26 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
               height={200}
             />
           </View>
+
+          <Text style={[styles.fieldLabel, { color: colors.text }]}>{t('component.signatureModal.commentLabel')}</Text>
+          <TextInput
+            value={comment}
+            onChangeText={setComment}
+            placeholder={t('component.signatureModal.commentPlaceholder')}
+            placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.35)' : '#9CA3AF'}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+            style={[
+              styles.input,
+              styles.commentInput,
+              {
+                color: colors.text,
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#FAFAFA',
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#E5E7EB',
+              },
+            ]}
+          />
 
           <View style={styles.actions}>
             <TouchableOpacity
@@ -116,6 +232,14 @@ export const SignatureModal: React.FC<SignatureModalProps> = ({ visible, onClose
               )}
             </TouchableOpacity>
           </View>
+          {!!lastErrorDetails && (
+            <View style={[styles.errorBox, { borderColor: '#EF4444', backgroundColor: isDarkMode ? 'rgba(239,68,68,0.1)' : '#FEF2F2' }]}>
+              <Text style={[styles.errorTitle, { color: '#B91C1C' }]}>{t('component.signatureModal.debugTitle')}</Text>
+              <Text selectable style={[styles.errorDetails, { color: isDarkMode ? '#FCA5A5' : '#7F1D1D' }]}>
+                {lastErrorDetails}
+              </Text>
+            </View>
+          )}
         </View>
       </View>
     </Modal>
@@ -148,10 +272,32 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 13,
     fontFamily: fontFamilies.bodyRegular,
-    marginBottom: 16,
+    marginBottom: 8,
+  },
+  taskLabel: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
+    marginBottom: 12,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+    marginBottom: 6,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    fontFamily: fontFamilies.bodyRegular,
+    marginBottom: 12,
   },
   padWrapper: {
     marginBottom: 20,
+  },
+  commentInput: {
+    minHeight: 88,
   },
   actions: {
     flexDirection: 'row',
@@ -182,6 +328,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: fontFamilies.bodySemibold,
     color: '#FFFFFF',
+  },
+  errorBox: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    padding: 10,
+    marginTop: 12,
+  },
+  errorTitle: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
+    marginBottom: 4,
+  },
+  errorDetails: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
   },
 });
 

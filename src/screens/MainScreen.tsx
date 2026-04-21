@@ -459,14 +459,21 @@ export const MainScreen: React.FC = () => {
   }, [selectedWorkspace, workspaceObjects]);
 
   const handleCreateTask = useCallback(() => {
+    if (voiceCapturePhase !== 'idle') {
+      void stopCapture('manual');
+      return;
+    }
     if (suppressNextFabTapRef.current) {
       suppressNextFabTapRef.current = false;
       return;
     }
     navigation.navigate('CreateTask');
-  }, [navigation]);
+  }, [navigation, stopCapture, voiceCapturePhase]);
 
   const handleVoiceCapturePressIn = useCallback(() => {
+    if (voiceCapturePhase !== 'idle') {
+      return;
+    }
     if (fabHoldTimerRef.current) {
       clearTimeout(fabHoldTimerRef.current);
     }
@@ -475,7 +482,7 @@ export const MainScreen: React.FC = () => {
       suppressNextFabTapRef.current = true;
       void startCapture(selectedWorkspaceConvexId);
     }, 180);
-  }, [selectedWorkspaceConvexId, startCapture]);
+  }, [selectedWorkspaceConvexId, startCapture, voiceCapturePhase]);
 
   const handleVoiceCapturePressOut = useCallback(() => {
     if (fabHoldTimerRef.current) {
@@ -484,6 +491,10 @@ export const MainScreen: React.FC = () => {
     }
     if (!voiceLongPressActiveRef.current) return;
     voiceLongPressActiveRef.current = false;
+    void stopCapture('manual');
+  }, [stopCapture]);
+
+  const handleVoiceCaptureOverlayPress = useCallback(() => {
     void stopCapture('manual');
   }, [stopCapture]);
 
@@ -1374,6 +1385,7 @@ export const MainScreen: React.FC = () => {
           colors={colors}
           primaryColor={primaryColor}
           isDarkMode={isDarkMode}
+          onPress={handleVoiceCaptureOverlayPress}
         />
       ) : null}
 

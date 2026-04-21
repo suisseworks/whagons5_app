@@ -206,6 +206,11 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         <Text style={[styles.title, { color: colors.text, textDecorationLine: isDone ? 'line-through' : 'none' }]} numberOfLines={1}>
           {task.title}
         </Text>
+        {task.requiresSignature && (
+          <Text style={styles.signatureEmoji} accessibilityLabel={t('taskDetail.signatureRequired')}>
+            ✍️
+          </Text>
+        )}
         {task.id && (
           <Text style={[styles.taskId, { color: tertiaryText }]}>#{task.id}</Text>
         )}
@@ -409,6 +414,10 @@ const styles = StyleSheet.create({
     minWidth: 0,
     fontSize: 13.5,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  signatureEmoji: {
+    fontSize: 13,
+    flexShrink: 0,
   },
   taskId: {
     fontSize: 11,

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Modal,
   ScrollView,
   StyleSheet,
@@ -9,7 +10,6 @@ import {
   TouchableOpacity,
   View,
   FlatList,
-  Alert,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
@@ -25,6 +25,7 @@ import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens
 import { RootStackParamList } from '../models/types';
 import { useTenant } from '../hooks/useTenant';
 import { GPS_CAPTURE_STORAGE_KEY } from './SettingsScreen';
+import { Toast, ToastRef } from '../components/Toast';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'VoiceTaskReview'>;
 type ScreenRouteProp = RouteProp<RootStackParamList, 'VoiceTaskReview'>;
@@ -57,6 +58,9 @@ interface PickerModalProps {
   visible: boolean;
   title: string;
   items: PickerItem[];
+  searchable?: boolean;
+  searchPlaceholder: string;
+  emptyText: string;
   selectedId?: string | null;
   selectedIds?: Set<string>;
   multi?: boolean;
@@ -71,6 +75,9 @@ const PickerModal: React.FC<PickerModalProps> = ({
   visible,
   title,
   items,
+  searchable = false,
+  searchPlaceholder,
+  emptyText,
   selectedId,
   selectedIds,
   multi = false,
@@ -79,47 +86,82 @@ const PickerModal: React.FC<PickerModalProps> = ({
   colors,
   primaryColor,
   isDarkMode,
-}) => (
-  <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-    <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
-      <View
-        style={[
-          styles.modalSheet,
-          {
-            backgroundColor: colors.surface,
-            borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E7E2D9',
-          },
-        ]}
-        onStartShouldSetResponder={() => true}
-      >
-        <View style={styles.modalHandle} />
-        <Text style={[styles.modalTitle, { color: colors.text }]}>{title}</Text>
-        <FlatList
-          data={items}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => {
-            const isSelected = multi ? selectedIds?.has(item.id) : item.id === selectedId;
-            return (
-              <TouchableOpacity
+}) => {
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (!visible) {
+      setSearch('');
+    }
+  }, [visible]);
+
+  const filteredItems = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => item.name.toLowerCase().includes(query));
+  }, [items, search]);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={styles.modalKeyboard} behavior="padding">
+        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onClose}>
+          <View
+            style={[
+              styles.modalSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E7E2D9',
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.modalHandle} />
+            <Text style={[styles.modalTitle, { color: colors.text }]}>{title}</Text>
+
+            {searchable ? (
+              <TextInput
+                value={search}
+                onChangeText={setSearch}
+                placeholder={searchPlaceholder}
+                placeholderTextColor={colors.textSecondary}
                 style={[
-                  styles.modalItem,
-                  { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#EFE8DE' },
+                  styles.modalSearchInput,
+                  {
+                    color: colors.text,
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F7F4EF',
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+                  },
                 ]}
-                onPress={() => onSelect(item)}
-              >
-                <Text style={[styles.modalItemText, { color: colors.text }]}>{item.name}</Text>
-                {isSelected ? <MaterialIcons name="check" size={20} color={primaryColor} /> : null}
-              </TouchableOpacity>
-            );
-          }}
-          ListEmptyComponent={
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No items available</Text>
-          }
-        />
-      </View>
-    </TouchableOpacity>
-  </Modal>
-);
+              />
+            ) : null}
+
+            <FlatList
+              data={filteredItems}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const isSelected = multi ? selectedIds?.has(item.id) : item.id === selectedId;
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.modalItem,
+                      { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#EFE8DE' },
+                    ]}
+                    onPress={() => onSelect(item)}
+                  >
+                    <Text style={[styles.modalItemText, { color: colors.text }]}>{item.name}</Text>
+                    {isSelected ? <MaterialIcons name="check" size={20} color={primaryColor} /> : null}
+                  </TouchableOpacity>
+                );
+              }}
+              ListEmptyComponent={<Text style={[styles.emptyText, { color: colors.textSecondary }]}>{emptyText}</Text>}
+            />
+          </View>
+        </TouchableOpacity>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+};
 
 async function getOptionalCapturedLocation() {
   const enabled = await AsyncStorage.getItem(GPS_CAPTURE_STORAGE_KEY);
@@ -191,6 +233,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   const [assigneeModalVisible, setAssigneeModalVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [initializedDraftId, setInitializedDraftId] = useState<string | null>(null);
+  const toastRef = React.useRef<ToastRef>(null);
 
   const draft = reviewData?.draft;
   const context = reviewData?.context as VoiceDraftContext | undefined;
@@ -370,7 +413,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   const handleConfirm = useCallback(async () => {
     if (!tenantId || !draft || !selectedWorkspaceId) return;
     if (liveBlockingFields.length > 0) {
-      Alert.alert('Missing information', 'Please resolve the missing fields before creating the task.');
+      toastRef.current?.show({
+        type: 'warning',
+        title: t('voiceTaskReview.missingInfoTitle'),
+        body: t('voiceTaskReview.missingInfoBody'),
+      });
       return;
     }
 
@@ -390,10 +437,18 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         latitude: gpsLocation?.latitude,
         longitude: gpsLocation?.longitude,
       });
-      Alert.alert(t('common.success'), t('createTask.taskCreatedSuccess'));
-      navigation.goBack();
+      toastRef.current?.show({
+        type: 'success',
+        title: t('common.success'),
+        body: t('createTask.taskCreatedSuccess'),
+      });
+      setTimeout(() => navigation.goBack(), 700);
     } catch (error: any) {
-      Alert.alert(t('common.error'), error?.message || 'Could not create the task.');
+      toastRef.current?.show({
+        type: 'error',
+        title: t('common.error'),
+        body: error?.message || t('voiceTaskReview.createTaskFailedFallback'),
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -425,7 +480,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   if (!draft || !context) {
     return (
       <SafeAreaView style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
-        <Text style={[styles.emptyText, { color: colors.text }]}>Draft not found.</Text>
+        <Text style={[styles.emptyText, { color: colors.text }]}>{t('voiceTaskReview.draftNotFound')}</Text>
       </SafeAreaView>
     );
   }
@@ -436,7 +491,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <MaterialIcons name="arrow-back" size={24} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Review task draft</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('voiceTaskReview.headerTitle')}</Text>
         <TouchableOpacity onPress={handleCancel}>
           <Text style={[styles.headerAction, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
         </TouchableOpacity>
@@ -444,24 +499,24 @@ export const VoiceTaskReviewScreen: React.FC = () => {
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Transcript</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('voiceTaskReview.transcriptLabel')}</Text>
           <Text style={[styles.transcriptText, { color: colors.text }]}>
-            {draft.transcript || proposal.transcript || 'No transcript available.'}
+            {draft.transcript || proposal.transcript || t('voiceTaskReview.noTranscript')}
           </Text>
         </View>
 
         {proposal.intent === 'unsupported' ? (
           <View style={[styles.warningCard, { backgroundColor: isDarkMode ? 'rgba(239,68,68,0.14)' : '#FDE8E8' }]}>
-            <Text style={[styles.warningTitle, { color: colors.text }]}>This didn&apos;t sound like a task request</Text>
+            <Text style={[styles.warningTitle, { color: colors.text }]}>{t('voiceTaskReview.unsupportedTitle')}</Text>
             <Text style={[styles.warningBody, { color: colors.textSecondary }]}>
-              Try again and describe the task you want to create, who it should be assigned to, and where it belongs.
+              {t('voiceTaskReview.unsupportedBody')}
             </Text>
           </View>
         ) : null}
 
         {(draft.warnings?.length ?? 0) > 0 ? (
           <View style={[styles.warningCard, { backgroundColor: isDarkMode ? 'rgba(245,158,11,0.16)' : '#FEF3C7' }]}>
-            <Text style={[styles.warningTitle, { color: colors.text }]}>Warnings</Text>
+            <Text style={[styles.warningTitle, { color: colors.text }]}>{t('voiceTaskReview.warningsTitle')}</Text>
             {(draft.warnings as string[]).map((warning, index) => (
               <Text key={`${warning}-${index}`} style={[styles.warningBody, { color: colors.textSecondary }]}>
                 • {warning}
@@ -472,27 +527,29 @@ export const VoiceTaskReviewScreen: React.FC = () => {
 
         {liveMissingFields.length > 0 ? (
           <View style={[styles.warningCard, { backgroundColor: isDarkMode ? 'rgba(59,130,246,0.14)' : '#DBEAFE' }]}>
-            <Text style={[styles.warningTitle, { color: colors.text }]}>Needs review</Text>
+            <Text style={[styles.warningTitle, { color: colors.text }]}>{t('voiceTaskReview.needsReviewTitle')}</Text>
             {liveMissingFields.map((field) => (
               <Text key={field} style={[styles.warningBody, { color: colors.textSecondary }]}>
-                • {field === 'taskName' ? 'Task title' : field.charAt(0).toUpperCase() + field.slice(1)}
+                • {field === 'taskName'
+                  ? t('voiceTaskReview.fieldTaskTitle')
+                  : t(`voiceTaskReview.field.${field}`)}
               </Text>
             ))}
           </View>
         ) : null}
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Workspace</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('voiceTaskReview.workspaceLabel')}</Text>
           <TouchableOpacity
             style={[styles.selectorRow, selectedTemplate ? styles.selectorRowDisabled : null]}
             onPress={selectedTemplate ? undefined : () => setWorkspaceModalVisible(true)}
             disabled={!!selectedTemplate}
           >
-            <Text style={[styles.selectorValue, { color: colors.text }]}> 
-              {selectedWorkspace?.name || 'Select workspace'}
+            <Text style={[styles.selectorValue, { color: colors.text }]}>
+              {selectedWorkspace?.name || t('createTask.selectWorkspace')}
             </Text>
             {selectedTemplate ? (
-              <Text style={[styles.lockedHint, { color: colors.textSecondary }]}>From template</Text>
+              <Text style={[styles.lockedHint, { color: colors.textSecondary }]}>{t('voiceTaskReview.fromTemplate')}</Text>
             ) : (
               <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
             )}
@@ -500,10 +557,10 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Template</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('voiceTaskReview.templateLabel')}</Text>
           <TouchableOpacity style={styles.selectorRow} onPress={() => setTemplateModalVisible(true)}>
             <Text style={[styles.selectorValue, { color: colors.text }]}>
-              {selectedTemplate?.name || (availableTemplates.length > 0 ? 'Select template' : 'No templates required')}
+              {selectedTemplate?.name || (availableTemplates.length > 0 ? t('createTask.selectTemplate') : t('voiceTaskReview.noTemplatesRequired'))}
             </Text>
             <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
@@ -511,7 +568,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
 
         {!selectedTemplate ? (
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
-            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Task title</Text>
+            <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('voiceTaskReview.taskTitleLabel')}</Text>
             <TextInput
               value={taskName}
               onChangeText={setTaskName}
@@ -523,7 +580,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         ) : null}
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Description</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('createTask.addDescription')}</Text>
           <TextInput
             value={description}
             onChangeText={setDescription}
@@ -538,7 +595,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Location</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('createTask.locationLabel')}</Text>
           <TouchableOpacity style={styles.selectorRow} onPress={() => setSpotModalVisible(true)}>
             <Text style={[styles.selectorValue, { color: colors.text }]}>
               {selectedSpot?.name || t('createTask.selectLocation')}
@@ -548,17 +605,17 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Priority</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('createTask.priorityLabel')}</Text>
           <TouchableOpacity style={styles.selectorRow} onPress={() => setPriorityModalVisible(true)}>
             <Text style={[styles.selectorValue, { color: colors.text }]}>
-              {selectedPriority?.name || 'Select priority'}
+              {selectedPriority?.name || t('voiceTaskReview.selectPriority')}
             </Text>
             <MaterialIcons name="keyboard-arrow-down" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         </View>
 
         <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Assign to</Text>
+          <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>{t('createTask.assignToLabel')}</Text>
           <TouchableOpacity style={styles.selectorRow} onPress={() => setAssigneeModalVisible(true)}>
             <Text style={[styles.selectorValue, { color: colors.text }]}>
               {selectedAssignees.length > 0 ? selectedAssignees.map((item: DraftUser) => item.name).join(', ') : t('createTask.selectAssignees')}
@@ -573,7 +630,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
           style={[styles.secondaryButton, { borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : '#D7D0C5' }]}
           onPress={handleCancel}
         >
-          <Text style={[styles.secondaryButtonText, { color: colors.text }]}>Cancel</Text>
+          <Text style={[styles.secondaryButtonText, { color: colors.text }]}>{t('common.cancel')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[
@@ -586,15 +643,18 @@ export const VoiceTaskReviewScreen: React.FC = () => {
           {isSubmitting ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Text style={styles.primaryButtonText}>Create task</Text>
+            <Text style={styles.primaryButtonText}>{t('createTask.createButton')}</Text>
           )}
         </TouchableOpacity>
       </View>
 
       <PickerModal
         visible={workspaceModalVisible}
-        title="Select workspace"
+        title={t('createTask.selectWorkspaceModalTitle')}
         items={workspaceItems}
+        searchable
+        searchPlaceholder={t('common.search')}
+        emptyText={t('common.noItemsFound')}
         selectedId={selectedWorkspaceId}
         onSelect={(item) => {
           setSelectedWorkspaceId(item.id);
@@ -607,8 +667,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
       />
       <PickerModal
         visible={templateModalVisible}
-        title="Select template"
+        title={t('createTask.selectTemplateModalTitle')}
         items={templateItems}
+        searchable
+        searchPlaceholder={t('common.search')}
+        emptyText={t('common.noItemsFound')}
         selectedId={selectedTemplateId}
         onSelect={(item) => {
           const template = availableTemplates.find((entry: DraftTemplate) => entry.id === item.id) ?? null;
@@ -625,8 +688,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
       />
       <PickerModal
         visible={spotModalVisible}
-        title="Select location"
+        title={t('createTask.selectLocationModalTitle')}
         items={spotItems}
+        searchable
+        searchPlaceholder={t('common.search')}
+        emptyText={t('common.noItemsFound')}
         selectedId={selectedSpotId}
         onSelect={(item) => {
           setSelectedSpotId(item.id);
@@ -639,8 +705,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
       />
       <PickerModal
         visible={priorityModalVisible}
-        title="Select priority"
+        title={t('voiceTaskReview.selectPriority')}
         items={priorityItems}
+        searchable
+        searchPlaceholder={t('common.search')}
+        emptyText={t('common.noItemsFound')}
         selectedId={selectedPriorityId}
         onSelect={(item) => {
           setSelectedPriorityId(item.id);
@@ -653,8 +722,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
       />
       <PickerModal
         visible={assigneeModalVisible}
-        title="Assign to"
+        title={t('createTask.selectAssigneesModalTitle')}
         items={assigneeItems}
+        searchable
+        searchPlaceholder={t('common.searchUsers')}
+        emptyText={t('common.noItemsFound')}
         selectedIds={new Set(selectedAssigneeIds)}
         multi
         onSelect={toggleAssignee}
@@ -663,6 +735,7 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         primaryColor={primaryColor}
         isDarkMode={isDarkMode}
       />
+      <Toast ref={toastRef} />
     </SafeAreaView>
   );
 };
@@ -799,6 +872,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.32)',
     justifyContent: 'flex-end',
   },
+  modalKeyboard: {
+    flex: 1,
+  },
   modalSheet: {
     maxHeight: '70%',
     borderTopLeftRadius: radius.xl,
@@ -820,6 +896,15 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.displaySemibold,
     fontSize: fontSizes.lg,
     marginBottom: spacing.md,
+  },
+  modalSearchInput: {
+    borderWidth: 1,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    fontSize: fontSizes.md,
+    marginBottom: spacing.sm,
   },
   modalItem: {
     flexDirection: 'row',

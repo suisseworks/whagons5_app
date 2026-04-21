@@ -66,6 +66,8 @@ export interface TaskItem {
   /** GPS coordinates captured at creation */
   latitude?: number | null;
   longitude?: number | null;
+  /** Task requires a signature before completion */
+  requiresSignature?: boolean;
 }
 
 // Notification item model

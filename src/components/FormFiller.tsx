@@ -201,7 +201,9 @@ export const FormFiller: React.FC<FormFillerProps> = ({
         )}
 
         {/* Field input */}
-        {renderFieldInput(field, fieldValue, hasError)}
+        <View style={readOnly ? styles.readOnlyFieldInput : undefined}>
+          {renderFieldInput(field, fieldValue, hasError)}
+        </View>
 
         {/* Validation error */}
         {hasError && (
@@ -261,6 +263,8 @@ export const FormFiller: React.FC<FormFillerProps> = ({
             onChange={(v) => handleFieldChange(field.id, v)}
             readOnly={readOnly}
             allowDecimals={field.properties?.allowDecimals}
+            min={field.properties?.min}
+            max={field.properties?.max}
             inputBg={inputBg}
             borderColor={borderColor}
             textColor={colors.text}
@@ -602,34 +606,114 @@ const NumberFieldInput: React.FC<{
   onChange: (v: number) => void;
   readOnly: boolean;
   allowDecimals?: boolean;
+  min?: unknown;
+  max?: unknown;
   inputBg: string;
   borderColor: string;
   textColor: string;
   secondaryColor: string;
   primaryColor: string;
-}> = ({ value, onChange, readOnly, allowDecimals, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
+}> = ({ value, onChange, readOnly, allowDecimals, min, max, inputBg, borderColor, textColor, secondaryColor, primaryColor }) => {
   const { t } = useLanguage();
-  const [textValue, setTextValue] = useState(value != null && value !== 0 ? String(value) : '');
+
+  const parseBound = (bound: unknown): number | undefined => {
+    if (typeof bound === 'number' && Number.isFinite(bound)) return bound;
+    if (typeof bound === 'string' && bound.trim() !== '') {
+      const parsed = Number(bound);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return undefined;
+  };
+
+  const minValue = parseBound(min);
+  const maxValue = parseBound(max);
+  const effectiveMin = typeof minValue === 'number' ? minValue : undefined;
+  const effectiveMax =
+    typeof maxValue === 'number' && (effectiveMin === undefined || maxValue >= effectiveMin)
+      ? maxValue
+      : undefined;
+
+  const normalizeForMode = (next: number): number => {
+    if (allowDecimals) {
+      return Math.round(next * 100) / 100;
+    }
+    return Math.round(next);
+  };
+
+  const clampValue = (next: number): number => {
+    let normalized = normalizeForMode(next);
+    if (typeof effectiveMin === 'number') normalized = Math.max(effectiveMin, normalized);
+    if (typeof effectiveMax === 'number') normalized = Math.min(effectiveMax, normalized);
+    return normalized;
+  };
+
+  const [textValue, setTextValue] = useState(() => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(clampValue(value));
+    }
+    return '';
+  });
 
   // Sync text display when value prop changes (e.g. loading saved data)
   useEffect(() => {
-    if (value != null && value !== 0) {
-      setTextValue(String(value));
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      setTextValue(String(clampValue(value)));
+    } else if (value == null) {
+      setTextValue('');
     }
-  }, [value]);
+  }, [value, allowDecimals, effectiveMin, effectiveMax]);
+
+  const getCurrentValue = (): number => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return clampValue(value);
+    }
+
+    const parsedText = Number(allowDecimals ? textValue.replace(',', '.') : textValue);
+    if (Number.isFinite(parsedText)) {
+      return clampValue(parsedText);
+    }
+
+    if (typeof effectiveMin === 'number') return effectiveMin;
+    return 0;
+  };
 
   const handleChange = (text: string) => {
     setTextValue(text);
-    const num = allowDecimals ? parseFloat(text) : parseInt(text, 10);
-    if (!isNaN(num)) onChange(num);
-    else if (text === '' || text === '-') onChange(0);
+
+    const normalizedText = allowDecimals ? text.replace(',', '.') : text;
+    if (
+      normalizedText === '' ||
+      normalizedText === '-' ||
+      normalizedText === '.' ||
+      normalizedText === '-.'
+    ) {
+      return;
+    }
+
+    const num = Number(normalizedText);
+    if (!Number.isFinite(num)) return;
+
+    const bounded = clampValue(num);
+    onChange(bounded);
+
+    if (bounded !== num) {
+      setTextValue(String(bounded));
+    }
+  };
+
+  const step = allowDecimals ? 0.01 : 1;
+
+  const handleStep = (direction: -1 | 1) => {
+    const next = clampValue(getCurrentValue() + direction * step);
+    onChange(next);
+    setTextValue(String(next));
   };
 
   return (
     <View style={[styles.numberRow]}>
       <TouchableOpacity
         style={[styles.numberButton, { borderColor, backgroundColor: inputBg }]}
-        onPress={() => { const n = (value ?? 0) - 1; onChange(n); setTextValue(String(n)); }}
+        onPress={() => handleStep(-1)}
         disabled={readOnly}
       >
         <MaterialIcons name="remove" size={20} color={primaryColor} />
@@ -646,7 +730,7 @@ const NumberFieldInput: React.FC<{
       />
       <TouchableOpacity
         style={[styles.numberButton, { borderColor, backgroundColor: inputBg }]}
-        onPress={() => { const n = (value ?? 0) + 1; onChange(n); setTextValue(String(n)); }}
+        onPress={() => handleStep(1)}
         disabled={readOnly}
       >
         <MaterialIcons name="add" size={20} color={primaryColor} />
@@ -1095,6 +1179,9 @@ const styles = StyleSheet.create({
     color: '#F44336',
     fontSize: fontSizes.xs,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  readOnlyFieldInput: {
+    opacity: 0.5,
   },
   textInput: {
     borderWidth: 1,

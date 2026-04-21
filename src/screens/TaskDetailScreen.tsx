@@ -44,6 +44,7 @@ import { RootStackParamList, TaskItem } from '../models/types';
 import { CustomChip } from '../components/CustomChip';
 import TaskNavigationMap from '../components/TaskNavigationMap';
 import { FormFiller } from '../components/FormFiller';
+import { SignatureModal } from '../components/SignatureModal';
 
 /** Error-safe wrapper so a MapView crash never takes down TaskDetail */
 class TaskNavigationMapSafe extends React.Component<
@@ -186,12 +187,28 @@ function fixConvexStorageUrl(url: string): string {
   try {
     const expected = new URL(convexUrl);
     const actual = new URL(url);
+
+    const isConvexLikeSource =
+      actual.pathname.includes('/api/storage/') ||
+      actual.hostname.includes('convex') ||
+      actual.hostname.startsWith('cvx-');
+
+    if (!isConvexLikeSource) return url;
+
     if (actual.hostname !== expected.hostname) {
       actual.hostname = expected.hostname;
       return actual.toString();
     }
   } catch {}
   return url;
+}
+
+function normalizeForSearch(value?: string | null): string {
+  if (!value) return '';
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
 const NoteAttachmentView: React.FC<{
@@ -517,25 +534,34 @@ export const TaskDetailScreen: React.FC = () => {
   const [priorityPickerVisible, setPriorityPickerVisible] = useState(false);
   const [currentPriority, setCurrentPriority] = useState(task.priority);
   const [currentPriorityId, setCurrentPriorityId] = useState(task.priorityId ?? null);
+  const [signatureVisible, setSignatureVisible] = useState(false);
+  const [pendingStatusAfterSignature, setPendingStatusAfterSignature] = useState<StatusOption | null>(null);
 
   // Assignee picker state
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState('');
   const [selectedViewerKey, setSelectedViewerKey] = useState<string | null>(null);
   const [draftAssigneeIds, setDraftAssigneeIds] = useState<string[]>([]);
+  const [failedAssigneeAvatarIds, setFailedAssigneeAvatarIds] = useState<Set<string>>(new Set());
   const [savingAssignees, setSavingAssignees] = useState(false);
 
   const sortedUsers = useMemo(() => {
     const currentUserId = authUser?.id ?? 0;
     let users = [...data.users];
     if (assigneeSearch.trim()) {
-      const q = assigneeSearch.trim().toLowerCase();
-      users = users.filter((u) => u.name.toLowerCase().includes(q));
+      const q = normalizeForSearch(assigneeSearch.trim());
+      users = users.filter((u: any) => {
+        const name = normalizeForSearch(u?.name ?? '');
+        const email = normalizeForSearch(u?.email ?? '');
+        return name.includes(q) || email.includes(q);
+      });
     }
-    return users.sort((a, b) => {
+    return users.sort((a: any, b: any) => {
       if (a.id === currentUserId) return -1;
       if (b.id === currentUserId) return 1;
-      return a.name.localeCompare(b.name);
+      const nameA = String(a?.name || a?.email || '');
+      const nameB = String(b?.name || b?.email || '');
+      return nameA.localeCompare(nameB);
     });
   }, [data.users, authUser, assigneeSearch]);
 
@@ -565,8 +591,10 @@ export const TaskDetailScreen: React.FC = () => {
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
 
   const convexTaskId = task.convexId ?? task.taskConvexId ?? null;
+  const requiresTaskSignature = task.requiresSignature === true;
   const assignUserMutation = useMutation(api.taskResources.assignUser);
   const unassignUserMutation = useMutation(api.taskResources.unassignUser);
+  const createSignatureMutation = useMutation(api.taskResources.createSignature);
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
@@ -580,6 +608,13 @@ export const TaskDetailScreen: React.FC = () => {
     api.taskResources.listTaskNotes,
     tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
   );
+  const taskSignatures = useQuery(
+    api.taskResources.listTaskSignatures,
+    tenantId && hasValidConvexId
+      ? { tenantId, taskId: convexTaskId as any }
+      : 'skip'
+  ) as any[] | undefined;
+  const hasTaskSignature = (taskSignatures?.length ?? 0) > 0;
   const createNoteMutation = useMutation(api.taskResources.createNote);
   const updateNoteMutation = useMutation(api.taskResources.updateNote);
   const removeNoteMutation = useMutation(api.taskResources.removeNote);
@@ -656,23 +691,49 @@ export const TaskDetailScreen: React.FC = () => {
   const taskViewsLoading = viewsQueryArgs !== 'skip' && taskViewsRaw === undefined;
   const taskViews = viewsQueryArgs === 'skip' ? [] : (taskViewsRaw ?? []);
 
+  const taskIdentityKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (task.id != null) keys.add(String(task.id));
+    if ((task as any).convexId != null) keys.add(String((task as any).convexId));
+    if ((task as any).taskConvexId != null) keys.add(String((task as any).taskConvexId));
+    return keys;
+  }, [task]);
+
   const taskAssignmentRows = useMemo(() => {
-    if (!task.id) return [];
-    return data.taskUsers.filter((assignment: any) => String(assignment.task_id) === String(task.id));
-  }, [data.taskUsers, task.id]);
+    if (taskIdentityKeys.size === 0) return [];
+    return data.taskUsers.filter((assignment: any) => {
+      const assignmentTaskId = assignment.task_id ?? assignment.taskId;
+      if (assignmentTaskId == null) return false;
+      return taskIdentityKeys.has(String(assignmentTaskId));
+    });
+  }, [data.taskUsers, taskIdentityKeys]);
 
   const assignedUserIds = useMemo(() => {
     const ids = new Set<string>();
     for (const assignment of taskAssignmentRows) {
-      if (assignment.user_id != null) ids.add(String(assignment.user_id));
+      const rawUserId = assignment.user_id ?? assignment.userId;
+      if (rawUserId == null) continue;
+
+      ids.add(String(rawUserId));
+
+      const matchedUser = data.users.find((user: any) => (
+        String(user.id) === String(rawUserId) ||
+        String(user.pgId ?? '') === String(rawUserId) ||
+        String(user._id ?? '') === String(rawUserId)
+      ));
+
+      if (matchedUser?.id != null) ids.add(String(matchedUser.id));
+      if (matchedUser?.pgId != null) ids.add(String(matchedUser.pgId));
+      if (matchedUser?._id != null) ids.add(String(matchedUser._id));
     }
     return ids;
-  }, [taskAssignmentRows]);
+  }, [taskAssignmentRows, data.users]);
 
   const assignmentRowsByUserId = useMemo(() => {
     const rows = new Map<string, any>();
     for (const assignment of taskAssignmentRows) {
-      if (assignment.user_id != null) rows.set(String(assignment.user_id), assignment);
+      const rawUserId = assignment.user_id ?? assignment.userId;
+      if (rawUserId != null) rows.set(String(rawUserId), assignment);
     }
     return rows;
   }, [taskAssignmentRows]);
@@ -683,6 +744,7 @@ export const TaskDetailScreen: React.FC = () => {
   }, [draftAssigneeIds, assignedUserIds]);
 
   const currentUserId = authUser?.id != null ? Number(authUser.id) : null;
+
   const currentUserConvexId = useMemo(() => {
     const authId = authUser?.id;
     const authConvexId = (authUser as any)?._id;
@@ -698,6 +760,32 @@ export const TaskDetailScreen: React.FC = () => {
 
     return matchedUser?._id ? String(matchedUser._id) : (authConvexId ? String(authConvexId) : null);
   }, [authUser, data.users]);
+
+  const liveTaskForPermissions = useMemo(() => {
+    const fromUnfiltered = unfilteredTasks.find((candidate) => (
+      (task.id != null && String(candidate.id) === String(task.id)) ||
+      ((task as any).convexId != null && String((candidate as any).convexId ?? '') === String((task as any).convexId)) ||
+      ((task as any).taskConvexId != null && String((candidate as any).taskConvexId ?? '') === String((task as any).taskConvexId))
+    ));
+    if (fromUnfiltered) return fromUnfiltered;
+    return data.tasks.find((candidate) => (
+      (task.id != null && String(candidate.id) === String(task.id)) ||
+      ((task as any).convexId != null && String((candidate as any).convexId ?? '') === String((task as any).convexId)) ||
+      ((task as any).taskConvexId != null && String((candidate as any).taskConvexId ?? '') === String((task as any).taskConvexId))
+    )) ?? null;
+  }, [unfilteredTasks, data.tasks, task]);
+
+  const canFillForm = useMemo(() => {
+    const action = String((liveTaskForPermissions as any)?.statusAction ?? currentStatusAction ?? task.statusAction ?? '').toUpperCase();
+    const isInProgress = action === 'WORKING' || action === 'PAUSED';
+
+    const currentUserKeys = new Set<string>();
+    if (currentUserId != null) currentUserKeys.add(String(currentUserId));
+    if (currentUserConvexId) currentUserKeys.add(String(currentUserConvexId));
+
+    const isAssignedToMe = Array.from(currentUserKeys).some((key) => assignedUserIds.has(key));
+    return isInProgress && isAssignedToMe;
+  }, [liveTaskForPermissions, currentStatusAction, task.statusAction, currentUserId, currentUserConvexId, assignedUserIds]);
 
   type TaskViewer = {
     key: string;
@@ -771,6 +859,7 @@ export const TaskDetailScreen: React.FC = () => {
   useEffect(() => {
     if (!assigneePickerVisible) return;
     setDraftAssigneeIds(Array.from(assignedUserIds));
+    setFailedAssigneeAvatarIds(new Set());
   }, [assigneePickerVisible, assignedUserIds]);
 
   const seenTaskIdRef = useRef<number | null>(null);
@@ -783,7 +872,13 @@ export const TaskDetailScreen: React.FC = () => {
     });
   }, [tenantId, taskPgId, recordTaskView]);
 
-  const handleStatusChange = (status: StatusOption) => {
+  const isCompletionStatus = useCallback((status: StatusOption) => {
+    if (status.final === true) return true;
+    const action = String(status.action ?? '').toUpperCase();
+    return action === 'FINISHED' || action === 'DONE';
+  }, []);
+
+  const applyStatusChange = useCallback((status: StatusOption) => {
     changeTaskStatus(task.id || '', status);
     setCurrentStatus(status.name);
     setCurrentStatusColor(status.color);
@@ -791,7 +886,54 @@ export const TaskDetailScreen: React.FC = () => {
     setCurrentStatusIcon(status.icon ?? null);
     setCurrentStatusAction(status.action ?? null);
     setStatusPickerVisible(false);
-  };
+  }, [changeTaskStatus, task.id]);
+
+  const handleStatusChange = useCallback((status: StatusOption) => {
+    if (requiresTaskSignature && isCompletionStatus(status) && !hasTaskSignature) {
+      if (!hasValidConvexId) {
+        toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCannotSignTask') });
+        return;
+      }
+      setPendingStatusAfterSignature(status);
+      setStatusPickerVisible(false);
+      setSignatureVisible(true);
+      return;
+    }
+    applyStatusChange(status);
+  }, [requiresTaskSignature, isCompletionStatus, hasTaskSignature, hasValidConvexId, t, applyStatusChange]);
+
+  const handleTaskSigned = useCallback(async ({ storageId, signerName, comment }: { storageId: string; signerName: string; comment?: string }) => {
+    if (!tenantId || !hasValidConvexId) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCannotSignTask') });
+      return;
+    }
+
+    try {
+      await createSignatureMutation({
+        tenantId,
+        taskId: convexTaskId as any,
+        signaturePath: storageId,
+        signerName,
+        comment,
+      });
+
+      setSignatureVisible(false);
+      const pendingStatus = pendingStatusAfterSignature;
+      setPendingStatusAfterSignature(null);
+
+      if (pendingStatus) {
+        applyStatusChange(pendingStatus);
+      } else {
+        toastRef.current?.show({ type: 'success', title: t('common.success'), body: t('taskDetail.signatureSaved') });
+      }
+    } catch (error: any) {
+      toastRef.current?.show({
+        type: 'error',
+        title: t('common.error'),
+        body: error?.message || t('taskDetail.errorCannotSignTask'),
+      });
+    }
+  }, [tenantId, hasValidConvexId, t, createSignatureMutation, convexTaskId, pendingStatusAfterSignature, applyStatusChange]);
 
   const handlePriorityChange = (priority: { id: any; name: string }) => {
     changeTaskPriority(task.id || '', priority.id);
@@ -1064,7 +1206,7 @@ export const TaskDetailScreen: React.FC = () => {
 
   // Auto-save form data
   const doFormSave = useCallback(async (data: Record<string, unknown>) => {
-    if (!tenantId || !convexTaskId || formIsSavingRef.current) return;
+    if (!tenantId || !convexTaskId || formIsSavingRef.current || !canFillForm) return;
     formIsSavingRef.current = true;
     setFormSaveStatus('saving');
 
@@ -1095,12 +1237,12 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       formIsSavingRef.current = false;
     }
-  }, [tenantId, convexTaskId, formTaskFormId, existingSubmission, task.formId, getFormVersionId, createTaskFormMutation, updateTaskFormMutation]);
+  }, [tenantId, convexTaskId, formTaskFormId, existingSubmission, task.formId, getFormVersionId, createTaskFormMutation, updateTaskFormMutation, canFillForm]);
 
   const handleFormChange = useCallback((newValues: Record<string, unknown>) => {
     setFormValues(newValues);
     formLatestValuesRef.current = newValues;
-    if (!formHasMountedRef.current) return;
+    if (!formHasMountedRef.current || !canFillForm) return;
 
     if (formSaveTimerRef.current) clearTimeout(formSaveTimerRef.current);
     setFormSaveStatus('saving');
@@ -1108,7 +1250,17 @@ export const TaskDetailScreen: React.FC = () => {
       formSaveTimerRef.current = null;
       doFormSave(formLatestValuesRef.current);
     }, 800);
-  }, [doFormSave]);
+  }, [doFormSave, canFillForm]);
+
+  useEffect(() => {
+    if (canFillForm) return;
+    if (formSaveTimerRef.current) {
+      clearTimeout(formSaveTimerRef.current);
+      formSaveTimerRef.current = null;
+    }
+    formIsSavingRef.current = false;
+    setFormSaveStatus('idle');
+  }, [canFillForm]);
 
   // Mark form as mounted after first render
   useEffect(() => {
@@ -1140,6 +1292,7 @@ export const TaskDetailScreen: React.FC = () => {
       {/* Title row: task name + flag + #id inline */}
       <View style={styles.titleRow}>
         <Text style={[styles.taskTitle, { color: colors.text }]} numberOfLines={3}>{task.title}</Text>
+        {requiresTaskSignature && <Text style={styles.taskSignatureEmoji}>✍️</Text>}
         {task.flagColor && (
           <MaterialCommunityIcons
             name="bookmark"
@@ -1498,33 +1651,52 @@ export const TaskDetailScreen: React.FC = () => {
     if (!formSchema) return null;
     return (
       <View style={styles.tabContent}>
-        {/* Save status indicator */}
-        <View style={[styles.formSaveStatusBar, { borderBottomColor: cardBorder }]}>
-          {formSaveStatus === 'saving' && (
-            <View style={styles.formSaveRow}>
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-              <Text style={[styles.formSaveText, { color: colors.textSecondary }]}>{t('taskDetail.formSaving')}</Text>
+        {canFillForm ? (
+          <View style={[styles.formSaveStatusBar, { borderBottomColor: cardBorder }]}> 
+            {formSaveStatus === 'saving' && (
+              <View style={styles.formSaveRow}>
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+                <Text style={[styles.formSaveText, { color: colors.textSecondary }]}>{t('taskDetail.formSaving')}</Text>
+              </View>
+            )}
+            {formSaveStatus === 'saved' && (
+              <View style={styles.formSaveRow}>
+                <MaterialIcons name="cloud-done" size={14} color="#22C55E" />
+                <Text style={[styles.formSaveText, { color: '#22C55E' }]}>{t('taskDetail.formSaved')}</Text>
+              </View>
+            )}
+            {formSaveStatus === 'error' && (
+              <View style={styles.formSaveRow}>
+                <MaterialIcons name="cloud-off" size={14} color="#EF4444" />
+                <Text style={[styles.formSaveText, { color: '#EF4444' }]}>{t('taskDetail.formSaveFailed')}</Text>
+              </View>
+            )}
+          </View>
+        ) : (
+          <View style={styles.formReadOnlyBannerWrap}>
+            <View
+              style={[
+                styles.formReadOnlyBanner,
+                {
+                  borderColor: isDarkMode ? 'rgba(245, 158, 11, 0.4)' : 'rgba(217, 119, 6, 0.35)',
+                  backgroundColor: isDarkMode ? 'rgba(245, 158, 11, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                },
+              ]}
+            >
+              <MaterialIcons name="lock-outline" size={14} color={isDarkMode ? '#FDE68A' : '#92400E'} />
+              <Text style={[styles.formReadOnlyText, { color: isDarkMode ? '#FEF3C7' : '#92400E' }]}>
+                {t('taskDetail.formReadOnlyMustStartAndAssign', 'Task must be started and assigned to you before filling this form.')}
+              </Text>
             </View>
-          )}
-          {formSaveStatus === 'saved' && (
-            <View style={styles.formSaveRow}>
-              <MaterialIcons name="cloud-done" size={14} color="#22C55E" />
-              <Text style={[styles.formSaveText, { color: '#22C55E' }]}>{t('taskDetail.formSaved')}</Text>
-            </View>
-          )}
-          {formSaveStatus === 'error' && (
-            <View style={styles.formSaveRow}>
-              <MaterialIcons name="cloud-off" size={14} color="#EF4444" />
-              <Text style={[styles.formSaveText, { color: '#EF4444' }]}>{t('taskDetail.formSaveFailed')}</Text>
-            </View>
-          )}
-        </View>
+          </View>
+        )}
 
         <ScrollView style={styles.flex} contentContainerStyle={styles.tabContentContainer}>
           <FormFiller
             schema={formSchema}
             values={formValues}
             onChange={handleFormChange}
+            readOnly={!canFillForm}
             showValidation={false}
             colors={colors}
             primaryColor={primaryColor}
@@ -1857,15 +2029,38 @@ export const TaskDetailScreen: React.FC = () => {
           </View>
         </Animated.View>
 
-        {activeTab === 'details' && getAllowedStatuses(currentTask).length > 0 && (
+        {activeTab === 'details' && (getAllowedStatuses(currentTask).length > 0 || (requiresTaskSignature && !hasTaskSignature && hasValidConvexId)) && (
           <View style={styles.actionButtonsContainer}>
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: isDarkMode ? '#F0F0F0' : '#1A1A1A' }]}
-              onPress={() => setStatusPickerVisible(true)}
-            >
-              <MaterialIcons name="swap-horiz" size={16} color={isDarkMode ? '#1A1A1A' : '#FFFFFF'} />
-              <Text style={[styles.actionButtonText, { color: isDarkMode ? '#1A1A1A' : '#FFFFFF' }]}>{t('taskDetail.changeStatus')}</Text>
-            </TouchableOpacity>
+            {getAllowedStatuses(currentTask).length > 0 && (
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  { backgroundColor: isDarkMode ? '#F0F0F0' : '#1A1A1A' },
+                  requiresTaskSignature && !hasTaskSignature && hasValidConvexId ? styles.actionButtonHalf : null,
+                ]}
+                onPress={() => setStatusPickerVisible(true)}
+              >
+                <MaterialIcons name="swap-horiz" size={16} color={isDarkMode ? '#1A1A1A' : '#FFFFFF'} />
+                <Text style={[styles.actionButtonText, { color: isDarkMode ? '#1A1A1A' : '#FFFFFF' }]}>{t('taskDetail.changeStatus')}</Text>
+              </TouchableOpacity>
+            )}
+
+            {requiresTaskSignature && !hasTaskSignature && hasValidConvexId && (
+              <TouchableOpacity
+                style={[
+                  styles.actionButton,
+                  styles.actionButtonHalf,
+                  { backgroundColor: '#D97706' },
+                ]}
+                onPress={() => {
+                  setPendingStatusAfterSignature(null);
+                  setSignatureVisible(true);
+                }}
+              >
+                <MaterialCommunityIcons name="signature-freehand" size={16} color="#FFFFFF" />
+                <Text style={[styles.actionButtonText, { color: '#FFFFFF' }]}>{t('taskDetail.signTask')}</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </KeyboardAvoidingView>
@@ -2086,6 +2281,14 @@ export const TaskDetailScreen: React.FC = () => {
                   {sortedUsers.map((u) => {
                     const isAssigned = draftAssigneeIds.includes(String(u.id));
                     const isCurrentUser = u.id === (authUser?.id ?? 0);
+                    const avatarCandidate = u.url_picture || u.urlPicture || u.avatar || u.photo_url || null;
+                    const rawAvatar = typeof avatarCandidate === 'string' ? avatarCandidate.trim() : '';
+                    const normalizedAvatar = rawAvatar ? fixConvexStorageUrl(rawAvatar) : '';
+                    const optimizedAvatar = normalizedAvatar
+                      ? (getOptimizedImageUrl(normalizedAvatar, { width: 40, height: 40, mode: 'fill' }) || normalizedAvatar)
+                      : '';
+                    const hasValidAvatarUrl = optimizedAvatar.startsWith('http://') || optimizedAvatar.startsWith('https://');
+                    const showAvatarImage = hasValidAvatarUrl && !failedAssigneeAvatarIds.has(String(u.id));
                     return (
                       <TouchableOpacity
                         key={String(u.id)}
@@ -2106,14 +2309,24 @@ export const TaskDetailScreen: React.FC = () => {
                             width: 28,
                             height: 28,
                             borderRadius: 14,
-                            backgroundColor: u.url_picture ? 'transparent' : primaryColor,
+                            backgroundColor: showAvatarImage ? 'transparent' : primaryColor,
                             alignItems: 'center',
                             justifyContent: 'center',
                             marginRight: 12,
                           }}
                         >
-                          {u.url_picture ? (
-                            <Image source={{ uri: getOptimizedImageUrl(u.url_picture, { width: 40, height: 40, mode: 'fill' }) || u.url_picture }} style={styles.assigneeAvatarImg} />
+                          {showAvatarImage ? (
+                            <Image
+                              source={{ uri: optimizedAvatar }}
+                              style={styles.assigneeAvatarImg}
+                              onError={() => {
+                                setFailedAssigneeAvatarIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(String(u.id));
+                                  return next;
+                                });
+                              }}
+                            />
                           ) : (
                             <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
                               {getInitials(u.name)}
@@ -2197,6 +2410,20 @@ export const TaskDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       </Modal>
+
+      <SignatureModal
+        visible={signatureVisible}
+        title={t('taskDetail.signTask')}
+        subtitle={t('component.signatureModal.signTaskSubtitle')}
+        taskLabel={`#${task.id ?? ''} - ${task.title}`}
+        onClose={() => {
+          setSignatureVisible(false);
+          setPendingStatusAfterSignature(null);
+        }}
+        onSigned={(payload) => {
+          void handleTaskSigned(payload);
+        }}
+      />
 
       <Modal
         visible={!!commentActionNote}
@@ -2351,6 +2578,10 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 17,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  taskSignatureEmoji: {
+    fontSize: 16,
+    marginTop: 2,
   },
   taskIdInline: {
     fontSize: 12,
@@ -2659,8 +2890,31 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fontFamilies.bodyMedium,
   },
+  formReadOnlyBannerWrap: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  formReadOnlyBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  formReadOnlyText: {
+    flex: 1,
+    flexShrink: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamilies.bodyMedium,
+  },
   actionButtonsContainer: {
     padding: 16,
+    flexDirection: 'row',
+    gap: 10,
   },
   actionButton: {
     flexDirection: 'row',
@@ -2668,6 +2922,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 12,
     borderRadius: 12,
+    flex: 1,
+  },
+  actionButtonHalf: {
+    flex: 1,
   },
   actionButtonText: {
     marginLeft: 8,

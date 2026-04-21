@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, TouchableOpacity } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 
@@ -14,6 +14,7 @@ interface Props {
   };
   primaryColor: string;
   isDarkMode: boolean;
+  onPress?: () => void;
 }
 
 function formatDuration(durationMs: number): string {
@@ -30,6 +31,7 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
   colors,
   primaryColor,
   isDarkMode,
+  onPress,
 }) => {
   const pulse = useRef(new Animated.Value(1)).current;
   const spin = useRef(new Animated.Value(0)).current;
@@ -101,8 +103,10 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
   });
 
   return (
-    <View
-      pointerEvents="none"
+    <TouchableOpacity
+      activeOpacity={0.95}
+      onPress={onPress}
+      disabled={!onPress}
       style={[
         styles.container,
         {
@@ -131,7 +135,7 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
       <View style={styles.textBlock}>
         <Text style={[styles.title, { color: colors.text }]}>{label}</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}> 
-          {phase === 'recording' ? `${formatDuration(durationMs)} · Release to send` : 'Hold the plus button and keep speaking'}
+          {phase === 'recording' ? `${formatDuration(durationMs)} · Tap to send` : 'Hold the plus button and keep speaking'}
         </Text>
       </View>
       <View style={styles.meterWrap}>
@@ -152,7 +156,7 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
           />
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 };
 

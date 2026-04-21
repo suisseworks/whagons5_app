@@ -159,12 +159,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
+    if (tenantId && !myTenants.includes(tenantId)) {
+      setTenantId(null);
+      setCachedUser(null);
+      AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN).catch(() => {});
+      AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER).catch(() => {});
+    }
+
     if (myTenants.length === 0) {
-      console.log('[AUTH] No tenants found for user');
+      setPendingTenants(null);
       setTenantResolved(true);
     } else if (myTenants.length === 1) {
       const t = myTenants[0];
       setTenantId(t);
+      setPendingTenants(null);
       AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
       setTenantResolved(true);
     } else {
@@ -172,6 +180,20 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setTenantResolved(true);
     }
   }, [isAuthenticated, myTenants, tenantId, tenantResolved]);
+
+  // If the selected tenant has no active user record anymore, clear it so the
+  // app returns to tenant selection instead of loading stale cached state.
+  useEffect(() => {
+    if (!isAuthenticated || !tenantId) return;
+    if (!isOnline) return;
+    if (convexUser !== null) return;
+
+    setTenantId(null);
+    setTenantResolved(false);
+    setCachedUser(null);
+    AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN).catch(() => {});
+    AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER).catch(() => {});
+  }, [isAuthenticated, tenantId, convexUser, isOnline]);
 
   // ------------------------------------------------------------------
   // Map Convex user → UserInfo + cache to AsyncStorage
@@ -209,12 +231,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         convexAuthLoading ||
         isRestoringTenant ||
         (isAuthenticated && !myTenants) ||
-        (isAuthenticated && myTenants && !tenantResolved)
+        (isAuthenticated && myTenants && !tenantResolved) ||
+        (isAuthenticated && !!tenantId && convexUser === undefined)
       );
 
+  const hasActiveTenantUser = !!convexUser || offlineWithCache;
   const token = offlineWithCache
     ? 'offline-cached'
-    : (isAuthenticated && tenantId ? 'convex-authenticated' : null);
+    : (isAuthenticated && tenantId && hasActiveTenantUser ? 'convex-authenticated' : null);
 
   const state: AuthState = {
     isLoading,

@@ -485,6 +485,14 @@ function fixConvexStorageUrl(url: string): string {
   try {
     const expected = new URL(convexUrl);
     const actual = new URL(url);
+
+    const isConvexLikeSource =
+      actual.pathname.includes('/api/storage/') ||
+      actual.hostname.includes('convex') ||
+      actual.hostname.startsWith('cvx-');
+
+    if (!isConvexLikeSource) return url;
+
     if (actual.hostname !== expected.hostname) {
       actual.hostname = expected.hostname;
       return actual.toString();

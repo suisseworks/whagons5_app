@@ -415,7 +415,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
       <SignatureModal
         visible={signatureVisible}
         onClose={() => setSignatureVisible(false)}
-        onSigned={(storageId) => {
+        onSigned={({ storageId }) => {
           setSignatureVisible(false);
           submitDecision('approved', storageId);
         }}
