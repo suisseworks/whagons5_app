@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { StatusBar } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions } from '@react-navigation/native';
+import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions, getStateFromPath as defaultGetStateFromPath } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
@@ -35,6 +35,7 @@ const AppStatusBar = () => {
 export const AppNavigator: React.FC = () => {
   const { isDarkMode, colors } = useTheme();
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
+  const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim();
 
   const navigationTheme: Theme = useMemo(
     () => ({
@@ -52,19 +53,38 @@ export const AppNavigator: React.FC = () => {
 
   const linking = useMemo<LinkingOptions<RootStackParamList>>(() => {
     const prefixes = ['whagons://'];
+    const shareCandidates = [shareBaseUrl, convexSiteUrl].filter(
+      (value): value is string => Boolean(value),
+    );
 
-    if (shareBaseUrl) {
+    for (const candidate of shareCandidates) {
       try {
-        prefixes.push(new URL(shareBaseUrl).origin);
+        const withPlaceholder = candidate.includes('{tenant}')
+          ? candidate.replaceAll('{tenant}', 'tenant')
+          : candidate;
+        prefixes.push(new URL(withPlaceholder).origin);
       } catch {}
     }
 
     return {
       prefixes,
+      getStateFromPath(path, options) {
+        try {
+          if (path.startsWith('share/task')) {
+            const parsed = new URL(`https://placeholder/${path}`);
+            const token = parsed.searchParams.get('token');
+            if (token) {
+              return defaultGetStateFromPath(`task-share/${encodeURIComponent(token)}`, options);
+            }
+          }
+        } catch {}
+        return defaultGetStateFromPath(path, options);
+      },
       config: {
         screens: {
           TaskShareLink: {
             path: 'task-share/:token',
+            alias: ['share/task'],
             parse: {
               token: (value: string) => decodeURIComponent(value),
             },
@@ -72,7 +92,7 @@ export const AppNavigator: React.FC = () => {
         },
       },
     };
-  }, [shareBaseUrl]);
+  }, [convexSiteUrl, shareBaseUrl]);
 
   return (
     <NavigationContainer theme={navigationTheme} linking={linking}>

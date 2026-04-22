@@ -223,7 +223,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           />
         )}
         {task.priority && (
-          <Text style={[styles.priorityLabel, { color: priorityColor(task.priority) }]}> 
+          <Text style={[styles.priorityLabel, { color: task.priorityColor || priorityColor(task.priority) }]}> 
             {task.priority}
           </Text>
         )}

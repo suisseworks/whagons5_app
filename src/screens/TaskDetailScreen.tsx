@@ -99,6 +99,7 @@ import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/des
 import { Toast, ToastRef } from '../components/Toast';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { ProgressiveImage } from '../components/ProgressiveImage';
+import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
 
 /** Parse markdown checklist items from a description string */
 function parseChecklistItems(desc: string): { label: string; checked: boolean }[] | null {
@@ -181,6 +182,17 @@ interface TaskDocumentAssociation {
   };
 }
 
+interface TaskSignatureRecord {
+  _id: string;
+  _creationTime?: number;
+  userId?: string;
+  signerName?: string;
+  comment?: string;
+  signaturePath?: string;
+  signatureUrl?: string | null;
+  signedAt?: number;
+}
+
 function fixConvexStorageUrl(url: string): string {
   const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
   if (!convexUrl) return url;
@@ -201,14 +213,6 @@ function fixConvexStorageUrl(url: string): string {
     }
   } catch {}
   return url;
-}
-
-function normalizeForSearch(value?: string | null): string {
-  if (!value) return '';
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
 }
 
 const NoteAttachmentView: React.FC<{
@@ -388,18 +392,49 @@ function formatViewedAt(dateStr: string): string {
   })}`;
 }
 
-function buildTaskShareUrl(token: string): string | null {
-  const baseUrl = process.env.EXPO_PUBLIC_CONVEX_URL?.trim() || null;
+function buildTaskShareUrl(token: string, tenantSubdomain?: string | null): string | null {
+  const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim() || null;
+  const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim() || null;
 
-  if (!baseUrl) return null;
+  const tenant = tenantSubdomain
+    ?.trim()
+    .toLowerCase()
+    .replace(/^\.+/, '')
+    .replace(/\.+$/, '') || null;
 
-  try {
-    const url = new URL('/share/task', baseUrl);
-    url.searchParams.set('token', token);
-    return url.toString();
-  } catch {
-    return null;
+  const candidates = [shareBaseUrl, convexSiteUrl].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  for (const candidate of candidates) {
+    try {
+      let resolvedBase = candidate;
+      if (resolvedBase.includes('{tenant}')) {
+        if (!tenant) continue;
+        resolvedBase = resolvedBase.replaceAll('{tenant}', tenant);
+      }
+
+      const normalized = resolvedBase.endsWith('/') ? resolvedBase.slice(0, -1) : resolvedBase;
+      const url = new URL('/share/task', normalized);
+
+      const host = url.hostname.toLowerCase();
+      const isConvexHosted = host.endsWith('.convex.site') || host.endsWith('.convex.cloud');
+      const shouldInjectTenantSubdomain =
+        candidate !== shareBaseUrl &&
+        !candidate.includes('{tenant}') &&
+        !isConvexHosted;
+      if (tenant && shouldInjectTenantSubdomain && host !== tenant && !host.startsWith(`${tenant}.`)) {
+        url.hostname = `${tenant}.${url.hostname}`;
+      }
+
+      url.searchParams.set('token', token);
+      return url.toString();
+    } catch {
+      continue;
+    }
   }
+
+  return null;
 }
 
 type TaskDetailRouteProp = RouteProp<RootStackParamList, 'TaskDetail'>;
@@ -434,7 +469,7 @@ export const TaskDetailScreen: React.FC = () => {
     tagInfoMap,
     unfilteredTasks,
   } = useTasks();
-  const { user: authUser } = useAuth();
+  const { user: authUser, subdomain: authSubdomain } = useAuth();
   const { tenantId } = useTenant();
   const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
@@ -533,37 +568,73 @@ export const TaskDetailScreen: React.FC = () => {
   // Priority picker state
   const [priorityPickerVisible, setPriorityPickerVisible] = useState(false);
   const [currentPriority, setCurrentPriority] = useState(task.priority);
+  const [currentPriorityColor, setCurrentPriorityColor] = useState(task.priorityColor ?? null);
   const [currentPriorityId, setCurrentPriorityId] = useState(task.priorityId ?? null);
+  const [taskActionsVisible, setTaskActionsVisible] = useState(false);
   const [signatureVisible, setSignatureVisible] = useState(false);
   const [pendingStatusAfterSignature, setPendingStatusAfterSignature] = useState<StatusOption | null>(null);
 
   // Assignee picker state
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
-  const [assigneeSearch, setAssigneeSearch] = useState('');
   const [selectedViewerKey, setSelectedViewerKey] = useState<string | null>(null);
   const [draftAssigneeIds, setDraftAssigneeIds] = useState<string[]>([]);
-  const [failedAssigneeAvatarIds, setFailedAssigneeAvatarIds] = useState<Set<string>>(new Set());
   const [savingAssignees, setSavingAssignees] = useState(false);
 
-  const sortedUsers = useMemo(() => {
-    const currentUserId = authUser?.id ?? 0;
-    let users = [...data.users];
-    if (assigneeSearch.trim()) {
-      const q = normalizeForSearch(assigneeSearch.trim());
-      users = users.filter((u: any) => {
-        const name = normalizeForSearch(u?.name ?? '');
-        const email = normalizeForSearch(u?.email ?? '');
-        return name.includes(q) || email.includes(q);
-      });
-    }
-    return users.sort((a: any, b: any) => {
-      if (a.id === currentUserId) return -1;
-      if (b.id === currentUserId) return 1;
-      const nameA = String(a?.name || a?.email || '');
-      const nameB = String(b?.name || b?.email || '');
-      return nameA.localeCompare(nameB);
+  const sortedPriorities = useMemo(() => {
+    const normalizeName = (value: unknown): string => String(value ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+    const severityRank = (name: string): number => {
+      if (name.includes('vida o muerte') || name.includes('critical') || name.includes('critica') || name.includes('urgente') || name.includes('urgent')) return 0;
+      if (name.includes('alta') || name.includes('high')) return 1;
+      if (name.includes('media') || name.includes('medium') || name.includes('normal')) return 2;
+      if (name.includes('baja') || name.includes('low')) return 3;
+      return 99;
+    };
+
+    return [...data.priorities].sort((a: any, b: any) => {
+      const aOrder = Number.isFinite(Number(a?.order)) ? Number(a.order) : Number.isFinite(Number(a?.position)) ? Number(a.position) : null;
+      const bOrder = Number.isFinite(Number(b?.order)) ? Number(b.order) : Number.isFinite(Number(b?.position)) ? Number(b.position) : null;
+
+      if (aOrder != null && bOrder != null && aOrder !== bOrder) return aOrder - bOrder;
+      if (aOrder != null) return -1;
+      if (bOrder != null) return 1;
+
+      const aName = normalizeName(a?.name);
+      const bName = normalizeName(b?.name);
+      const rankDiff = severityRank(aName) - severityRank(bName);
+      if (rankDiff !== 0) return rankDiff;
+      return aName.localeCompare(bName, 'es');
     });
-  }, [data.users, authUser, assigneeSearch]);
+  }, [data.priorities]);
+
+  const assigneePickerUsers = useMemo<UserPickerItem[]>(() => {
+    return data.users.reduce<UserPickerItem[]>((acc, rawUser: any) => {
+      const resolvedId = rawUser?.id;
+      const resolvedName = typeof rawUser?.name === 'string' ? rawUser.name.trim() : '';
+      if (resolvedId == null || !resolvedName) {
+        return acc;
+      }
+
+      const avatarCandidate =
+        rawUser?.url_picture
+        ?? rawUser?.urlPicture
+        ?? rawUser?.avatar
+        ?? rawUser?.photo_url
+        ?? null;
+
+      acc.push({
+        id: String(resolvedId),
+        name: resolvedName,
+        email: typeof rawUser?.email === 'string' ? rawUser.email : undefined,
+        avatarUrl: typeof avatarCandidate === 'string' ? avatarCandidate : null,
+      });
+      return acc;
+    }, []);
+  }, [data.users]);
 
   const displayAssignees = useMemo(() => {
     const liveTask = unfilteredTasks.find((candidate) => String(candidate.id) === String(task.id))
@@ -613,7 +684,7 @@ export const TaskDetailScreen: React.FC = () => {
     tenantId && hasValidConvexId
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
-  ) as any[] | undefined;
+  ) as TaskSignatureRecord[] | undefined;
   const hasTaskSignature = (taskSignatures?.length ?? 0) > 0;
   const createNoteMutation = useMutation(api.taskResources.createNote);
   const updateNoteMutation = useMutation(api.taskResources.updateNote);
@@ -645,7 +716,8 @@ export const TaskDetailScreen: React.FC = () => {
         tenantId,
         taskId: convexTaskId as any,
       });
-      const shareUrl = buildTaskShareUrl(result.token);
+      const tenantForShareUrl = authSubdomain || tenantId || null;
+      const shareUrl = buildTaskShareUrl(result.token, tenantForShareUrl);
 
       if (!shareUrl) {
         Alert.alert(t('common.error'), t('taskDetail.shareMissingBaseUrl'));
@@ -661,11 +733,46 @@ export const TaskDetailScreen: React.FC = () => {
       console.error('[TaskDetail] Failed to share task', error);
       Alert.alert(t('common.error'), t('taskDetail.shareFailed'));
     }
-  }, [convexTaskId, createPublicShareMutation, hasValidConvexId, t, tenantId]);
+  }, [authSubdomain, convexTaskId, createPublicShareMutation, hasValidConvexId, t, tenantId]);
+
+  const handleOpenTaskActions = useCallback(() => {
+    setTaskActionsVisible(true);
+  }, []);
   const taskDocuments = useMemo(
     () => (taskDocumentAssociations ?? []).map((association) => association.document).filter(Boolean),
     [taskDocumentAssociations]
   );
+  const latestTaskSignature = useMemo(() => {
+    if (!taskSignatures || taskSignatures.length === 0) return null;
+    const sorted = [...taskSignatures].sort((a, b) => {
+      const aTime = a.signedAt ?? a._creationTime ?? 0;
+      const bTime = b.signedAt ?? b._creationTime ?? 0;
+      return bTime - aTime;
+    });
+    return sorted[0] ?? null;
+  }, [taskSignatures]);
+
+  const latestSignatureImageUrl = useMemo(() => {
+    const rawUrl = latestTaskSignature?.signatureUrl;
+    if (!rawUrl) return null;
+    return fixConvexStorageUrl(rawUrl);
+  }, [latestTaskSignature?.signatureUrl]);
+
+  const latestSignatureSigner = useMemo(() => {
+    if (!latestTaskSignature) return null;
+    if (latestTaskSignature.signerName?.trim()) return latestTaskSignature.signerName.trim();
+    const uid = latestTaskSignature.userId;
+    if (!uid) return null;
+    return userMap.get(uid) ?? userMap.get(String(uid)) ?? null;
+  }, [latestTaskSignature, userMap]);
+
+  const latestSignatureSignedAt = useMemo(() => {
+    const timestamp = latestTaskSignature?.signedAt ?? latestTaskSignature?._creationTime;
+    if (!timestamp) return null;
+    const dt = new Date(timestamp);
+    if (Number.isNaN(dt.getTime())) return null;
+    return `${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }, [latestTaskSignature]);
   const [sendingComment, setSendingComment] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentText, setEditingCommentText] = useState('');
@@ -859,7 +966,6 @@ export const TaskDetailScreen: React.FC = () => {
   useEffect(() => {
     if (!assigneePickerVisible) return;
     setDraftAssigneeIds(Array.from(assignedUserIds));
-    setFailedAssigneeAvatarIds(new Set());
   }, [assigneePickerVisible, assignedUserIds]);
 
   const seenTaskIdRef = useRef<number | null>(null);
@@ -935,9 +1041,10 @@ export const TaskDetailScreen: React.FC = () => {
     }
   }, [tenantId, hasValidConvexId, t, createSignatureMutation, convexTaskId, pendingStatusAfterSignature, applyStatusChange]);
 
-  const handlePriorityChange = (priority: { id: any; name: string }) => {
+  const handlePriorityChange = (priority: { id: any; name: string; color?: string | null }) => {
     changeTaskPriority(task.id || '', priority.id);
     setCurrentPriority(priority.name);
+    setCurrentPriorityColor(priority.color ?? null);
     setCurrentPriorityId(priority.id);
     setPriorityPickerVisible(false);
   };
@@ -945,7 +1052,6 @@ export const TaskDetailScreen: React.FC = () => {
   const closeAssigneePicker = useCallback(() => {
     if (savingAssignees) return;
     setAssigneePickerVisible(false);
-    setAssigneeSearch('');
   }, [savingAssignees]);
 
   const handleAssigneeToggle = useCallback((userId: number | string) => {
@@ -1393,7 +1499,7 @@ export const TaskDetailScreen: React.FC = () => {
           );
         })()}
         <TouchableOpacity onPress={() => setPriorityPickerVisible(true)} activeOpacity={0.7}>
-          <CustomChip label={currentPriority} color={priorityColor(currentPriority)} />
+          <CustomChip label={currentPriority} color={currentPriorityColor || priorityColor(currentPriority)} />
         </TouchableOpacity>
         {task.approval && (
           <CustomChip label={task.approval} color="#BBDEFB" textColor="#0D47A1" compact />
@@ -1423,6 +1529,55 @@ export const TaskDetailScreen: React.FC = () => {
           </Text>
         </View>
       </View>
+
+      {latestTaskSignature && (
+        <>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.signatureSectionTitle', 'Signature')}</Text>
+          <View style={[styles.signatureCard, { backgroundColor: secondarySurface }]}> 
+            {latestSignatureImageUrl ? (
+              <TouchableOpacity activeOpacity={0.85} onPress={() => setImageViewerUri(latestSignatureImageUrl)}>
+                <ProgressiveImage
+                  uri={latestSignatureImageUrl}
+                  width={1200}
+                  height={420}
+                  mode="fill"
+                  style={styles.signatureImage}
+                  contentFit="contain"
+                />
+              </TouchableOpacity>
+            ) : (
+              <View style={[styles.signatureImagePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#EBEDF0' }]}>
+                <MaterialCommunityIcons name="signature-freehand" size={22} color={tertiaryText} />
+                <Text style={[styles.signaturePlaceholderText, { color: tertiaryText }]}>
+                  {t('taskDetail.signatureImageUnavailable', 'Signature image unavailable')}
+                </Text>
+              </View>
+            )}
+
+            {(latestSignatureSigner || latestSignatureSignedAt || latestTaskSignature.comment) && (
+              <View style={styles.signatureMetaWrap}>
+                <View style={styles.signatureMetaRow}>
+                  {latestSignatureSigner ? (
+                    <Text style={[styles.signatureMetaText, { color: colors.text }]}> 
+                      {t('taskDetail.signatureSignedBy', 'Signed by')}: {latestSignatureSigner}
+                    </Text>
+                  ) : null}
+                  {latestSignatureSignedAt ? (
+                    <Text style={[styles.signatureMetaText, { color: tertiaryText }]}> 
+                      {latestSignatureSignedAt}
+                    </Text>
+                  ) : null}
+                </View>
+                {!!latestTaskSignature.comment && (
+                  <Text style={[styles.signatureComment, { color: tertiaryText }]} numberOfLines={3}>
+                    "{latestTaskSignature.comment}"
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        </>
+      )}
 
       {/* Work location */}
       {showWorkLocationCard && (
@@ -1977,7 +2132,7 @@ export const TaskDetailScreen: React.FC = () => {
             >
               <MaterialIcons name="share" size={22} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity style={styles.headerActionButton}>
+            <TouchableOpacity style={styles.headerActionButton} onPress={handleOpenTaskActions}>
               <MaterialIcons name="more-vert" size={24} color={colors.text} />
             </TouchableOpacity>
           </View>
@@ -2064,6 +2219,120 @@ export const TaskDetailScreen: React.FC = () => {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      <Modal
+        visible={taskActionsVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setTaskActionsVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.statusPickerOverlay}
+          activeOpacity={1}
+          onPress={() => setTaskActionsVisible(false)}
+        >
+          <View
+            style={[
+              styles.taskActionsSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: cardBorder,
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <View style={styles.statusPickerHandle} />
+            <Text style={[styles.taskActionsTitle, { color: colors.text }]}> 
+              {t('taskDetail.taskActionsTitle', 'Task actions')}
+            </Text>
+            <Text style={[styles.taskActionsSubtitle, { color: colors.textSecondary }]}> 
+              {t('taskDetail.taskActionsSubtitle', 'Choose what you want to do with this task.')}
+            </Text>
+
+            <View style={styles.taskActionsList}>
+              <TouchableOpacity
+                style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
+                onPress={() => {
+                  setTaskActionsVisible(false);
+                  void handleShareTask();
+                }}
+                activeOpacity={0.75}
+              >
+                <View style={[styles.taskActionIconWrap, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F5F5F7' }]}> 
+                  <MaterialIcons name="share" size={17} color={colors.text} />
+                </View>
+                <Text style={[styles.taskActionText, { color: colors.text }]}> 
+                  {t('taskDetail.actionShareTask', 'Share task')}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
+                onPress={() => {
+                  setTaskActionsVisible(false);
+                  setStatusPickerVisible(true);
+                }}
+                activeOpacity={0.75}
+              >
+                <View style={[styles.taskActionIconWrap, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F5F5F7' }]}> 
+                  <MaterialIcons name="swap-horiz" size={17} color={colors.text} />
+                </View>
+                <Text style={[styles.taskActionText, { color: colors.text }]}> 
+                  {t('taskDetail.actionChangeStatus', 'Change status')}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
+                onPress={() => {
+                  setTaskActionsVisible(false);
+                  setActiveTab('comments');
+                }}
+                activeOpacity={0.75}
+              >
+                <View style={[styles.taskActionIconWrap, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F5F5F7' }]}> 
+                  <MaterialIcons name="chat-bubble-outline" size={17} color={colors.text} />
+                </View>
+                <Text style={[styles.taskActionText, { color: colors.text }]}> 
+                  {t('taskDetail.actionOpenComments', 'Open comments')}
+                </Text>
+              </TouchableOpacity>
+
+              {requiresTaskSignature && !hasTaskSignature && hasValidConvexId && (
+                <TouchableOpacity
+                  style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
+                  onPress={() => {
+                    setTaskActionsVisible(false);
+                    setPendingStatusAfterSignature(null);
+                    setSignatureVisible(true);
+                  }}
+                  activeOpacity={0.75}
+                >
+                  <View style={[styles.taskActionIconWrap, { backgroundColor: 'rgba(217,119,6,0.15)' }]}> 
+                    <MaterialCommunityIcons name="signature-freehand" size={17} color="#D97706" />
+                  </View>
+                  <Text style={[styles.taskActionText, { color: colors.text }]}> 
+                    {t('taskDetail.signTask', 'Sign task')}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.taskActionsCancel,
+                { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F5F5F7' },
+              ]}
+              onPress={() => setTaskActionsVisible(false)}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.taskActionsCancelText, { color: colors.textSecondary }]}> 
+                {t('common.cancel', 'Cancel')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <Modal
         visible={statusPickerVisible}
@@ -2161,7 +2430,7 @@ export const TaskDetailScreen: React.FC = () => {
               {t('taskDetail.changePriority')}
             </Text>
             <View style={styles.statusPickerList}>
-              {data.priorities.map((p) => {
+              {sortedPriorities.map((p) => {
                 const isCurrentPriority = String(p.id) === String(currentPriorityId);
                 const pColor = p.color || priorityColor(p.name as any) || '#9E9E9E';
                 return (
@@ -2176,7 +2445,7 @@ export const TaskDetailScreen: React.FC = () => {
                         backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
                       },
                     ]}
-                    onPress={() => handlePriorityChange({ id: p.id, name: p.name })}
+                    onPress={() => handlePriorityChange({ id: p.id, name: p.name, color: p.color ?? null })}
                     activeOpacity={0.7}
                   >
                     <View
@@ -2206,174 +2475,44 @@ export const TaskDetailScreen: React.FC = () => {
       </Modal>
 
       {/* Assignee Picker Modal */}
-      <Modal
+      <UserPickerSheet
         visible={assigneePickerVisible}
-        animationType="slide"
-        transparent={true}
-        statusBarTranslucent
-        onRequestClose={() => {
-          closeAssigneePicker();
-        }}
-      >
-        <KeyboardAvoidingView
-          style={styles.modalKeyboardAvoidingView}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={insets.bottom}
-        >
-          <TouchableOpacity
-            style={styles.statusPickerOverlay}
-            activeOpacity={1}
-            onPress={() => {
-              closeAssigneePicker();
-            }}
-          >
-            <View
+        title={t('common.assignTo')}
+        users={assigneePickerUsers}
+        selectedIds={new Set(draftAssigneeIds)}
+        onToggleUser={handleAssigneeToggle}
+        onClose={closeAssigneePicker}
+        colors={colors}
+        primaryColor={primaryColor}
+        isDarkMode={isDarkMode}
+        currentUserId={authUser?.id ?? null}
+        currentUserName={authUser?.name ?? null}
+        searchPlaceholder={t('common.searchUsers')}
+        emptyText={t('common.noItemsFound')}
+        youLabel={t('common.you')}
+        footer={(
+          <View style={[styles.assigneePickerFooter, { borderTopColor: cardBorder }]}> 
+            <TouchableOpacity
               style={[
-                styles.statusPickerSheet,
+                styles.assigneePickerSaveButton,
                 {
-                  backgroundColor: colors.surface,
-                  borderColor: cardBorder,
-                  paddingBottom: Math.max(20, insets.bottom + 12),
+                  backgroundColor: hasAssigneeChanges ? primaryColor : colors.textSecondary,
+                  opacity: savingAssignees ? 0.7 : 1,
                 },
               ]}
-              onStartShouldSetResponder={() => true}
+              onPress={handleSaveAssignees}
+              disabled={savingAssignees}
+              activeOpacity={0.8}
             >
-              <View style={styles.statusPickerHandle} />
-              <Text style={[styles.statusPickerTitle, { color: colors.text }]}> 
-                {t('common.assignTo')}
-              </Text>
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
-                  borderWidth: 1,
-                  borderRadius: radius.md,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  marginBottom: 12,
-                }}
-              >
-                <MaterialIcons
-                  name="search"
-                  size={20}
-                  color={colors.textSecondary}
-                  style={{ marginRight: 8 }}
-                />
-                <TextInput
-                  style={{ flex: 1, fontSize: fontSizes.md, fontFamily: fontFamilies.bodyRegular, color: colors.text, padding: 0 }}
-                  placeholder={t('common.searchUsers')}
-                  placeholderTextColor={colors.textSecondary}
-                  value={assigneeSearch}
-                  onChangeText={setAssigneeSearch}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {assigneeSearch.length > 0 && (
-                  <TouchableOpacity onPress={() => setAssigneeSearch('')}>
-                    <MaterialIcons name="close" size={18} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                )}
-              </View>
-              <ScrollView style={{ maxHeight: 300 }} bounces={false} keyboardShouldPersistTaps="handled">
-                <View style={styles.statusPickerList}>
-                  {sortedUsers.map((u) => {
-                    const isAssigned = draftAssigneeIds.includes(String(u.id));
-                    const isCurrentUser = u.id === (authUser?.id ?? 0);
-                    const avatarCandidate = u.url_picture || u.urlPicture || u.avatar || u.photo_url || null;
-                    const rawAvatar = typeof avatarCandidate === 'string' ? avatarCandidate.trim() : '';
-                    const normalizedAvatar = rawAvatar ? fixConvexStorageUrl(rawAvatar) : '';
-                    const optimizedAvatar = normalizedAvatar
-                      ? (getOptimizedImageUrl(normalizedAvatar, { width: 40, height: 40, mode: 'fill' }) || normalizedAvatar)
-                      : '';
-                    const hasValidAvatarUrl = optimizedAvatar.startsWith('http://') || optimizedAvatar.startsWith('https://');
-                    const showAvatarImage = hasValidAvatarUrl && !failedAssigneeAvatarIds.has(String(u.id));
-                    return (
-                      <TouchableOpacity
-                        key={String(u.id)}
-                        style={[
-                          styles.statusPickerItem,
-                          {
-                            borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
-                          },
-                          isAssigned && {
-                            backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                          },
-                        ]}
-                        onPress={() => handleAssigneeToggle(u.id as number)}
-                        activeOpacity={0.7}
-                      >
-                        <View
-                          style={{
-                            width: 28,
-                            height: 28,
-                            borderRadius: 14,
-                            backgroundColor: showAvatarImage ? 'transparent' : primaryColor,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            marginRight: 12,
-                          }}
-                        >
-                          {showAvatarImage ? (
-                            <Image
-                              source={{ uri: optimizedAvatar }}
-                              style={styles.assigneeAvatarImg}
-                              onError={() => {
-                                setFailedAssigneeAvatarIds((prev) => {
-                                  const next = new Set(prev);
-                                  next.add(String(u.id));
-                                  return next;
-                                });
-                              }}
-                            />
-                          ) : (
-                            <Text style={{ color: '#fff', fontSize: 12, fontFamily: fontFamilies.bodySemibold }}>
-                              {getInitials(u.name)}
-                            </Text>
-                          )}
-                        </View>
-                        <Text
-                          style={[
-                            styles.statusPickerItemText,
-                            { color: colors.text },
-                            isAssigned && { fontFamily: fontFamilies.bodySemibold },
-                          ]}
-                        >
-                          {u.name}{isCurrentUser ? ` (${t('common.you')})` : ''}
-                        </Text>
-                        {isAssigned && (
-                          <MaterialIcons name="check" size={20} color={primaryColor} />
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-              <View style={[styles.assigneePickerFooter, { borderTopColor: cardBorder }]}> 
-                <TouchableOpacity
-                  style={[
-                    styles.assigneePickerSaveButton,
-                    {
-                      backgroundColor: hasAssigneeChanges ? primaryColor : colors.textSecondary,
-                      opacity: savingAssignees ? 0.7 : 1,
-                    },
-                  ]}
-                  onPress={handleSaveAssignees}
-                  disabled={savingAssignees}
-                  activeOpacity={0.8}
-                >
-                  {savingAssignees ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.assigneePickerSaveText}>{t('common.save')}</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      </Modal>
+              {savingAssignees ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.assigneePickerSaveText}>{t('common.save')}</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+      />
 
       {/* Full-screen image viewer */}
       <Modal
@@ -2872,6 +3011,48 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
+  /* ── Signature ── */
+  signatureCard: {
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  signatureImage: {
+    width: '100%',
+    height: 170,
+  },
+  signatureImagePlaceholder: {
+    height: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  signaturePlaceholderText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  signatureMetaWrap: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  signatureMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  signatureMetaText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+    flexShrink: 1,
+  },
+  signatureComment: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+    fontStyle: 'italic',
+    lineHeight: 17,
+  },
+
   /* ── Action bar ── */
   formSaveStatusBar: {
     flexDirection: 'row',
@@ -3198,6 +3379,61 @@ const styles = StyleSheet.create({
   },
   statusPickerList: {
     gap: 2,
+  },
+  taskActionsSheet: {
+    maxHeight: '78%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 0.5,
+    borderBottomWidth: 0,
+    paddingTop: 12,
+    paddingBottom: 28,
+    paddingHorizontal: 20,
+    ...shadows.subtle,
+  },
+  taskActionsTitle: {
+    fontSize: fontSizes.lg,
+    fontFamily: fontFamilies.displaySemibold,
+  },
+  taskActionsSubtitle: {
+    marginTop: 6,
+    marginBottom: 14,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  taskActionsList: {
+    gap: 8,
+  },
+  taskActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderRadius: radius.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  taskActionIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  taskActionText: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  taskActionsCancel: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.lg,
+    paddingVertical: 14,
+    marginTop: 14,
+  },
+  taskActionsCancelText: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
   },
   statusPickerItem: {
     flexDirection: 'row' as const,

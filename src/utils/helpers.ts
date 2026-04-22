@@ -122,15 +122,27 @@ export const DEFAULT_WORKSPACE_COLOR = '#3b82f6';
 
 // Priority color helper — 4-level system with distinct, meaningful colors
 export const priorityColor = (priority: string): string => {
-  switch (priority.toLowerCase()) {
+  const normalized = priority
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+  switch (normalized) {
     case 'critical':
+    case 'critica':
     case 'urgent':
+    case 'urgente':
       return '#E24B4A';
     case 'high':
+    case 'alta':
       return '#EF9F27';
     case 'medium':
+    case 'media':
+    case 'normal':
       return '#4CAF50';
     case 'low':
+    case 'baja':
     default:
       return '#64B5F6';
   }

@@ -37,6 +37,7 @@ import { FaIcon } from '../components/FaIcon';
 import { ActiveTaskStrip } from '../components/ActiveTaskStrip';
 import { AnimatedDrawer, AnimatedDrawerRef } from '../components/AnimatedDrawer';
 import { VoiceTaskCaptureOverlay } from '../components/VoiceTaskCaptureOverlay';
+import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
 import { InitialSyncScreen } from './InitialSyncScreen';
 import { TaskFilterSheet } from '../components/TaskFilterSheet';
 import { ColabScreen } from './ColabScreen';
@@ -365,7 +366,6 @@ export const MainScreen: React.FC = () => {
   const [statusPickerTask, setStatusPickerTask] = useState<TaskItem | null>(null);
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [assigneePickerTask, setAssigneePickerTask] = useState<TaskItem | null>(null);
-  const [assigneeSearch, setAssigneeSearch] = useState('');
   const [colabInChat, setColabInChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [initialConversationId, setInitialConversationId] = useState<string | number | undefined>(undefined);
@@ -593,24 +593,51 @@ export const MainScreen: React.FC = () => {
     return userIds;
   }, [selectedWorkspace, data.workspaces, data.tasks, data.taskUsers, authUser]);
 
-  // Build sorted user list: workspace-filtered, current user first, then alphabetical
-  const sortedUsers = useMemo(() => {
-    const currentUserId = authUser?.id ?? 0;
+  // Build workspace-filtered user list for the assignee picker.
+  const assigneePickerUsers = useMemo<UserPickerItem[]>(() => {
     let users = data.users;
     if (workspaceUserIds) {
       users = users.filter((u) => workspaceUserIds.has(u.id));
     }
-    // Apply search filter
-    if (assigneeSearch.trim()) {
-      const q = assigneeSearch.trim().toLowerCase();
-      users = users.filter((u) => u.name.toLowerCase().includes(q));
+    return users.reduce<UserPickerItem[]>((acc, userRow: any) => {
+      const resolvedId = userRow?.id;
+      const resolvedName = typeof userRow?.name === 'string' ? userRow.name.trim() : '';
+      if (resolvedId == null || !resolvedName) return acc;
+
+      const avatarCandidate =
+        userRow?.url_picture
+        ?? userRow?.urlPicture
+        ?? userRow?.avatar
+        ?? userRow?.photo_url
+        ?? null;
+
+      acc.push({
+        id: String(resolvedId),
+        name: resolvedName,
+        email: typeof userRow?.email === 'string' ? userRow.email : undefined,
+        avatarUrl: typeof avatarCandidate === 'string' ? avatarCandidate : null,
+      });
+      return acc;
+    }, []);
+  }, [data.users, workspaceUserIds]);
+
+  const assigneeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const userOption of assigneePickerUsers) {
+      map.set(userOption.id, userOption.name);
     }
-    return [...users].sort((a, b) => {
-      if (a.id === currentUserId) return -1;
-      if (b.id === currentUserId) return 1;
-      return a.name.localeCompare(b.name);
-    });
-  }, [data.users, authUser, workspaceUserIds, assigneeSearch]);
+    return map;
+  }, [assigneePickerUsers]);
+
+  const assigneeSelectedIds = useMemo(() => {
+    if (!assigneePickerTask) return new Set<string>();
+    const assignedNames = new Set(assigneePickerTask.assignees.map((assignee) => assignee.name));
+    return new Set(
+      assigneePickerUsers
+        .filter((userOption) => assignedNames.has(userOption.name))
+        .map((userOption) => userOption.id),
+    );
+  }, [assigneePickerTask, assigneePickerUsers]);
 
   // Filter working tasks to the current workspace
   const workspaceFilteredWorkingTasks = useMemo(() => {
@@ -637,19 +664,19 @@ export const MainScreen: React.FC = () => {
   );
 
   const handleAssigneeSelect = useCallback(
-    (user: { id: string | number; name: string }) => {
+    (userId: string) => {
+      const userName = assigneeNameById.get(userId) ?? userId;
       if (assigneePickerTask?.id) {
-        if (assigneePickerTask.assignees.some((a) => a.name === user.name)) {
-          Alert.alert(t('main.alreadyAssignedTitle'), t('main.alreadyAssignedMessage', { name: user.name }));
+        if (assigneePickerTask.assignees.some((a) => a.name === userName)) {
+          Alert.alert(t('main.alreadyAssignedTitle'), t('main.alreadyAssignedMessage', { name: userName }));
         } else {
-          assignTaskToUser(assigneePickerTask.id, Number(user.id), user.name);
+          assignTaskToUser(assigneePickerTask.id, Number(userId), userName);
         }
       }
       setAssigneePickerVisible(false);
       setAssigneePickerTask(null);
-      setAssigneeSearch('');
     },
-    [assigneePickerTask, assignTaskToUser, t],
+    [assigneeNameById, assigneePickerTask, assignTaskToUser, t],
   );
 
   const handleSwipeRight = useCallback(
@@ -1564,130 +1591,26 @@ export const MainScreen: React.FC = () => {
       </Modal>
 
       {/* Assignee Picker Modal */}
-      <Modal
+      <UserPickerSheet
         visible={assigneePickerVisible}
-        animationType="slide"
-        transparent={true}
-        statusBarTranslucent
-        onRequestClose={() => {
+        title={t('common.assignTo')}
+        subtitle={assigneePickerTask?.title}
+        users={assigneePickerUsers}
+        selectedIds={assigneeSelectedIds}
+        onToggleUser={handleAssigneeSelect}
+        onClose={() => {
           setAssigneePickerVisible(false);
           setAssigneePickerTask(null);
-          setAssigneeSearch('');
         }}
-      >
-        <KeyboardAvoidingView
-          style={styles.modalKeyboardAvoidingView}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={insets.bottom}
-        >
-          <TouchableOpacity
-            style={styles.statusPickerOverlay}
-            activeOpacity={1}
-            onPress={() => {
-              setAssigneePickerVisible(false);
-              setAssigneePickerTask(null);
-              setAssigneeSearch('');
-            }}
-          >
-            <View
-              style={[
-                styles.statusPickerSheet,
-                {
-                  backgroundColor: colors.surface,
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                  paddingBottom: Math.max(20, insets.bottom + 12),
-                },
-              ]}
-              onStartShouldSetResponder={() => true}
-            >
-              <View style={styles.statusPickerHandle} />
-              <Text style={[styles.statusPickerTitle, { color: colors.text }]}> 
-                {t('common.assignTo')}
-              </Text>
-              {assigneePickerTask && (
-                <Text
-                  style={[styles.statusPickerSubtitle, { color: colors.textSecondary }]}
-                  numberOfLines={1}
-                >
-                  {assigneePickerTask.title}
-                </Text>
-              )}
-              <View
-                style={[
-                  styles.assigneeSearchContainer,
-                  {
-                    backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                    borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
-                  },
-                ]}
-              >
-                <MaterialIcons
-                  name="search"
-                  size={20}
-                  color={colors.textSecondary}
-                  style={{ marginRight: 8 }}
-                />
-                <TextInput
-                  style={[styles.assigneeSearchInput, { color: colors.text }]}
-                  placeholder={t('common.searchUsers')}
-                  placeholderTextColor={colors.textSecondary}
-                  value={assigneeSearch}
-                  onChangeText={setAssigneeSearch}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {assigneeSearch.length > 0 && (
-                  <TouchableOpacity onPress={() => setAssigneeSearch('')}>
-                    <MaterialIcons name="close" size={18} color={colors.textSecondary} />
-                  </TouchableOpacity>
-                )}
-              </View>
-              <ScrollView style={styles.assigneeScrollList} bounces={false} keyboardShouldPersistTaps="handled">
-                <View style={styles.statusPickerList}>
-                  {sortedUsers.map((u) => {
-                    const isAssigned = assigneePickerTask?.assignees.some((a) => a.name === u.name) ?? false;
-                    const isCurrentUser = u.id === (authUser?.id ?? 0);
-                    return (
-                      <TouchableOpacity
-                        key={u.id}
-                        style={[
-                          styles.statusPickerItem,
-                          {
-                            borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
-                          },
-                          isAssigned && {
-                            backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                          },
-                        ]}
-                        onPress={() => handleAssigneeSelect({ id: u.id, name: u.name })}
-                        activeOpacity={0.7}
-                      >
-                        <View style={styles.assigneeAvatar}>
-                          <Text style={styles.assigneeAvatarText}>
-                            {u.name.charAt(0).toUpperCase()}
-                          </Text>
-                        </View>
-                        <Text
-                          style={[
-                            styles.statusPickerItemText,
-                            { color: colors.text },
-                            isAssigned && { fontFamily: fontFamilies.bodySemibold },
-                          ]}
-                        >
-                          {u.name}{isCurrentUser ? t('main.userYouSuffix') : ''}
-                        </Text>
-                        {isAssigned && (
-                          <MaterialIcons name="check" size={20} color="#2196F3" />
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </ScrollView>
-            </View>
-          </TouchableOpacity>
-        </KeyboardAvoidingView>
-      </Modal>
+        colors={colors}
+        primaryColor={primaryColor}
+        isDarkMode={isDarkMode}
+        currentUserId={authUser?.id ?? null}
+        currentUserName={authUser?.name ?? null}
+        searchPlaceholder={t('common.searchUsers')}
+        emptyText={t('common.noItemsFound')}
+        youLabel={t('common.you')}
+      />
     </View>
   );
 };
@@ -2218,40 +2141,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
-  },
-  assigneeSearchContainer: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    marginHorizontal: 16,
-    marginTop: 8,
-    marginBottom: 4,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 0.5,
-  },
-  assigneeSearchInput: {
-    flex: 1,
-    fontSize: fontSizes.md,
-    fontFamily: fontFamilies.bodyMedium,
-    paddingVertical: 2,
-  },
-  assigneeScrollList: {
-    maxHeight: Dimensions.get('window').height * 0.45,
-  },
-  assigneeAvatar: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#2196F3',
-    alignItems: 'center' as const,
-    justifyContent: 'center' as const,
-    marginRight: 12,
-  },
-  assigneeAvatarText: {
-    color: '#FFFFFF',
-    fontSize: fontSizes.sm,
-    fontFamily: fontFamilies.bodySemibold,
   },
 
   // Board list styles

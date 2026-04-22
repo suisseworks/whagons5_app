@@ -21,11 +21,14 @@ import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
+import { useData } from '../context/DataContext';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { RootStackParamList } from '../models/types';
 import { useTenant } from '../hooks/useTenant';
 import { GPS_CAPTURE_STORAGE_KEY } from './SettingsScreen';
 import { Toast, ToastRef } from '../components/Toast';
+import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'VoiceTaskReview'>;
 type ScreenRouteProp = RouteProp<RootStackParamList, 'VoiceTaskReview'>;
@@ -211,6 +214,8 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   const { tenantId } = useTenant();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
+  const { user: authUser } = useAuth();
+  const { data } = useData();
 
   const reviewData = useQuery(
     api.voiceTaskDrafts.get,
@@ -319,6 +324,38 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   const selectedPriority = context?.priorities.find((priority: DraftPriority) => priority.id === selectedPriorityId) ?? null;
   const selectedAssignees = context?.users.filter((user: DraftUser) => selectedAssigneeIds.includes(user.id)) ?? [];
 
+  const userProfileByConvexId = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const userRecord of data.users) {
+      const convexId = (userRecord as any)?._id;
+      if (convexId) {
+        map.set(String(convexId), userRecord);
+      }
+    }
+    return map;
+  }, [data.users]);
+
+  const assigneePickerUsers = useMemo<UserPickerItem[]>(() => {
+    if (!context) return [];
+
+    return context.users.map((draftUser: DraftUser) => {
+      const userProfile = userProfileByConvexId.get(String(draftUser.id));
+      const avatarCandidate =
+        userProfile?.url_picture
+        ?? userProfile?.urlPicture
+        ?? userProfile?.avatar
+        ?? userProfile?.photo_url
+        ?? null;
+
+      return {
+        id: String(draftUser.id),
+        name: draftUser.name,
+        email: typeof userProfile?.email === 'string' ? userProfile.email : undefined,
+        avatarUrl: typeof avatarCandidate === 'string' ? avatarCandidate : null,
+      };
+    });
+  }, [context, userProfileByConvexId]);
+
   useEffect(() => {
     if (!selectedTemplate?.workspaceId) return;
     if (selectedTemplate.workspaceId !== selectedWorkspaceId) {
@@ -394,11 +431,10 @@ export const VoiceTaskReviewScreen: React.FC = () => {
   const templateItems = availableTemplates.map((template: DraftTemplate) => ({ id: template.id, name: template.name }));
   const spotItems = context?.spots.map((spot: DraftSpot) => ({ id: spot.id, name: spot.name })) ?? [];
   const priorityItems = context?.priorities.map((priority: DraftPriority) => ({ id: priority.id, name: priority.name })) ?? [];
-  const assigneeItems = context?.users.map((user: DraftUser) => ({ id: user.id, name: user.name })) ?? [];
 
-  const toggleAssignee = useCallback((item: PickerItem) => {
+  const toggleAssignee = useCallback((userId: string) => {
     setSelectedAssigneeIds((current) =>
-      current.includes(item.id) ? current.filter((id) => id !== item.id) : [...current, item.id],
+      current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId],
     );
   }, []);
 
@@ -720,20 +756,21 @@ export const VoiceTaskReviewScreen: React.FC = () => {
         primaryColor={primaryColor}
         isDarkMode={isDarkMode}
       />
-      <PickerModal
+      <UserPickerSheet
         visible={assigneeModalVisible}
         title={t('createTask.selectAssigneesModalTitle')}
-        items={assigneeItems}
-        searchable
-        searchPlaceholder={t('common.searchUsers')}
-        emptyText={t('common.noItemsFound')}
+        users={assigneePickerUsers}
         selectedIds={new Set(selectedAssigneeIds)}
-        multi
-        onSelect={toggleAssignee}
+        onToggleUser={toggleAssignee}
         onClose={() => setAssigneeModalVisible(false)}
         colors={colors}
         primaryColor={primaryColor}
         isDarkMode={isDarkMode}
+        currentUserId={authUser?.id ?? null}
+        currentUserName={authUser?.name ?? null}
+        searchPlaceholder={t('common.searchUsers')}
+        emptyText={t('common.noItemsFound')}
+        youLabel={t('common.you')}
       />
       <Toast ref={toastRef} />
     </SafeAreaView>

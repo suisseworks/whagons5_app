@@ -31,6 +31,7 @@ import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 import { FaIcon } from '../components/FaIcon';
+import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
 import { Toast, ToastRef } from '../components/Toast';
 import { parseWorkspaceIcon } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
@@ -439,9 +440,38 @@ export const CreateTaskScreen: React.FC = () => {
     }));
   }, [data.workspaces]);
 
-  const userItems = useMemo(() => {
-    return data.users.map((u: any) => ({ _id: u._id, name: u.name }));
+  const assigneePickerUsers = useMemo<UserPickerItem[]>(() => {
+    return data.users.reduce<UserPickerItem[]>((acc, rawUser: any) => {
+      const resolvedId = rawUser?._id ?? rawUser?.id;
+      const resolvedName = typeof rawUser?.name === 'string' ? rawUser.name.trim() : '';
+      if (resolvedId == null || !resolvedName) {
+        return acc;
+      }
+
+      const avatarCandidate =
+        rawUser?.url_picture
+        ?? rawUser?.urlPicture
+        ?? rawUser?.avatar
+        ?? rawUser?.photo_url
+        ?? null;
+
+      acc.push({
+        id: String(resolvedId),
+        name: resolvedName,
+        email: typeof rawUser?.email === 'string' ? rawUser.email : undefined,
+        avatarUrl: typeof avatarCandidate === 'string' ? avatarCandidate : null,
+      });
+      return acc;
+    }, []);
   }, [data.users]);
+
+  const assigneeNameById = useMemo(() => {
+    const next = new Map<string, string>();
+    for (const pickerUser of assigneePickerUsers) {
+      next.set(pickerUser.id, pickerUser.name);
+    }
+    return next;
+  }, [assigneePickerUsers]);
 
   const spotItems = useMemo(() => {
     return data.spots.map((s: any) => ({ _id: s._id, name: s.name }));
@@ -465,13 +495,15 @@ export const CreateTaskScreen: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Toggle helpers for multi-select
   // ---------------------------------------------------------------------------
-  const handleToggleAssignee = useCallback((item: { _id: string; name: string }) => {
+  const handleToggleAssignee = useCallback((userId: string) => {
     setSelectedAssignees((prev) => {
-      const exists = prev.find((a) => a._id === item._id);
-      if (exists) return prev.filter((a) => a._id !== item._id);
-      return [...prev, { _id: item._id, name: item.name }];
+      const exists = prev.some((a) => a._id === userId);
+      if (exists) {
+        return prev.filter((a) => a._id !== userId);
+      }
+      return [...prev, { _id: userId, name: assigneeNameById.get(userId) ?? userId }];
     });
-  }, []);
+  }, [assigneeNameById]);
 
   const handleToggleTag = useCallback((item: { _id: string; name: string; color?: string | null }) => {
     setSelectedTags((prev) => {
@@ -1199,18 +1231,21 @@ export const CreateTaskScreen: React.FC = () => {
       />
 
       {/* Assignee Modal (multi-select) */}
-      <SelectorModal
+      <UserPickerSheet
         visible={assigneeModalVisible}
         title={t('createTask.selectAssigneesModalTitle')}
-        items={userItems}
-        onSelect={handleToggleAssignee}
-        onClose={() => setAssigneeModalVisible(false)}
-        searchable
-        multiSelect
+        users={assigneePickerUsers}
         selectedIds={selectedAssigneeIds}
+        onToggleUser={handleToggleAssignee}
+        onClose={() => setAssigneeModalVisible(false)}
         colors={colors}
-        isDarkMode={isDarkMode}
         primaryColor={primaryColor}
+        isDarkMode={isDarkMode}
+        currentUserId={user?.id ?? null}
+        currentUserName={user?.name ?? null}
+        searchPlaceholder={t('common.searchUsers')}
+        emptyText={t('common.noItemsFound')}
+        youLabel={t('common.you')}
       />
 
       {/* Spot Modal */}
