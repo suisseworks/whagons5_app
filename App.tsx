@@ -102,25 +102,25 @@ export default function App() {
           <KeyboardProvider>
             <ConvexClientProvider>
               <NetworkProvider>
-              <MutationQueueProvider>
-              <AuthProvider>
-                <DataProvider>
-                  <NotificationProvider>
-                    <ThemeProvider>
-                    <LanguageProvider>
-                      <TaskProvider>
-                        <GamificationProvider>
-                          <CallProvider>
-                            <AppNavigator />
-                          </CallProvider>
-                        </GamificationProvider>
-                      </TaskProvider>
-                    </LanguageProvider>
-                    </ThemeProvider>
-                  </NotificationProvider>
-                </DataProvider>
-              </AuthProvider>
-              </MutationQueueProvider>
+                <AuthProvider>
+                  <MutationQueueProvider>
+                    <DataProvider>
+                      <NotificationProvider>
+                        <ThemeProvider>
+                          <LanguageProvider>
+                            <TaskProvider>
+                              <GamificationProvider>
+                                <CallProvider>
+                                  <AppNavigator />
+                                </CallProvider>
+                              </GamificationProvider>
+                            </TaskProvider>
+                          </LanguageProvider>
+                        </ThemeProvider>
+                      </NotificationProvider>
+                    </DataProvider>
+                  </MutationQueueProvider>
+                </AuthProvider>
               </NetworkProvider>
             </ConvexClientProvider>
           </KeyboardProvider>

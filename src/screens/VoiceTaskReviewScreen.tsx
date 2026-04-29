@@ -17,7 +17,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useMutation, useQuery } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
@@ -29,6 +29,7 @@ import { useTenant } from '../hooks/useTenant';
 import { GPS_CAPTURE_STORAGE_KEY } from './SettingsScreen';
 import { Toast, ToastRef } from '../components/Toast';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'VoiceTaskReview'>;
 type ScreenRouteProp = RouteProp<RootStackParamList, 'VoiceTaskReview'>;
@@ -221,8 +222,8 @@ export const VoiceTaskReviewScreen: React.FC = () => {
     api.voiceTaskDrafts.get,
     tenantId ? { tenantId, draftId: route.params.draftId as any } : 'skip',
   );
-  const confirmDraft = useMutation(api.voiceTaskDrafts.confirm);
-  const cancelDraft = useMutation(api.voiceTaskDrafts.cancel);
+  const confirmDraft = useOfflineMutation(api.voiceTaskDrafts.confirm, 'voiceTaskDrafts.confirm');
+  const cancelDraft = useOfflineMutation(api.voiceTaskDrafts.cancel, 'voiceTaskDrafts.cancel');
 
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);

@@ -23,7 +23,6 @@ import React, {
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useAuth } from './AuthContext';
 import { useTenant } from '../hooks/useTenant';
@@ -38,6 +37,7 @@ import {
   getInitialNotification,
   NotificationTapPayload,
 } from '../firebase/notificationService';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -149,8 +149,8 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { token: authToken, subdomain } = useAuth();
   const { tenantId } = useTenant();
-  const registerTokenMutation = useMutation(api.pushNotificationHelpers.registerToken);
-  const unregisterTokenMutation = useMutation(api.pushNotificationHelpers.unregisterToken);
+  const registerTokenMutation = useOfflineMutation(api.pushNotificationHelpers.registerToken, 'pushNotificationHelpers.registerToken');
+  const unregisterTokenMutation = useOfflineMutation(api.pushNotificationHelpers.unregisterToken, 'pushNotificationHelpers.unregisterToken');
 
   const [hasPermission, setHasPermission] = useState(false);
   const [fcmToken, setFcmToken] = useState<string | null>(null);
@@ -358,7 +358,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
     AsyncStorage.removeItem(STORAGE_KEY_NOTIFICATIONS).catch(() => {});
   }, []);
 
-  const updateMeMutation = useMutation(api.users.updateMe);
+  const updateMeMutation = useOfflineMutation(api.users.updateMe, 'users.updateMe');
   const updatePreferences = useCallback((updates: Partial<NotificationPreferences>) => {
     setPreferences(prev => {
       const next = { ...prev, ...updates };

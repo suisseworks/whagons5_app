@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useMutation, useQuery } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import i18n from '../locales/i18n';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 const STORAGE_KEY = '@whagons/language';
 
@@ -21,7 +22,7 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [language, setLanguageState] = useState<SupportedLanguage>(i18n.locale as SupportedLanguage);
   const { tenantId } = useTenant();
   const convexUser = useQuery(api.users.me, tenantId ? { tenantId } : 'skip');
-  const updateMe = useMutation(api.users.updateMe);
+  const updateMe = useOfflineMutation(api.users.updateMe, 'users.updateMe');
 
   const normalizeLanguage = useCallback((value?: string | null): SupportedLanguage => {
     return value === 'es' ? 'es' : 'en';

@@ -15,11 +15,11 @@ import React, {
   useCallback,
   ReactNode,
 } from 'react';
-import { Alert } from 'react-native';
 import { useNetwork } from './NetworkContext';
 import { convex } from '../providers/ConvexClientProvider';
 import { api } from '../../../convex/_generated/api';
 import * as DB from '../store/database';
+import { useTenant } from '../hooks/useTenant';
 
 // ---------------------------------------------------------------------------
 // Map apiPath strings back to Convex function references for replay
@@ -35,14 +35,106 @@ function resolveApiRef(apiPath: string): any {
   return ref;
 }
 
+function isStateConflictError(error: unknown): boolean {
+  const message = String((error as any)?.message ?? '').toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('invalid status') ||
+    message.includes('cannot move') ||
+    message.includes('transition') ||
+    message.includes('state conflict') ||
+    message.includes('stale')
+  );
+}
+
+type TaskUpdateIntent = {
+  taskId: string;
+  fields: Array<'status' | 'priority'>;
+};
+
+function extractTaskUpdateIntent(apiPath: string, args: Record<string, unknown>): TaskUpdateIntent | null {
+  if (apiPath === 'tasks.update') {
+    const taskId = args.pgId ?? args.id;
+    if (taskId == null) return null;
+    const fields: Array<'status' | 'priority'> = [];
+    if (args.statusId != null) fields.push('status');
+    if (args.priorityId != null) fields.push('priority');
+    if (fields.length === 0) return null;
+    return { taskId: String(taskId), fields };
+  }
+
+  if (apiPath === 'tasks.updateByPgId') {
+    if (args.pgId == null) return null;
+    const updates = (args.updates && typeof args.updates === 'object')
+      ? (args.updates as Record<string, unknown>)
+      : null;
+    if (!updates) return null;
+
+    const fields: Array<'status' | 'priority'> = [];
+    if (updates.status_id != null) fields.push('status');
+    if (updates.priority_id != null) fields.push('priority');
+    if (fields.length === 0) return null;
+    return { taskId: String(args.pgId), fields };
+  }
+
+  return null;
+}
+
+function hasSupersedingTaskUpdate(
+  current: DB.QueuedMutation,
+  currentArgs: Record<string, unknown>,
+  pending: DB.QueuedMutation[],
+): boolean {
+  const intent = extractTaskUpdateIntent(current.api_path, currentArgs);
+  if (!intent) return false;
+
+  for (const candidate of pending) {
+    if (candidate.id === current.id) continue;
+
+    const isAfterCurrent =
+      candidate.action_at > current.action_at ||
+      (candidate.action_at === current.action_at && candidate.created_at > current.created_at);
+    if (!isAfterCurrent) continue;
+
+    let candidateArgs: Record<string, unknown> | null = null;
+    try {
+      const parsed = JSON.parse(candidate.args);
+      if (parsed && typeof parsed === 'object') {
+        candidateArgs = parsed as Record<string, unknown>;
+      }
+    } catch {
+      candidateArgs = null;
+    }
+    if (!candidateArgs) continue;
+
+    const candidateIntent = extractTaskUpdateIntent(candidate.api_path, candidateArgs);
+    if (!candidateIntent) continue;
+    if (candidateIntent.taskId !== intent.taskId) continue;
+
+    const hasOverlappingField = candidateIntent.fields.some((field) => intent.fields.includes(field));
+    if (hasOverlappingField) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface MutationQueueContextType {
   pendingCount: number;
+  failedCount: number;
   isReplaying: boolean;
+  queue: DB.QueuedMutation[];
   refreshCount: () => Promise<void>;
+  refreshQueue: () => Promise<void>;
+  replayNow: () => Promise<void>;
+  retryMutation: (id: string) => Promise<void>;
+  removeQueuedMutation: (id: string) => Promise<void>;
+  clearQueue: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -51,89 +143,201 @@ interface MutationQueueContextType {
 
 const MutationQueueContext = createContext<MutationQueueContextType>({
   pendingCount: 0,
+  failedCount: 0,
   isReplaying: false,
+  queue: [],
   refreshCount: async () => {},
+  refreshQueue: async () => {},
+  replayNow: async () => {},
+  retryMutation: async () => {},
+  removeQueuedMutation: async () => {},
+  clearQueue: async () => {},
 });
 
 export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { isOnline } = useNetwork();
+  const { tenantId } = useTenant();
   const [pendingCount, setPendingCount] = useState(0);
+  const [failedCount, setFailedCount] = useState(0);
   const [isReplaying, setIsReplaying] = useState(false);
+  const [queue, setQueue] = useState<DB.QueuedMutation[]>([]);
   const replayingRef = useRef(false);
-  const wasOfflineRef = useRef(false);
 
-  const refreshCount = useCallback(async () => {
-    try {
-      const count = await DB.getPendingMutationCount();
-      setPendingCount(count);
-    } catch {
-      setPendingCount(0);
-    }
+  const REPLAY_MAX_ATTEMPTS = 5;
+  const BASE_RETRY_MS = 15000;
+
+  const getBackoffMs = useCallback((attempts: number): number => {
+    const normalized = Math.max(1, attempts);
+    return Math.min(5 * 60 * 1000, BASE_RETRY_MS * (2 ** (normalized - 1)));
   }, []);
 
-  // Poll the count periodically and on mount
+  const isRetriableError = useCallback((error: unknown): boolean => {
+    const message = String((error as any)?.message ?? '').toLowerCase();
+    if (!message) return true;
+
+    if (
+      message.includes('invalid') ||
+      message.includes('forbidden') ||
+      message.includes('unauthorized') ||
+      message.includes('not found') ||
+      message.includes('already exists')
+    ) {
+      return false;
+    }
+
+    return (
+      message.includes('network') ||
+      message.includes('timed out') ||
+      message.includes('timeout') ||
+      message.includes('connection') ||
+      message.includes('fetch') ||
+      message.includes('temporar') ||
+      message.includes('offline')
+    );
+  }, []);
+
+  const refreshQueue = useCallback(async () => {
+    try {
+      let rows = await DB.getQueuedMutations(tenantId);
+      if (tenantId) {
+        const globalRows = await DB.getQueuedMutations();
+        if (globalRows.length > rows.length) {
+          rows = globalRows;
+        }
+      }
+      setQueue(rows);
+      setPendingCount(rows.filter((row) => row.status !== 'failed').length);
+      setFailedCount(rows.filter((row) => row.status === 'failed').length);
+    } catch {
+      setQueue([]);
+      setPendingCount(0);
+      setFailedCount(0);
+    }
+  }, [tenantId]);
+
+  const refreshCount = useCallback(async () => {
+    await refreshQueue();
+  }, [refreshQueue]);
+
+  // Recover stuck syncing rows after app restarts
   useEffect(() => {
-    refreshCount();
-    const interval = setInterval(refreshCount, 5000);
+    DB.resetSyncingMutations()
+      .catch(() => {})
+      .finally(() => {
+        void refreshQueue();
+      });
+  }, [refreshQueue]);
+
+  // Poll queue metadata periodically and on mount
+  useEffect(() => {
+    void refreshQueue();
+    const interval = setInterval(() => {
+      void refreshQueue();
+    }, 5000);
     return () => clearInterval(interval);
-  }, [refreshCount]);
-
-  // Track offline→online transitions to trigger replay
-  useEffect(() => {
-    if (!isOnline) {
-      wasOfflineRef.current = true;
-      return;
-    }
-
-    if (wasOfflineRef.current) {
-      wasOfflineRef.current = false;
-      replayQueue();
-    }
-  }, [isOnline]);
+  }, [refreshQueue]);
 
   const replayQueue = useCallback(async () => {
+    if (!isOnline) return;
     if (replayingRef.current) return;
+
     replayingRef.current = true;
     setIsReplaying(true);
 
     try {
-      const pending = await DB.getPendingMutations();
+      let pending = await DB.getReplayableMutations(tenantId);
+      if (tenantId) {
+        const globalPending = await DB.getReplayableMutations();
+        if (globalPending.length > pending.length) {
+          pending = globalPending;
+        }
+      }
       if (pending.length === 0) return;
 
-      let successCount = 0;
-      let failCount = 0;
-
       for (const mutation of pending) {
+        const attempts = (mutation.attempts ?? 0) + 1;
         const apiRef = resolveApiRef(mutation.api_path);
         if (!apiRef) {
-          await DB.markMutationFailed(mutation.id);
-          failCount++;
+          const errorMessage = `Unknown API path: ${mutation.api_path}`;
+          await DB.markMutationFailed(
+            mutation.id,
+            attempts,
+            errorMessage,
+          );
+          await DB.archiveMutation({ ...mutation, attempts }, 'failed', mutation.pushed_at, errorMessage);
           continue;
         }
 
+        let args: Record<string, unknown>;
         try {
-          await DB.markMutationSyncing(mutation.id);
-          const args = JSON.parse(mutation.args);
-          await convex.mutation(apiRef, args);
-          await DB.removeMutation(mutation.id);
-          successCount++;
+          const parsed = JSON.parse(mutation.args);
+          if (!parsed || typeof parsed !== 'object') {
+            throw new Error('Invalid mutation arguments');
+          }
+          args = parsed as Record<string, unknown>;
         } catch (err: any) {
-          console.warn('[MutationQueue] Replay failed for', mutation.api_path, err?.message);
-          await DB.markMutationFailed(mutation.id);
-          failCount++;
+          const errorMessage = String(err?.message ?? 'Invalid mutation arguments');
+          await DB.markMutationFailed(mutation.id, attempts, errorMessage);
+          await DB.archiveMutation({ ...mutation, attempts }, 'failed', mutation.pushed_at, errorMessage);
+          continue;
         }
-      }
 
-      if (failCount > 0) {
-        Alert.alert(
-          'Sync Issue',
-          `${successCount} change(s) synced successfully. ${failCount} change(s) failed to sync and have been discarded.`,
-        );
-        // Clean up failed mutations so they don't pile up
-        const failed = await DB.getPendingMutations();
-        for (const m of failed) {
-          if (m.status === 'failed') {
-            await DB.removeMutation(m.id);
+        const pushAttemptAt = Date.now();
+
+        try {
+          await DB.markMutationSyncing(mutation.id, attempts);
+          await convex.mutation(apiRef, args);
+          await DB.archiveMutation(
+            {
+              ...mutation,
+              attempts,
+              pushed_at: mutation.pushed_at > 0 ? mutation.pushed_at : pushAttemptAt,
+            },
+            'synced',
+            pushAttemptAt,
+            null,
+          );
+          await DB.removeMutation(mutation.id);
+        } catch (err: any) {
+          const errMessage = String(err?.message ?? 'Replay failed');
+          const shouldRetry = attempts < REPLAY_MAX_ATTEMPTS && isRetriableError(err);
+
+          if (shouldRetry) {
+            const nextRetryAt = Date.now() + getBackoffMs(attempts);
+            await DB.markMutationPendingRetry(
+              mutation.id,
+              attempts,
+              nextRetryAt,
+              errMessage,
+            );
+          } else {
+            const isConflict = isStateConflictError(err);
+            if (isConflict && hasSupersedingTaskUpdate(mutation, args, pending)) {
+              await DB.archiveMutation(
+                {
+                  ...mutation,
+                  attempts,
+                  pushed_at: mutation.pushed_at > 0 ? mutation.pushed_at : pushAttemptAt,
+                },
+                'skipped',
+                pushAttemptAt,
+                errMessage,
+              );
+              await DB.removeMutation(mutation.id);
+              continue;
+            }
+
+            await DB.markMutationFailed(mutation.id, attempts, errMessage);
+            await DB.archiveMutation(
+              {
+                ...mutation,
+                attempts,
+                pushed_at: mutation.pushed_at > 0 ? mutation.pushed_at : pushAttemptAt,
+              },
+              'failed',
+              pushAttemptAt,
+              errMessage,
+            );
           }
         }
       }
@@ -142,12 +346,76 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
     } finally {
       replayingRef.current = false;
       setIsReplaying(false);
-      refreshCount();
+      await refreshQueue();
     }
-  }, [refreshCount]);
+  }, [REPLAY_MAX_ATTEMPTS, getBackoffMs, isOnline, isRetriableError, refreshQueue, tenantId]);
+
+  const replayNow = useCallback(async () => {
+    if (!isOnline) return;
+    await replayQueue();
+  }, [isOnline, replayQueue]);
+
+  const retryMutation = useCallback(async (id: string) => {
+    let rows = await DB.getQueuedMutations(tenantId);
+    let mutation = rows.find((row) => row.id === id);
+    if (!mutation && tenantId) {
+      rows = await DB.getQueuedMutations();
+      mutation = rows.find((row) => row.id === id);
+    }
+    if (!mutation) return;
+
+    await DB.markMutationPendingRetry(
+      id,
+      mutation.attempts ?? 0,
+      0,
+      mutation.last_error ?? 'Manual retry',
+    );
+    await refreshQueue();
+    if (isOnline) {
+      await replayQueue();
+    }
+  }, [isOnline, refreshQueue, replayQueue, tenantId]);
+
+  const removeQueuedMutation = useCallback(async (id: string) => {
+    await DB.removeMutation(id);
+    await refreshQueue();
+  }, [refreshQueue]);
+
+  const clearQueue = useCallback(async () => {
+    await DB.clearMutationQueue(tenantId ?? undefined);
+    await refreshQueue();
+  }, [refreshQueue, tenantId]);
+
+  // Replay on startup and whenever we reconnect
+  useEffect(() => {
+    if (!isOnline) return;
+    void replayQueue();
+  }, [isOnline, replayQueue]);
+
+  // Keep trying due retries while online
+  useEffect(() => {
+    if (!isOnline) return;
+    const interval = setInterval(() => {
+      void replayQueue();
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [isOnline, replayQueue]);
 
   return (
-    <MutationQueueContext.Provider value={{ pendingCount, isReplaying, refreshCount }}>
+    <MutationQueueContext.Provider
+      value={{
+        pendingCount,
+        failedCount,
+        isReplaying,
+        queue,
+        refreshCount,
+        refreshQueue,
+        replayNow,
+        retryMutation,
+        removeQueuedMutation,
+        clearQueue,
+      }}
+    >
       {children}
     </MutationQueueContext.Provider>
   );

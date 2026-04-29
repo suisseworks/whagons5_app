@@ -13,10 +13,12 @@ import { Alert } from 'react-native';
 import { TaskItem, Assignee, CardDensity } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
 import { useAuth } from './AuthContext';
-import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { computeApprovalStatusForTask } from '../utils/approvalStatus';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { useMutationQueue } from './MutationQueueContext';
+import { useNetwork } from './NetworkContext';
 
 const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
 const MAX_WORKING_TASKS = 5;
@@ -107,6 +109,15 @@ function resolveTaskStatusMeta(
 
 function isWorkingListAction(action: string | null): boolean {
   return action === 'WORKING' || action === 'PAUSED';
+}
+
+function pendingTaskHeuristicKey(task: Pick<TaskItem, 'title' | 'workspaceId' | 'createdBy' | 'description'>): string {
+  return [
+    task.title?.trim().toLowerCase() ?? '',
+    String(task.workspaceId ?? ''),
+    String(task.createdBy ?? ''),
+    String(task.description ?? '').trim().toLowerCase(),
+  ].join('|');
 }
 
 function isTaskEligibleForWorkingList(
@@ -261,6 +272,7 @@ export interface CreateTaskArgs {
   spotConvexId?: string;
   statusConvexId?: string;
   priorityConvexId?: string;
+  tagIds?: Array<string | number>;
   userConvexIds?: string[];
   dueDate?: number;
   startDate?: number;
@@ -311,7 +323,7 @@ interface TaskContextType {
   availableStatuses: StatusOption[];
   availableTags: string[];
   tagInfoMap: Map<string, { color: string | null; icon: string | null }>;
-  changeTaskStatus: (taskId: string, status: StatusOption) => void;
+  changeTaskStatus: (taskId: string, status: StatusOption) => boolean;
   changeTaskPriority: (taskId: string, priorityId: AnyId) => void;
   markTaskDone: (taskId: string) => void;
   assignTaskToYou: (taskId: string) => void;
@@ -327,11 +339,48 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { data, sharedTaskIds, sharedCount, rawSharedToMe, approvals: approvalsList, approvalApprovers, taskApprovalInstances } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
+  const { queue } = useMutationQueue();
+  const { isOnline } = useNetwork();
+  const [storedTenantId, setStoredTenantId] = useState<string | null>(null);
+
+  useEffect(() => {
+    AsyncStorage.getItem('wh_auth_subdomain')
+      .then((value) => {
+        if (typeof value === 'string' && value.trim().length > 0) {
+          setStoredTenantId(value);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const inferredTenantId = useMemo(() => {
+    for (const task of data.tasks as any[]) {
+      const candidate = task?.tenantId ?? task?.tenant_id;
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate;
+      }
+    }
+    for (const workspace of data.workspaces as any[]) {
+      const candidate = workspace?.tenantId ?? workspace?.tenant_id;
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate;
+      }
+    }
+    return null;
+  }, [data.tasks, data.workspaces]);
+
+  const effectiveTenantId = tenantId
+    ?? inferredTenantId
+    ?? storedTenantId
+    ?? (typeof (authUser as any)?.tenant_domain_prefix === 'string'
+      ? String((authUser as any).tenant_domain_prefix)
+      : null);
 
   // Convex mutations
-  const createTaskMutation = useMutation(api.tasks.create);
-  const patchTaskMutation = useMutation(api.tasks.update);
-  const assignUserMutation = useMutation(api.taskResources.assignUser);
+  const createTaskOfflineMutation = useOfflineMutation(api.tasks.create, 'tasks.create');
+  const patchTaskMutation = useOfflineMutation(api.tasks.update, 'tasks.update');
+  const patchTaskByPgIdMutation = useOfflineMutation(api.tasks.updateByPgId, 'tasks.updateByPgId');
+  const assignUserMutation = useOfflineMutation(api.taskResources.assignUser, 'taskResources.assignUser');
 
   // Multi-task working state (persisted to AsyncStorage)
   const [workingTaskIds, setWorkingTaskIds] = useState<string[]>([]);
@@ -360,6 +409,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
   const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
+  const [pendingCreatedTasks, setPendingCreatedTasks] = useState<TaskItem[]>([]);
   const [pendingAssigns, setPendingAssigns] = useState<Map<string, Set<string>>>(new Map());
 
   // Build lookup maps from synced reference data
@@ -384,14 +434,36 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Reverse lookup: resolved pgId → Convex _id for statuses
   const statusConvexIdMap = useMemo(() => {
     const m = new Map<AnyId, string>();
-    for (const s of data.statuses) m.set(s.id, (s as any)._id);
+    for (const s of data.statuses) {
+      const convexId = (s as any)._id;
+      if (!convexId) continue;
+      m.set(s.id, convexId);
+      if (s.id != null) {
+        m.set(String(s.id), convexId);
+      }
+      const numericId = Number(s.id);
+      if (Number.isFinite(numericId)) {
+        m.set(numericId, convexId);
+      }
+    }
     return m;
   }, [data.statuses]);
 
   // Reverse lookup: resolved pgId → Convex _id for priorities
   const priorityConvexIdMap = useMemo(() => {
     const m = new Map<AnyId, string>();
-    for (const p of data.priorities) m.set(p.id, (p as any)._id);
+    for (const p of data.priorities) {
+      const convexId = (p as any)._id;
+      if (!convexId) continue;
+      m.set(p.id, convexId);
+      if (p.id != null) {
+        m.set(String(p.id), convexId);
+      }
+      const numericId = Number(p.id);
+      if (Number.isFinite(numericId)) {
+        m.set(numericId, convexId);
+      }
+    }
     return m;
   }, [data.priorities]);
 
@@ -403,7 +475,18 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const userConvexIdMap = useMemo(() => {
     const m = new Map<AnyId, string>();
-    for (const u of data.users) m.set(u.id, (u as any)._id);
+    for (const u of data.users) {
+      const convexId = (u as any)._id;
+      if (!convexId) continue;
+      m.set(u.id, convexId);
+      if (u.id != null) {
+        m.set(String(u.id), convexId);
+      }
+      const numericId = Number(u.id);
+      if (Number.isFinite(numericId)) {
+        m.set(numericId, convexId);
+      }
+    }
     return m;
   }, [data.users]);
 
@@ -659,29 +742,212 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.categories]);
 
-  const allMappedTasks = useMemo(() => {
+  const mappedActiveTasks = useMemo(() => {
     if (activeTasks.length === 0) return [];
     return activeTasks.map((t) =>
       mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap),
     );
   }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap]);
 
+  useEffect(() => {
+    if (pendingCreatedTasks.length === 0 || mappedActiveTasks.length === 0) return;
+
+    const syncedKeys = new Set(mappedActiveTasks.map((task) => pendingTaskHeuristicKey(task)));
+    setPendingCreatedTasks((prev) => prev.filter((task) => !syncedKeys.has(pendingTaskHeuristicKey(task))));
+  }, [mappedActiveTasks, pendingCreatedTasks.length]);
+
+  const allMappedTasks = useMemo(() => {
+    if (mappedActiveTasks.length === 0) return pendingCreatedTasks;
+    if (pendingCreatedTasks.length === 0) return mappedActiveTasks;
+
+    const syncedKeys = new Set(mappedActiveTasks.map((task) => pendingTaskHeuristicKey(task)));
+    const pending = pendingCreatedTasks.filter((task) => !syncedKeys.has(pendingTaskHeuristicKey(task)));
+    return [...mappedActiveTasks, ...pending];
+  }, [mappedActiveTasks, pendingCreatedTasks]);
+
+  const taskIdByConvexId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const task of allMappedTasks) {
+      if (!task.id || !task.convexId) continue;
+      map.set(String(task.convexId), String(task.id));
+    }
+    return map;
+  }, [allMappedTasks]);
+
+  const statusByAnyId = useMemo(() => {
+    const map = new Map<string, { id: AnyId; name: string; color: string | null; icon?: string | null; action?: string | null }>();
+    for (const status of data.statuses) {
+      const payload = {
+        id: status.id,
+        name: status.name,
+        color: status.color ?? null,
+        icon: (status as any).icon ?? null,
+        action: (status as any).action ?? null,
+      };
+      map.set(String(status.id), payload);
+      const convexId = (status as any)._id;
+      if (convexId) map.set(String(convexId), payload);
+    }
+    return map;
+  }, [data.statuses]);
+
+  const priorityByAnyId = useMemo(() => {
+    const map = new Map<string, { id: AnyId; name: string; color: string | null }>();
+    for (const priority of data.priorities) {
+      const payload = {
+        id: priority.id,
+        name: priority.name,
+        color: priority.color ?? null,
+      };
+      map.set(String(priority.id), payload);
+      const convexId = (priority as any)._id;
+      if (convexId) map.set(String(convexId), payload);
+    }
+    return map;
+  }, [data.priorities]);
+
+  const queuedTaskOverrides = useMemo(() => {
+    const map = new Map<string, Partial<TaskItem>>();
+    const applyOverride = (taskId: string, override: Partial<TaskItem>) => {
+      const existing = map.get(taskId) ?? {};
+      map.set(taskId, { ...existing, ...override });
+    };
+
+    for (const row of queue) {
+      if (row.status === 'failed') continue;
+
+      let args: any;
+      try {
+        args = JSON.parse(row.args);
+      } catch {
+        continue;
+      }
+
+      if (!args || typeof args !== 'object') continue;
+
+      if (row.api_path === 'tasks.update') {
+        const taskId = args.id != null
+          ? taskIdByConvexId.get(String(args.id))
+          : (args.pgId != null ? String(args.pgId) : undefined);
+        if (!taskId) continue;
+
+        const override: Partial<TaskItem> = {};
+
+        if (args.statusId != null) {
+          const status = statusByAnyId.get(String(args.statusId));
+          if (status) {
+            override.status = status.name;
+            override.statusColor = status.color;
+            override.statusId = status.id;
+            override.statusIcon = status.icon ?? null;
+            override.statusAction = status.action ?? null;
+          }
+        }
+
+        if (args.priorityId != null) {
+          const priority = priorityByAnyId.get(String(args.priorityId));
+          if (priority) {
+            override.priority = priority.name;
+            override.priorityColor = priority.color;
+            override.priorityId = priority.id;
+          }
+        }
+
+        if (Object.keys(override).length > 0) {
+          applyOverride(taskId, override);
+        }
+        continue;
+      }
+
+      if (row.api_path === 'tasks.updateByPgId') {
+        if (args.pgId == null) continue;
+        const taskId = String(args.pgId);
+        const updates = (args.updates && typeof args.updates === 'object') ? args.updates : {};
+        const override: Partial<TaskItem> = {};
+
+        if (updates.status_id != null) {
+          const status = statusByAnyId.get(String(updates.status_id));
+          if (status) {
+            override.status = status.name;
+            override.statusColor = status.color;
+            override.statusId = status.id;
+            override.statusIcon = status.icon ?? null;
+            override.statusAction = status.action ?? null;
+          }
+        }
+
+        if (updates.priority_id != null) {
+          const priority = priorityByAnyId.get(String(updates.priority_id));
+          if (priority) {
+            override.priority = priority.name;
+            override.priorityColor = priority.color;
+            override.priorityId = priority.id;
+          }
+        }
+
+        if (Object.keys(override).length > 0) {
+          applyOverride(taskId, override);
+        }
+      }
+    }
+
+    return map;
+  }, [queue, taskIdByConvexId, statusByAnyId, priorityByAnyId]);
+
+  const hasQueueAwaitingReplay = useMemo(
+    () => queue.some((row) => row.status === 'pending' || row.status === 'syncing'),
+    [queue],
+  );
+
+  const shouldShowPendingTaskState = !isOnline || hasQueueAwaitingReplay;
+
   // Helper: set a local override that auto-clears after a short delay
   const setTimedOverride = useCallback((taskId: string, override: Partial<TaskItem>) => {
+    const timedOverride = override;
     setLocalOverrides((prev) => {
       const next = new Map(prev);
-      next.set(taskId, override);
+      next.set(taskId, timedOverride);
       return next;
     });
     setTimeout(() => {
       setLocalOverrides((prev) => {
         if (!prev.has(taskId)) return prev;
+        if (prev.get(taskId) !== timedOverride) return prev;
         const next = new Map(prev);
         next.delete(taskId);
         return next;
       });
     }, 3000);
   }, []);
+
+  const resolveTenantIdForTask = useCallback((taskId: string): string | null => {
+    if (effectiveTenantId) return effectiveTenantId;
+
+    const rawTask = data.tasks.find((task: any) => String(task.id) === String(taskId));
+    const taskTenant = rawTask?.tenantId ?? rawTask?.tenant_id;
+    if (typeof taskTenant === 'string' && taskTenant.trim().length > 0) {
+      return taskTenant;
+    }
+
+    const taskWorkspaceId = rawTask?.workspace_id ?? rawTask?.workspaceId ?? rawTask?.workspaceIdPg;
+    if (taskWorkspaceId != null) {
+      const workspace = data.workspaces.find((item: any) => (
+        String(item.id) === String(taskWorkspaceId) ||
+        String((item as any)._id ?? '') === String(taskWorkspaceId)
+      ));
+      const workspaceTenant = workspace?.tenantId ?? workspace?.tenant_id;
+      if (typeof workspaceTenant === 'string' && workspaceTenant.trim().length > 0) {
+        return workspaceTenant;
+      }
+    }
+
+    const authTenant = (authUser as any)?.tenant_domain_prefix;
+    if (typeof authTenant === 'string' && authTenant.trim().length > 0) {
+      return authTenant;
+    }
+
+    return null;
+  }, [effectiveTenantId, data.tasks, data.workspaces, authUser]);
 
   // workspace_id is now embedded directly on each TaskItem (workspaceId field)
   // so we no longer need a separate parallel array for index-based filtering.
@@ -809,7 +1075,14 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
     }
 
-    if (localOverrides.size > 0) {
+    if (shouldShowPendingTaskState && queuedTaskOverrides.size > 0) {
+      result = result.map((t) => {
+        const override = queuedTaskOverrides.get(String(t.id ?? ''));
+        return override ? { ...t, ...override } : t;
+      });
+    }
+
+    if (shouldShowPendingTaskState && localOverrides.size > 0) {
       result = result.map((t) => {
         const override = localOverrides.get(t.id ?? '');
         return override ? { ...t, ...override } : t;
@@ -823,23 +1096,41 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return result;
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap]);
 
   const wsFilteredTasks = useMemo(() => {
-    if (selectedWorkspace === 'Everything') return allMappedTasks;
+    let result = selectedWorkspace === 'Everything' ? allMappedTasks : EMPTY_TASKS;
     if (selectedWorkspace === 'Shared') {
-      return allMappedTasks.filter((t) => {
+      result = allMappedTasks.filter((t) => {
         const numId = Number(t.id);
         return sharedTaskIds.has(numId) || sharedTaskIds.has(t.id ?? '');
       });
+    } else if (selectedWorkspace !== 'Everything') {
+      const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+      if (ws) {
+        const wsIdStr = String(ws.id);
+        result = allMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+      } else {
+        result = allMappedTasks;
+      }
     }
-    const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
-    if (ws) {
-      const wsIdStr = String(ws.id);
-      return allMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+
+    if (shouldShowPendingTaskState && queuedTaskOverrides.size > 0) {
+      result = result.map((t) => {
+        const override = queuedTaskOverrides.get(String(t.id ?? ''));
+        return override ? { ...t, ...override } : t;
+      });
     }
-    return allMappedTasks;
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, sharedTaskIds]);
+
+    if (shouldShowPendingTaskState && localOverrides.size > 0) {
+      result = result.map((t) => {
+        const override = localOverrides.get(t.id ?? '');
+        return override ? { ...t, ...override } : t;
+      });
+    }
+
+    return result;
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, sharedTaskIds, queuedTaskOverrides, localOverrides, shouldShowPendingTaskState]);
 
   const availableAssignees = useMemo(() => {
     const names = new Set<string>();
@@ -921,6 +1212,36 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     return m;
   }, [allMappedTasks]);
+
+  useEffect(() => {
+    if (localOverrides.size === 0) return;
+
+    setLocalOverrides((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+
+      for (const [taskId, override] of prev) {
+        const baseTask = allMappedTaskMap.get(taskId);
+        if (!baseTask) continue;
+
+        const keys = Object.keys(override) as Array<keyof TaskItem>;
+        const synced = keys.every((key) => (baseTask as any)[key] === (override as any)[key]);
+
+        if (synced) {
+          next.delete(taskId);
+          changed = true;
+        }
+      }
+
+      return changed ? next : prev;
+    });
+  }, [allMappedTaskMap, localOverrides.size]);
+
+  useEffect(() => {
+    if (!isOnline || hasQueueAwaitingReplay) return;
+    if (localOverrides.size === 0) return;
+    setLocalOverrides(new Map());
+  }, [isOnline, hasQueueAwaitingReplay, localOverrides.size]);
 
   // Build set of task IDs the current user is assigned to
   const myTaskIds = useMemo(() => {
@@ -1028,12 +1349,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
 
-    if (finalStatusId && tenantId) {
+    const mutationTenantId = resolveTenantIdForTask(taskId);
+    if (finalStatusId && mutationTenantId) {
       const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
       const statusConvexId = statusConvexIdMap.get(finalStatusId);
       if (taskConvexId && statusConvexId) {
         patchTaskMutation({
-          tenantId,
+          tenantId: mutationTenantId,
           id: taskConvexId as any,
           statusId: statusConvexId as any,
         }).catch((err: any) => {
@@ -1041,7 +1363,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
       }
     }
-  }, [finalStatus, data.statuses, tenantId, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap]);
+  }, [finalStatus, data.statuses, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap, resolveTenantIdForTask]);
 
   const isTaskWorking = useCallback((taskId: string) => {
     if (!workingTaskIds.includes(taskId)) return false;
@@ -1068,10 +1390,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
 
   const createTask = useCallback(async (args: CreateTaskArgs): Promise<CreatedTaskResult> => {
-    if (!tenantId) throw new Error('No tenant selected');
+    if (!effectiveTenantId) throw new Error('No tenant selected');
 
     const mutationArgs: Record<string, any> = {
-      tenantId,
+      tenantId: effectiveTenantId,
       name: args.name,
       workspaceId: args.workspaceConvexId,
     };
@@ -1081,15 +1403,88 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (args.spotConvexId) mutationArgs.spotId = args.spotConvexId;
     if (args.statusConvexId) mutationArgs.statusId = args.statusConvexId;
     if (args.priorityConvexId) mutationArgs.priorityId = args.priorityConvexId;
+    if (args.tagIds?.length) mutationArgs.tagIds = args.tagIds;
     if (args.dueDate) mutationArgs.dueDate = args.dueDate;
     if (args.startDate) mutationArgs.startDate = args.startDate;
     if (args.latitude != null) mutationArgs.latitude = args.latitude;
     if (args.longitude != null) mutationArgs.longitude = args.longitude;
     if (args.userConvexIds?.length) mutationArgs.assigneeUserIds = args.userConvexIds;
 
-    const result = await createTaskMutation(mutationArgs as any);
+    const result = await createTaskOfflineMutation(mutationArgs as any);
+    if ((result as any)?._offlineQueued) {
+      const nowIso = new Date().toISOString();
+      const pendingId = `${Date.now()}${Math.floor(Math.random() * 90 + 10)}`;
+      const queueId = String((result as any)?._queueId ?? `pending_task_${pendingId}`);
+
+      const workspace = data.workspaces.find((w: any) => String((w as any)._id) === String(args.workspaceConvexId));
+      const category = args.categoryConvexId
+        ? data.categories.find((c: any) => String((c as any)._id) === String(args.categoryConvexId))
+        : null;
+      const status = args.statusConvexId
+        ? data.statuses.find((s: any) => String((s as any)._id) === String(args.statusConvexId))
+        : data.statuses.find((s: any) => s.initial) ?? null;
+      const priority = args.priorityConvexId
+        ? data.priorities.find((p: any) => String((p as any)._id) === String(args.priorityConvexId))
+        : null;
+      const spot = args.spotConvexId
+        ? data.spots.find((s: any) => String((s as any)._id) === String(args.spotConvexId))
+        : null;
+      const template = args.templateConvexId
+        ? data.templates.find((t: any) => String((t as any)._id) === String(args.templateConvexId))
+        : null;
+      const templateForm = template ? templateFormMap.get((template as any).id ?? (template as any)._id) : undefined;
+
+      const assignees: Assignee[] = (args.userConvexIds ?? [])
+        .map((id) => data.users.find((user: any) => String((user as any)._id) === String(id)))
+        .filter(Boolean)
+        .map((user: any) => ({ name: user.name, picture: user.url_picture ?? null }));
+
+      const tags: string[] = (args.tagIds ?? [])
+        .map((rawId) => data.tags.find((tag: any) => (
+          String(tag.id) === String(rawId) ||
+          String((tag as any)._id ?? '') === String(rawId)
+        )))
+        .filter(Boolean)
+        .map((tag: any) => tag.name);
+
+      const pendingTask: TaskItem = {
+        id: pendingId,
+        convexId: undefined,
+        title: args.name || 'Untitled',
+        description: args.description ?? null,
+        spot: spot?.name ?? '',
+        spotId: spot?.id ?? null,
+        priority: priority?.name ?? 'Medium',
+        priorityColor: priority?.color ?? null,
+        priorityId: priority?.id ?? null,
+        status: status?.name ?? initialStatus?.name ?? '',
+        statusColor: status?.color ?? initialStatus?.color ?? null,
+        statusId: status?.id ?? null,
+        statusIcon: (status as any)?.icon ?? null,
+        statusAction: (status as any)?.action ?? null,
+        categoryId: category?.id ?? null,
+        categoryColor: category?.color ?? null,
+        categoryIcon: (category as any)?.icon ?? null,
+        workspaceId: workspace?.id ?? null,
+        assignees,
+        createdAt: formatDate(nowIso),
+        tags,
+        approval: null,
+        sla: null,
+        formId: templateForm?.formId ?? null,
+        formName: templateForm?.formName ?? null,
+        flagColor: null,
+        createdBy: authUser?.id ?? null,
+        latitude: args.latitude ?? null,
+        longitude: args.longitude ?? null,
+        requiresSignature: false,
+      };
+
+      setPendingCreatedTasks((prev) => [pendingTask, ...prev]);
+      return { _id: queueId, pgId: -Date.now() };
+    }
     return result as CreatedTaskResult;
-  }, [tenantId, createTaskMutation]);
+  }, [effectiveTenantId, createTaskOfflineMutation, data.workspaces, data.categories, data.statuses, data.priorities, data.spots, data.templates, data.users, data.tags, templateFormMap, initialStatus, authUser?.id]);
 
   const addTask = (_task: TaskItem) => {
     // Legacy stub - use createTask instead
@@ -1101,144 +1496,215 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const changeTaskStatus = useCallback((taskId: string, status: StatusOption) => {
-    const currentTask = allMappedTaskMap.get(taskId);
+  const changeTaskStatus = useCallback((taskId: string, status: StatusOption): boolean => {
+    const taskKey = String(taskId);
+    const currentTask = allMappedTaskMap.get(taskKey);
     if (currentTask) {
       const allowedStatuses = getAllowedStatuses(currentTask);
       const isAllowed = allowedStatuses.some((candidate) => String(candidate.id) === String(status.id));
       if (!isAllowed) {
         Alert.alert('Invalid status change', 'This task cannot move to that status from its current state.');
-        return;
+        return false;
       }
     }
 
     const fullStatus = data.statuses.find((s) => s.id === status.id);
     const nextStatusAction = status.action ?? readStringValue((fullStatus as Record<string, unknown> | undefined)?.action);
 
-    setTimedOverride(taskId, {
+    const statusOverride: Partial<TaskItem> = {
       status: status.name,
       statusColor: status.color,
       statusId: status.id,
       statusAction: nextStatusAction,
-    });
+    };
 
-    if (isWorkingListAction(normalizeStatusAction(nextStatusAction)) && myTaskIds.has(taskId)) {
+    const taskConvexId = allMappedTaskMap.get(taskKey)?.convexId
+      ?? (data.tasks.find((t: any) => String(t.id) === taskKey)?.['_id'] as string | undefined);
+    const statusConvexId = statusConvexIdMap.get(status.id)
+      ?? (data.statuses.find((s: any) => String(s.id) === String(status.id))?.['_id'] as string | undefined);
+    const mutationTenantId = resolveTenantIdForTask(taskKey);
+
+    const hasConvexMutationTarget = Boolean(taskConvexId && statusConvexId);
+    const hasPgMutationTarget = Number.isFinite(Number(taskKey));
+
+    if (!mutationTenantId) {
+      console.warn('[TaskContext] Missing tenantId for status change', { taskId: taskKey, statusId: status.id });
+      return false;
+    }
+
+    if (!hasConvexMutationTarget && !hasPgMutationTarget) {
+      console.warn('[TaskContext] Could not resolve Convex IDs for status change', { taskId: taskKey, taskConvexId, statusId: status.id, statusConvexId });
+      return false;
+    }
+
+    setTimedOverride(taskKey, statusOverride);
+
+    if (isWorkingListAction(normalizeStatusAction(nextStatusAction)) && myTaskIds.has(taskKey)) {
       setWorkingTaskIds((prev) => {
-        if (prev.includes(taskId)) return prev;
+        if (prev.includes(taskKey)) return prev;
         if (prev.length >= MAX_WORKING_TASKS) return prev;
-        return [...prev, taskId];
+        return [...prev, taskKey];
       });
     } else {
-      setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
+      setWorkingTaskIds((prev) => prev.filter((id) => id !== taskKey));
     }
 
-    if (tenantId) {
-      // Resolve pgIds → Convex _ids for the mutation
-      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
-      const statusConvexId = statusConvexIdMap.get(status.id);
-      if (taskConvexId && statusConvexId) {
-        patchTaskMutation({
-          tenantId,
-          id: taskConvexId as any,
-          statusId: statusConvexId as any,
-        }).catch((err: any) => {
-          console.warn('[TaskContext] Failed to change status:', err);
-        });
-      } else {
-        console.warn('[TaskContext] Could not resolve Convex IDs for status change', { taskId, taskConvexId, statusId: status.id, statusConvexId });
-      }
+    if (hasConvexMutationTarget) {
+      patchTaskMutation({
+        tenantId: mutationTenantId,
+        id: taskConvexId as any,
+        statusId: statusConvexId as any,
+      }).catch((err: any) => {
+        console.warn('[TaskContext] Failed to change status:', err);
+      });
+      return true;
     }
-  }, [data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, myTaskIds]);
+
+    patchTaskByPgIdMutation({
+      tenantId: mutationTenantId,
+      pgId: Number(taskKey),
+      updates: {
+        status_id: status.id,
+      },
+    }).catch((err: any) => {
+      console.warn('[TaskContext] Failed to change status by pgId:', err);
+    });
+    return true;
+  }, [data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, myTaskIds, setTimedOverride, resolveTenantIdForTask]);
 
   const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
+    const taskKey = String(taskId);
     const priorityInfo = priorityMap.get(priorityId);
+    const priorityOverride: Partial<TaskItem> | null = priorityInfo
+      ? { priority: priorityInfo.name, priorityColor: priorityInfo.color ?? null, priorityId }
+      : null;
+
     if (priorityInfo) {
-      setTimedOverride(taskId, { priority: priorityInfo.name, priorityColor: priorityInfo.color ?? null, priorityId });
+      setTimedOverride(taskKey, priorityOverride as Partial<TaskItem>);
     }
 
-    if (tenantId) {
-      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
-      const priorityConvexId = priorityConvexIdMap.get(priorityId);
+    const mutationTenantId = resolveTenantIdForTask(taskKey);
+    if (mutationTenantId) {
+      const taskConvexId = allMappedTaskMap.get(taskKey)?.convexId
+        ?? (data.tasks.find((t: any) => String(t.id) === taskKey)?.['_id'] as string | undefined);
+      const priorityConvexId = priorityConvexIdMap.get(priorityId)
+        ?? (data.priorities.find((p: any) => String(p.id) === String(priorityId))?.['_id'] as string | undefined);
       if (taskConvexId && priorityConvexId) {
         patchTaskMutation({
-          tenantId,
+          tenantId: mutationTenantId,
           id: taskConvexId as any,
           priorityId: priorityConvexId as any,
         }).catch((err: any) => {
           console.warn('[TaskContext] Failed to change priority:', err);
         });
+      } else if (Number.isFinite(Number(taskKey))) {
+        patchTaskByPgIdMutation({
+          tenantId: mutationTenantId,
+          pgId: Number(taskKey),
+          updates: {
+            priority_id: priorityId,
+          },
+        }).catch((err: any) => {
+          console.warn('[TaskContext] Failed to change priority by pgId:', err);
+        });
       } else {
-        console.warn('[TaskContext] Could not resolve Convex IDs for priority change', { taskId, taskConvexId, priorityId, priorityConvexId });
+        console.warn('[TaskContext] Could not resolve Convex IDs for priority change', { taskId: taskKey, taskConvexId, priorityId, priorityConvexId });
       }
+    } else {
+      console.warn('[TaskContext] Missing tenantId for priority change', { taskId: taskKey, priorityId });
     }
-  }, [priorityMap, tenantId, patchTaskMutation, allMappedTaskMap, priorityConvexIdMap]);
+  }, [priorityMap, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, priorityConvexIdMap, setTimedOverride, data.tasks, data.priorities, resolveTenantIdForTask]);
 
   const markTaskDone = useCallback((taskId: string) => {
+    const taskKey = String(taskId);
     if (!finalStatus) return;
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
     const finalStatusAction = readStringValue((finalStatusObj as Record<string, unknown> | undefined)?.action);
 
-    setTimedOverride(taskId, {
+    const doneOverride: Partial<TaskItem> = {
       status: finalStatus.name,
       statusColor: finalStatus.color,
       statusId: finalStatusId ?? null,
       statusAction: finalStatusAction,
-    });
+    };
 
-    setWorkingTaskIds((prev) => prev.filter((id) => id !== taskId));
+    setTimedOverride(taskKey, doneOverride);
 
-    if (finalStatusId && tenantId) {
-      const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
-      const statusConvexId = statusConvexIdMap.get(finalStatusId);
+    setWorkingTaskIds((prev) => prev.filter((id) => id !== taskKey));
+
+    const mutationTenantId = resolveTenantIdForTask(taskKey);
+    if (finalStatusId && mutationTenantId) {
+      const taskConvexId = allMappedTaskMap.get(taskKey)?.convexId
+        ?? (data.tasks.find((t: any) => String(t.id) === taskKey)?.['_id'] as string | undefined);
+      const statusConvexId = statusConvexIdMap.get(finalStatusId)
+        ?? (data.statuses.find((s: any) => String(s.id) === String(finalStatusId))?.['_id'] as string | undefined);
       if (taskConvexId && statusConvexId) {
         patchTaskMutation({
-          tenantId,
+          tenantId: mutationTenantId,
           id: taskConvexId as any,
           statusId: statusConvexId as any,
         }).catch((err: any) => {
           console.warn('[TaskContext] Failed to mark task done:', err);
         });
+      } else if (Number.isFinite(Number(taskKey))) {
+        patchTaskByPgIdMutation({
+          tenantId: mutationTenantId,
+          pgId: Number(taskKey),
+          updates: {
+            status_id: finalStatusId,
+          },
+        }).catch((err: any) => {
+          console.warn('[TaskContext] Failed to mark task done by pgId:', err);
+        });
       }
+    } else if (finalStatusId) {
+      console.warn('[TaskContext] Missing tenantId for mark task done', { taskId: taskKey, finalStatusId });
     }
-  }, [finalStatus, data.statuses, tenantId, patchTaskMutation, allMappedTaskMap, statusConvexIdMap]);
+  }, [finalStatus, data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, setTimedOverride, resolveTenantIdForTask]);
 
   const assignTaskToUser = useCallback((taskId: string, userId: AnyId, userName: string) => {
-    const task = filteredTasks.find((t) => t.id === taskId);
+    const taskKey = String(taskId);
+    const task = filteredTasks.find((t) => String(t.id) === taskKey);
     if (task && !task.assignees.some((a) => a.name === userName)) {
       setPendingAssigns((prev) => {
         const next = new Map(prev);
-        const set = new Set(next.get(taskId) ?? []);
+        const set = new Set(next.get(taskKey) ?? []);
         set.add(userName);
-        next.set(taskId, set);
+        next.set(taskKey, set);
         return next;
       });
 
-      if (tenantId) {
-        const taskConvexId = allMappedTaskMap.get(taskId)?.convexId;
-        const userConvexId = userConvexIdMap.get(userId);
+      const mutationTenantId = resolveTenantIdForTask(taskKey);
+      if (mutationTenantId) {
+        const taskConvexId = allMappedTaskMap.get(taskKey)?.convexId
+          ?? (data.tasks.find((t: any) => String(t.id) === taskKey)?.['_id'] as string | undefined);
+        const userConvexId = userConvexIdMap.get(userId)
+          ?? (data.users.find((u: any) => String(u.id) === String(userId))?.['_id'] as string | undefined);
         if (taskConvexId && userConvexId) {
           assignUserMutation({
-            tenantId,
+            tenantId: mutationTenantId,
             taskId: taskConvexId as any,
             userId: userConvexId as any,
           }).catch((err: any) => {
             console.warn('[TaskContext] Failed to assign user:', err);
             setPendingAssigns((prev) => {
               const next = new Map(prev);
-              const set = next.get(taskId);
+              const set = next.get(taskKey);
               if (set) {
                 set.delete(userName);
-                if (set.size === 0) next.delete(taskId);
+                if (set.size === 0) next.delete(taskKey);
               }
               return next;
             });
             Alert.alert('Error', `Failed to assign ${userName}`);
           });
         }
+      } else {
+        console.warn('[TaskContext] Missing tenantId for assign user', { taskId: taskKey, userId });
       }
     }
-  }, [filteredTasks, tenantId, allMappedTaskMap, userConvexIdMap, assignUserMutation]);
+  }, [filteredTasks, allMappedTaskMap, userConvexIdMap, assignUserMutation, data.tasks, data.users, resolveTenantIdForTask]);
 
   const assignTaskToYou = useCallback((taskId: string) => {
     if (!authUser) return;

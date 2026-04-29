@@ -30,7 +30,6 @@ import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
-import { useMutationQueue } from '../context/MutationQueueContext';
 import { RootStackParamList, TaskItem, CardDensity } from '../models/types';
 import { TaskCard } from '../components/TaskCard';
 import { FaIcon } from '../components/FaIcon';
@@ -44,10 +43,11 @@ import { ColabScreen } from './ColabScreen';
 import { SchedulingScreen } from './SchedulingScreen';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { parseWorkspaceIcon, DEFAULT_WORKSPACE_COLOR, resolveNotificationNavigation } from '../utils/helpers';
-import { useConvexAuth, useMutation, useQuery } from 'convex/react';
+import { useConvexAuth, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useVoiceTaskCapture } from '../hooks/useVoiceTaskCapture';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 // ---------------------------------------------------------------------------
 // Surface color tokens (3-level hierarchy)
@@ -213,8 +213,7 @@ export const MainScreen: React.FC = () => {
     availableStatuses,
   } = useTasks();
 
-  const { data, isSyncing, hasEverSynced, refresh, syncError, isInitialSync } = useData();
-  const { pendingCount, isReplaying } = useMutationQueue();
+  const { data, isSyncing, hasEverSynced, refresh, isInitialSync } = useData();
   const convexNotifications = useQuery(
     api.settings.listNotifications,
     isAuthenticated && tenantId ? { tenantId } : 'skip',
@@ -223,7 +222,7 @@ export const MainScreen: React.FC = () => {
     api.settings.getPlugin,
     isAuthenticated && tenantId ? { tenantId, slug: 'scheduling' } : 'skip',
   );
-  const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
+  const markBoardNotificationsRead = useOfflineMutation(api.boards.markBoardNotificationsRead, 'boards.markBoardNotificationsRead');
 
   const isCleaningEnabled = useMemo(() => {
     const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
@@ -260,40 +259,6 @@ export const MainScreen: React.FC = () => {
     }
     return base;
   }, [isCleaningEnabled, isSchedulingEnabled, t]);
-
-  // -- Sync pill: show while syncing / offline, briefly after sync, then hide --
-  const wasSyncingRef = useRef(false);
-  const syncPillOpacity = useRef(new Animated.Value(0)).current;
-  const [showSyncPill, setShowSyncPill] = useState(false);
-  const syncHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (syncError || pendingCount > 0 || isReplaying) {
-      // Offline / pending mutations / replaying – always visible
-      if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
-      setShowSyncPill(true);
-      syncPillOpacity.setValue(1);
-    } else if (isSyncing) {
-      // Syncing started – show immediately
-      if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
-      wasSyncingRef.current = true;
-      setShowSyncPill(true);
-      syncPillOpacity.setValue(1);
-    } else if (wasSyncingRef.current) {
-      // Sync just finished – keep visible for 2s then fade out
-      wasSyncingRef.current = false;
-      syncHideTimer.current = setTimeout(() => {
-        Animated.timing(syncPillOpacity, {
-          toValue: 0,
-          duration: 400,
-          useNativeDriver: true,
-        }).start(() => setShowSyncPill(false));
-      }, 2000);
-    }
-    return () => {
-      if (syncHideTimer.current) clearTimeout(syncHideTimer.current);
-    };
-  }, [isSyncing, syncError, syncPillOpacity, pendingCount, isReplaying]);
 
   // Build workspace lookup by name for icon/color access
   const workspaceLookup = useMemo(() => {
@@ -738,21 +703,7 @@ export const MainScreen: React.FC = () => {
 
   const renderListHeader = () => {
     const showChips = unfilteredTasks.length > 0 && statusChips.length > 1;
-    if (!showSyncPill && !showChips) return null;
-
-    const baseSyncLabel = syncError
-      ? t('main.syncOffline')
-      : isReplaying
-        ? t('main.syncSyncingChanges')
-        : isSyncing ? t('main.syncSyncing') : t('main.syncUpdated');
-    const syncLabel = pendingCount > 0 && !isReplaying
-      ? `${baseSyncLabel} · ${pendingCount} pending`
-      : baseSyncLabel;
-    const syncColor = syncError
-      ? '#EF9F27'
-      : (isReplaying || pendingCount > 0)
-        ? '#F59E0B'
-        : isSyncing ? primaryColor : colors.textSecondary;
+    if (!showChips) return null;
 
     return (
       <View style={{ paddingHorizontal: spacing.md, paddingTop: spacing.sm }}>
@@ -794,24 +745,6 @@ export const MainScreen: React.FC = () => {
               );
             })}
           </ScrollView>
-        )}
-
-        {/* Sync Pill */}
-        {showSyncPill && (
-          <Animated.View style={[styles.listHeader, { opacity: syncPillOpacity }]}>
-            <View
-              style={[
-                styles.syncPill,
-                {
-                  borderColor: `${syncColor}40`,
-                  backgroundColor: isDarkMode ? 'rgba(31, 36, 34, 0.7)' : 'rgba(255, 255, 255, 0.7)',
-                },
-              ]}
-            >
-              <View style={[styles.syncDot, { backgroundColor: syncColor }]} />
-              <Text style={[styles.syncText, { color: syncColor }]}>{syncLabel}</Text>
-            </View>
-          </Animated.View>
         )}
       </View>
     );
@@ -1889,12 +1822,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
   },
-  listHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
   listTitle: {
     fontSize: fontSizes.xl,
     fontFamily: fontFamilies.displaySemibold,
@@ -1903,24 +1830,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
-  },
-  syncPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  syncDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  syncText: {
-    fontSize: fontSizes.xs,
-    fontFamily: fontFamilies.bodySemibold,
   },
   taskItemContainer: {
     position: 'relative',

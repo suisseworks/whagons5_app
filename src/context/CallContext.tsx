@@ -17,7 +17,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { useMutation, useQuery } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
@@ -26,6 +26,7 @@ import { RTCView } from 'react-native-webrtc';
 import { api } from '../../../convex/_generated/api';
 import { useAuth } from './AuthContext';
 import { useTenant } from '../hooks/useTenant';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useTheme } from './ThemeContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { CALL_RING_TONE_DATA_URI } from '../utils/callToneData';
@@ -164,8 +165,8 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const outgoingToneRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const incomingToneRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
 
-  const acknowledgeSignals = useMutation(api.calls.acknowledgeSignals);
-  const acknowledgeRoomSignals = useMutation(api.calls.acknowledgeRoomSignals);
+  const acknowledgeSignals = useOfflineMutation(api.calls.acknowledgeSignals, 'calls.acknowledgeSignals');
+  const acknowledgeRoomSignals = useOfflineMutation(api.calls.acknowledgeRoomSignals, 'calls.acknowledgeRoomSignals');
   const signalDocs = useQuery(
     api.calls.listForUser,
     tenantId && user?.id ? { tenantId, userId: String(user.id) } : 'skip',

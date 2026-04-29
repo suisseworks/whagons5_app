@@ -28,6 +28,7 @@ import { useTasks } from '../context/TaskContext';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../hooks/useTenant';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 import { FaIcon } from '../components/FaIcon';
@@ -202,9 +203,7 @@ export const CreateTaskScreen: React.FC = () => {
   const { t } = useLanguage();
   const { pickImages, takePhoto, pickDocuments, uploadFile } = useConvexUpload();
   const createDocumentMutation = useMutation(api.documents.create);
-  const createDocumentAssociationMutation = useMutation(api.documents.createAssociation);
-  const addTagByPgIdMutation = useMutation(api.taskResources.addTagByPgId);
-  const addTagByTaskPgIdMutation = useMutation(api.taskResources.addTagByTaskPgId);
+  const createDocumentAssociationMutation = useOfflineMutation(api.documents.createAssociation, 'documents.createAssociation');
 
   const titleInputRef = useRef<TextInput>(null);
   const toastRef = useRef<ToastRef>(null);
@@ -668,12 +667,18 @@ export const CreateTaskScreen: React.FC = () => {
         priorityConvexId: selectedPriorityConvexId ?? undefined,
         spotConvexId: selectedSpot?._id,
         userConvexIds: selectedAssignees.length > 0 ? selectedAssignees.map(a => a._id) : undefined,
+        tagIds: selectedTags.length > 0
+          ? selectedTags.map((tag) => {
+              const numericTagId = Number(tag._id);
+              return Number.isFinite(numericTagId) && numericTagId > 0 ? numericTagId : tag._id;
+            })
+          : undefined,
         attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
         latitude: capturedLocation?.latitude,
         longitude: capturedLocation?.longitude,
       });
 
-      if (tenantId && uploadedAttachments.length > 0) {
+      if (tenantId && Number.isFinite(createdTask.pgId) && createdTask.pgId > 0 && uploadedAttachments.length > 0) {
         for (const attachment of uploadedAttachments) {
           const ext = attachment.fileName.split('.').pop()?.toLowerCase() || '';
           const title = attachment.fileName.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
@@ -692,27 +697,8 @@ export const CreateTaskScreen: React.FC = () => {
             tenantId,
             documentId,
             associableType: 'task',
-            associableId: String(createdTask.pgId ?? createdTask._id),
+            associableId: String(createdTask.pgId),
           });
-        }
-      }
-
-      if (tenantId && createdTask.pgId && selectedTags.length > 0) {
-        for (const tag of selectedTags) {
-          const numericTagId = Number(tag._id);
-          if (Number.isFinite(numericTagId) && numericTagId > 0) {
-            await addTagByPgIdMutation({
-              tenantId,
-              taskPgId: createdTask.pgId,
-              tagPgId: numericTagId,
-            });
-          } else {
-            await addTagByTaskPgIdMutation({
-              tenantId,
-              taskPgId: createdTask.pgId,
-              tagId: tag._id as any,
-            });
-          }
         }
       }
 
@@ -730,7 +716,7 @@ export const CreateTaskScreen: React.FC = () => {
     workspaceCategories, currentWorkspace, capturedLocation,
     hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, t,
     tenantId, createDocumentMutation, createDocumentAssociationMutation,
-    selectedTags, addTagByPgIdMutation, addTagByTaskPgIdMutation,
+    selectedTags,
   ]);
 
   // ---------------------------------------------------------------------------

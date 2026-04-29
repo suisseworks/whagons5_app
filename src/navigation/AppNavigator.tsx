@@ -1,9 +1,13 @@
-import React, { useMemo } from 'react';
-import { StatusBar } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions, getStateFromPath as defaultGetStateFromPath } from '@react-navigation/native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { StatusBar, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions, getStateFromPath as defaultGetStateFromPath, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
+import { useNetwork } from '../context/NetworkContext';
+import { useLanguage } from '../context/LanguageContext';
+import { useMutationQueue } from '../context/MutationQueueContext';
+import { fontFamilies } from '../config/designTokens';
 
 // Screens
 import { SplashScreen } from '../screens/SplashScreen';
@@ -16,6 +20,7 @@ import { SharedTaskDetailScreen } from '../screens/SharedTaskDetailScreen';
 import { CreateTaskScreen } from '../screens/CreateTaskScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
+import { OfflineQueueScreen } from '../screens/OfflineQueueScreen';
 import { ThemesScreen } from '../screens/ThemesScreen';
 import { BoardDetailScreen } from '../screens/BoardDetailScreen';
 import { TenantSelectScreen } from '../screens/TenantSelectScreen';
@@ -34,8 +39,51 @@ const AppStatusBar = () => {
 
 export const AppNavigator: React.FC = () => {
   const { isDarkMode, colors } = useTheme();
+  const { isOnline } = useNetwork();
+  const { t } = useLanguage();
+  const { pendingCount } = useMutationQueue();
+  const navigationRef = useNavigationContainerRef<RootStackParamList>();
+  const [showBackOnlineBadge, setShowBackOnlineBadge] = useState(false);
+  const wasOfflineRef = useRef(false);
+  const backOnlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
   const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim();
+
+  useEffect(() => {
+    if (!isOnline) {
+      wasOfflineRef.current = true;
+      if (backOnlineTimerRef.current) {
+        clearTimeout(backOnlineTimerRef.current);
+        backOnlineTimerRef.current = null;
+      }
+      setShowBackOnlineBadge(false);
+      return;
+    }
+
+    if (!wasOfflineRef.current) return;
+
+    wasOfflineRef.current = false;
+    setShowBackOnlineBadge(true);
+    if (backOnlineTimerRef.current) {
+      clearTimeout(backOnlineTimerRef.current);
+    }
+    backOnlineTimerRef.current = setTimeout(() => {
+      setShowBackOnlineBadge(false);
+      backOnlineTimerRef.current = null;
+    }, 1000);
+
+    return () => {
+      if (backOnlineTimerRef.current) {
+        clearTimeout(backOnlineTimerRef.current);
+      }
+    };
+  }, [isOnline]);
+
+  const showConnectivityBadge = !isOnline || showBackOnlineBadge;
+  const offlineLabel = pendingCount > 0
+    ? t('main.syncPending', { base: t('main.syncOffline'), count: pendingCount })
+    : t('main.syncOffline');
+  const connectivityLabel = isOnline ? t('main.backOnline') : offlineLabel;
 
   const navigationTheme: Theme = useMemo(
     () => ({
@@ -95,7 +143,7 @@ export const AppNavigator: React.FC = () => {
   }, [convexSiteUrl, shareBaseUrl]);
 
   return (
-    <NavigationContainer theme={navigationTheme} linking={linking}>
+    <NavigationContainer ref={navigationRef} theme={navigationTheme} linking={linking}>
       <AppStatusBar />
       <Stack.Navigator
         initialRouteName="Splash"
@@ -117,6 +165,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="VoiceTaskReview" component={VoiceTaskReviewScreen} />
         <Stack.Screen name="Notifications" component={NotificationsScreen} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="OfflineQueue" component={OfflineQueueScreen} />
         <Stack.Screen name="Themes" component={ThemesScreen} />
         <Stack.Screen name="BoardDetail" component={BoardDetailScreen} />
         <Stack.Screen name="SpotsMap" component={SpotsMapScreen} />
@@ -124,6 +173,46 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="PointHistory" component={PointHistoryScreen} />
         <Stack.Screen name="Stats" component={StatsScreen} />
       </Stack.Navigator>
+      {showConnectivityBadge && (
+        <View style={styles.offlineBannerContainer}>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => {
+              if (navigationRef.isReady()) {
+                navigationRef.navigate('OfflineQueue');
+              }
+            }}
+            style={[styles.offlineBanner, isOnline && styles.onlineBanner]}
+          >
+            <Text style={styles.offlineBannerText}>{connectivityLabel}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </NavigationContainer>
   );
 };
+
+const styles = StyleSheet.create({
+  offlineBannerContainer: {
+    position: 'absolute',
+    top: 48,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+  },
+  offlineBanner: {
+    backgroundColor: '#B45309',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  onlineBanner: {
+    backgroundColor: '#15803D',
+  },
+  offlineBannerText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
+    letterSpacing: 0.3,
+  },
+});

@@ -35,6 +35,7 @@ import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
@@ -100,6 +101,7 @@ import { Toast, ToastRef } from '../components/Toast';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { ProgressiveImage } from '../components/ProgressiveImage';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
+import * as DB from '../store/database';
 
 /** Parse markdown checklist items from a description string */
 function parseChecklistItems(desc: string): { label: string; checked: boolean }[] | null {
@@ -168,6 +170,18 @@ interface TaskNoteResponse {
   created_at?: string;
   updated_at?: string;
   attachments?: NoteAttachmentData[];
+}
+
+function taskNoteHeuristicKey(note: TaskNoteResponse): string {
+  const noteUserId = note.user_id ?? note.userId ?? '';
+  const noteBody = (note.note ?? '').trim();
+  const attachmentIds = (note.attachments ?? [])
+    .map((attachment) => attachment.storageId)
+    .filter(Boolean)
+    .sort()
+    .join(',');
+  const noteDay = note.created_at ? new Date(note.created_at).toDateString() : '';
+  return `${String(noteUserId)}|${noteBody}|${attachmentIds}|${noteDay}`;
 }
 
 interface TaskDocumentAssociation {
@@ -663,9 +677,19 @@ export const TaskDetailScreen: React.FC = () => {
 
   const convexTaskId = task.convexId ?? task.taskConvexId ?? null;
   const requiresTaskSignature = task.requiresSignature === true;
-  const assignUserMutation = useMutation(api.taskResources.assignUser);
-  const unassignUserMutation = useMutation(api.taskResources.unassignUser);
-  const createSignatureMutation = useMutation(api.taskResources.createSignature);
+  const taskCacheKey = useMemo(() => {
+    if (!tenantId) return null;
+    if (task.id != null) return `${tenantId}:pg:${task.id}`;
+    if (convexTaskId != null) return `${tenantId}:cvx:${String(convexTaskId)}`;
+    return null;
+  }, [tenantId, task.id, convexTaskId]);
+  const [cachedRawNotes, setCachedRawNotes] = useState<any[] | null>(null);
+  const [cachedTaskViews, setCachedTaskViews] = useState<any[] | null>(null);
+  const [notesCacheLoaded, setNotesCacheLoaded] = useState(false);
+  const [viewsCacheLoaded, setViewsCacheLoaded] = useState(false);
+  const assignUserMutation = useOfflineMutation(api.taskResources.assignUser, 'taskResources.assignUser');
+  const unassignUserMutation = useOfflineMutation(api.taskResources.unassignUser, 'taskResources.unassignUser');
+  const createSignatureMutation = useOfflineMutation(api.taskResources.createSignature, 'taskResources.createSignature');
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
@@ -686,14 +710,56 @@ export const TaskDetailScreen: React.FC = () => {
       : 'skip'
   ) as TaskSignatureRecord[] | undefined;
   const hasTaskSignature = (taskSignatures?.length ?? 0) > 0;
-  const createNoteMutation = useMutation(api.taskResources.createNote);
-  const updateNoteMutation = useMutation(api.taskResources.updateNote);
-  const removeNoteMutation = useMutation(api.taskResources.removeNote);
+  const createNoteMutation = useOfflineMutation(api.taskResources.createNote, 'taskResources.createNote');
+  const updateNoteMutation = useOfflineMutation(api.taskResources.updateNote, 'taskResources.updateNote');
+  const removeNoteMutation = useOfflineMutation(api.taskResources.removeNote, 'taskResources.removeNote');
   const createPublicShareMutation = useMutation(api.taskPublicShares.createOrGet);
 
+  useEffect(() => {
+    let cancelled = false;
+    setNotesCacheLoaded(false);
+
+    if (!taskCacheKey) {
+      setCachedRawNotes(null);
+      setNotesCacheLoaded(true);
+      return;
+    }
+
+    (async () => {
+      try {
+        const cached = await DB.getRow<any>('task_notes_cache', taskCacheKey);
+        if (cancelled) return;
+        const rows = Array.isArray(cached)
+          ? cached
+          : Array.isArray(cached?.rows)
+            ? cached.rows
+            : [];
+        setCachedRawNotes(rows);
+      } catch {
+        if (!cancelled) setCachedRawNotes(null);
+      } finally {
+        if (!cancelled) setNotesCacheLoaded(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [taskCacheKey]);
+
+  useEffect(() => {
+    if (!taskCacheKey || rawNotes === undefined) return;
+    void DB.upsertRow('task_notes_cache', taskCacheKey, {
+      rows: rawNotes,
+      updatedAt: Date.now(),
+    }).catch(() => {});
+  }, [taskCacheKey, rawNotes]);
+
+  const noteRows = rawNotes ?? cachedRawNotes ?? [];
+
   const notes: TaskNoteResponse[] = useMemo(() => {
-    if (!rawNotes) return [];
-    return rawNotes.map((n: any) => ({
+    if (!noteRows.length) return [];
+    return noteRows.map((n: any) => ({
       ...n,
       id: n._id,
       task_id: n.taskId,
@@ -701,9 +767,45 @@ export const TaskDetailScreen: React.FC = () => {
       created_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
       updated_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
     }));
-  }, [rawNotes]);
+  }, [noteRows]);
+  const [pendingNotes, setPendingNotes] = useState<TaskNoteResponse[]>([]);
 
-  const notesLoading = tenantId && hasValidConvexId ? rawNotes === undefined : false;
+  const displayNotes = useMemo(() => {
+    const syncedKeys = new Set(notes.map(taskNoteHeuristicKey));
+    const pending = pendingNotes.filter((note) => !syncedKeys.has(taskNoteHeuristicKey(note)));
+    return [...notes, ...pending];
+  }, [notes, pendingNotes]);
+
+  useEffect(() => {
+    if (pendingNotes.length === 0 || notes.length === 0) return;
+
+    setPendingNotes((prev) => prev.filter((pendingNote) => {
+      const pendingTs = pendingNote.created_at ? new Date(pendingNote.created_at).getTime() : 0;
+      const pendingAttachments = new Set((pendingNote.attachments ?? []).map((a) => a.storageId).filter(Boolean));
+      const pendingBody = (pendingNote.note ?? '').trim();
+      const pendingUserId = String(pendingNote.user_id ?? pendingNote.userId ?? '');
+
+      const hasSyncedEquivalent = notes.some((syncedNote) => {
+        const syncedUserId = String(syncedNote.user_id ?? syncedNote.userId ?? '');
+        if (syncedUserId !== pendingUserId) return false;
+        if ((syncedNote.note ?? '').trim() !== pendingBody) return false;
+
+        const syncedAttachmentIds = (syncedNote.attachments ?? [])
+          .map((a) => a.storageId)
+          .filter(Boolean);
+
+        if (syncedAttachmentIds.length !== pendingAttachments.size) return false;
+        if (syncedAttachmentIds.some((id) => !pendingAttachments.has(id))) return false;
+
+        const syncedTs = syncedNote.created_at ? new Date(syncedNote.created_at).getTime() : 0;
+        return Math.abs(syncedTs - pendingTs) < 2 * 60 * 1000;
+      });
+
+      return !hasSyncedEquivalent;
+    }));
+  }, [notes, pendingNotes.length]);
+
+  const notesLoading = tenantId && hasValidConvexId ? (rawNotes === undefined && !notesCacheLoaded) : false;
   const notesError: string | null = null;
   const handleShareTask = useCallback(async () => {
     if (!tenantId || !hasValidConvexId) {
@@ -785,7 +887,7 @@ export const TaskDetailScreen: React.FC = () => {
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
 
   // ─── Task views ("Seen by") — Convex taskViews table ───────────────────────
-  const recordTaskView = useMutation(api.taskResources.recordTaskViewByTaskPgId);
+  const recordTaskView = useOfflineMutation(api.taskResources.recordTaskViewByTaskPgId, 'taskResources.recordTaskViewByTaskPgId');
   const taskPgId = Number(task.id);
   const viewsQueryArgs =
     tenantId && Number.isFinite(taskPgId) && taskPgId > 0
@@ -795,8 +897,49 @@ export const TaskDetailScreen: React.FC = () => {
     api.taskResources.listTaskViewsByTaskPgId,
     viewsQueryArgs,
   );
-  const taskViewsLoading = viewsQueryArgs !== 'skip' && taskViewsRaw === undefined;
-  const taskViews = viewsQueryArgs === 'skip' ? [] : (taskViewsRaw ?? []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setViewsCacheLoaded(false);
+
+    if (!taskCacheKey) {
+      setCachedTaskViews(null);
+      setViewsCacheLoaded(true);
+      return;
+    }
+
+    (async () => {
+      try {
+        const cached = await DB.getRow<any>('task_views_cache', taskCacheKey);
+        if (cancelled) return;
+        const rows = Array.isArray(cached)
+          ? cached
+          : Array.isArray(cached?.rows)
+            ? cached.rows
+            : [];
+        setCachedTaskViews(rows);
+      } catch {
+        if (!cancelled) setCachedTaskViews(null);
+      } finally {
+        if (!cancelled) setViewsCacheLoaded(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [taskCacheKey]);
+
+  useEffect(() => {
+    if (!taskCacheKey || taskViewsRaw === undefined) return;
+    void DB.upsertRow('task_views_cache', taskCacheKey, {
+      rows: taskViewsRaw,
+      updatedAt: Date.now(),
+    }).catch(() => {});
+  }, [taskCacheKey, taskViewsRaw]);
+
+  const taskViewsLoading = viewsQueryArgs !== 'skip' && taskViewsRaw === undefined && !viewsCacheLoaded;
+  const taskViews = taskViewsRaw ?? cachedTaskViews ?? [];
 
   const taskIdentityKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -1117,16 +1260,40 @@ export const TaskDetailScreen: React.FC = () => {
       return;
     }
 
+    const queuedAttachments: NoteAttachmentData[] = pendingAttachments.map((a) => ({
+      storageId: a.storageId,
+      fileName: a.fileName,
+      fileSize: a.fileSize,
+      fileType: a.fileType,
+    }));
+
+    const pendingNoteId = `pending_note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const nowIso = new Date().toISOString();
+    const pendingNote: TaskNoteResponse = {
+      id: pendingNoteId,
+      uuid: pendingNoteId,
+      taskId: convexTaskId ? String(convexTaskId) : undefined,
+      task_id: Number(task.id) || undefined,
+      note: text || undefined,
+      userId: currentUserConvexId ?? ((authUser as any)?._id ? String((authUser as any)._id) : undefined),
+      user_id: authUser?.id != null && Number.isFinite(Number(authUser.id)) ? Number(authUser.id) : undefined,
+      created_at: nowIso,
+      updated_at: nowIso,
+      attachments: queuedAttachments,
+    };
+
     setSendingComment(true);
     setCommentText('');
+    setPendingAttachments([]);
+    setPendingNotes((prev) => [...prev, pendingNote]);
 
     try {
       await createNoteMutation({
         tenantId,
         taskId: convexTaskId as any,
         note: text || undefined,
-        attachments: pendingAttachments.length > 0
-          ? pendingAttachments.map(a => ({
+        attachments: queuedAttachments.length > 0
+          ? queuedAttachments.map((a) => ({
               storageId: a.storageId as any,
               fileName: a.fileName,
               fileSize: a.fileSize,
@@ -1134,9 +1301,11 @@ export const TaskDetailScreen: React.FC = () => {
             }))
           : undefined,
       });
-      setPendingAttachments([]);
       setTimeout(() => commentsScrollRef.current?.scrollToEnd({ animated: true }), 200);
     } catch (err: any) {
+      setPendingNotes((prev) => prev.filter((note) => String(note.id ?? note.uuid ?? '') !== pendingNoteId));
+      setCommentText(text);
+      setPendingAttachments(pendingAttachments);
       toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('taskDetail.errorFailedToPostComment') });
     } finally {
       setSendingComment(false);
@@ -1272,8 +1441,8 @@ export const TaskDetailScreen: React.FC = () => {
   );
 
   const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
-  const updateTaskFormMutation = useMutation(api.forms.updateTaskForm);
-  const updateTaskMutation = useMutation(api.tasks.update);
+  const updateTaskFormMutation = useOfflineMutation(api.forms.updateTaskForm, 'forms.updateTaskForm');
+  const updateTaskMutation = useOfflineMutation(api.tasks.update, 'tasks.update');
 
   // --- Checklist state (local copy of description for instant UI) ---
   const [localDescription, setLocalDescription] = useState(task.description ?? '');
@@ -1532,7 +1701,7 @@ export const TaskDetailScreen: React.FC = () => {
 
       {latestTaskSignature && (
         <>
-          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.signatureSectionTitle', 'Signature')}</Text>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.signatureSectionTitle')}</Text>
           <View style={[styles.signatureCard, { backgroundColor: secondarySurface }]}> 
             {latestSignatureImageUrl ? (
               <TouchableOpacity activeOpacity={0.85} onPress={() => setImageViewerUri(latestSignatureImageUrl)}>
@@ -1549,7 +1718,7 @@ export const TaskDetailScreen: React.FC = () => {
               <View style={[styles.signatureImagePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#EBEDF0' }]}>
                 <MaterialCommunityIcons name="signature-freehand" size={22} color={tertiaryText} />
                 <Text style={[styles.signaturePlaceholderText, { color: tertiaryText }]}>
-                  {t('taskDetail.signatureImageUnavailable', 'Signature image unavailable')}
+                  {t('taskDetail.signatureImageUnavailable')}
                 </Text>
               </View>
             )}
@@ -1559,7 +1728,7 @@ export const TaskDetailScreen: React.FC = () => {
                 <View style={styles.signatureMetaRow}>
                   {latestSignatureSigner ? (
                     <Text style={[styles.signatureMetaText, { color: colors.text }]}> 
-                      {t('taskDetail.signatureSignedBy', 'Signed by')}: {latestSignatureSigner}
+                      {t('taskDetail.signatureSignedBy')}: {latestSignatureSigner}
                     </Text>
                   ) : null}
                   {latestSignatureSignedAt ? (
@@ -1840,7 +2009,7 @@ export const TaskDetailScreen: React.FC = () => {
             >
               <MaterialIcons name="lock-outline" size={14} color={isDarkMode ? '#FDE68A' : '#92400E'} />
               <Text style={[styles.formReadOnlyText, { color: isDarkMode ? '#FEF3C7' : '#92400E' }]}>
-                {t('taskDetail.formReadOnlyMustStartAndAssign', 'Task must be started and assigned to you before filling this form.')}
+                {t('taskDetail.formReadOnlyMustStartAndAssign')}
               </Text>
             </View>
           </View>
@@ -1864,14 +2033,14 @@ export const TaskDetailScreen: React.FC = () => {
 
   const renderCommentsTab = () => (
     <View style={styles.tabContent}>
-      {notesLoading && notes.length === 0 ? (
+      {notesLoading && displayNotes.length === 0 ? (
         <View style={styles.commentsCenter}>
           <ActivityIndicator size="large" color={primaryColor} />
           <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
             {t('taskDetail.loadingComments')}
           </Text>
         </View>
-      ) : notes.length === 0 ? (
+      ) : displayNotes.length === 0 ? (
         <View style={styles.commentsCenter}>
           <MaterialIcons name="chat-bubble-outline" size={48} color="#E0E0E0" />
           <Text style={[styles.commentsCenterText, { color: colors.textSecondary }]}>
@@ -1892,9 +2061,10 @@ export const TaskDetailScreen: React.FC = () => {
             }
           }}
         >
-          {notes.map((note) => {
+          {displayNotes.map((note) => {
             const noteUid = note.user_id;
             const noteId = String(note._id || note.id || '');
+            const isPendingNote = noteId.startsWith('pending_note_');
             const isMe = canManageNote(note);
             const isEditingThisNote = editingCommentId === noteId;
             const isCommentBusy = commentActionId === noteId;
@@ -1927,7 +2097,7 @@ export const TaskDetailScreen: React.FC = () => {
                         {timeAgo(note.created_at!, t)}
                       </Text>
                     </View>
-                    {isMe && (
+                    {isMe && !isPendingNote && (
                       <TouchableOpacity
                         style={styles.commentMenuButton}
                         onPress={() => handleCommentActions(note)}
@@ -2157,8 +2327,8 @@ export const TaskDetailScreen: React.FC = () => {
               >
                 {tab === 'form'
                   ? t('taskDetail.tabForm')
-                  : tab === 'comments' && notes.length > 0
-                    ? t('taskDetail.tabCommentsWithCount', { count: notes.length })
+                  : tab === 'comments' && displayNotes.length > 0
+                    ? t('taskDetail.tabCommentsWithCount', { count: displayNotes.length })
                     : tab === 'comments'
                       ? t('taskDetail.tabComments')
                       : t('taskDetail.tabDetails')}
@@ -2243,10 +2413,10 @@ export const TaskDetailScreen: React.FC = () => {
           >
             <View style={styles.statusPickerHandle} />
             <Text style={[styles.taskActionsTitle, { color: colors.text }]}> 
-              {t('taskDetail.taskActionsTitle', 'Task actions')}
+              {t('taskDetail.taskActionsTitle')}
             </Text>
             <Text style={[styles.taskActionsSubtitle, { color: colors.textSecondary }]}> 
-              {t('taskDetail.taskActionsSubtitle', 'Choose what you want to do with this task.')}
+              {t('taskDetail.taskActionsSubtitle')}
             </Text>
 
             <View style={styles.taskActionsList}>
@@ -2262,7 +2432,7 @@ export const TaskDetailScreen: React.FC = () => {
                   <MaterialIcons name="share" size={17} color={colors.text} />
                 </View>
                 <Text style={[styles.taskActionText, { color: colors.text }]}> 
-                  {t('taskDetail.actionShareTask', 'Share task')}
+                  {t('taskDetail.actionShareTask')}
                 </Text>
               </TouchableOpacity>
 
@@ -2278,7 +2448,7 @@ export const TaskDetailScreen: React.FC = () => {
                   <MaterialIcons name="swap-horiz" size={17} color={colors.text} />
                 </View>
                 <Text style={[styles.taskActionText, { color: colors.text }]}> 
-                  {t('taskDetail.actionChangeStatus', 'Change status')}
+                  {t('taskDetail.actionChangeStatus')}
                 </Text>
               </TouchableOpacity>
 
@@ -2294,7 +2464,7 @@ export const TaskDetailScreen: React.FC = () => {
                   <MaterialIcons name="chat-bubble-outline" size={17} color={colors.text} />
                 </View>
                 <Text style={[styles.taskActionText, { color: colors.text }]}> 
-                  {t('taskDetail.actionOpenComments', 'Open comments')}
+                  {t('taskDetail.actionOpenComments')}
                 </Text>
               </TouchableOpacity>
 
@@ -2312,7 +2482,7 @@ export const TaskDetailScreen: React.FC = () => {
                     <MaterialCommunityIcons name="signature-freehand" size={17} color="#D97706" />
                   </View>
                   <Text style={[styles.taskActionText, { color: colors.text }]}> 
-                    {t('taskDetail.signTask', 'Sign task')}
+                    {t('taskDetail.signTask')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -2327,7 +2497,7 @@ export const TaskDetailScreen: React.FC = () => {
               activeOpacity={0.8}
             >
               <Text style={[styles.taskActionsCancelText, { color: colors.textSecondary }]}> 
-                {t('common.cancel', 'Cancel')}
+                {t('common.cancel')}
               </Text>
             </TouchableOpacity>
           </View>

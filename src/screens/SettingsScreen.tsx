@@ -25,6 +25,7 @@ import { useAuth } from '../context/AuthContext';
 import { VERSION_DISPLAY } from '../config/version';
 import { useData } from '../context/DataContext';
 import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
+import { useMutationQueue } from '../context/MutationQueueContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 
@@ -47,6 +48,7 @@ export const SettingsScreen: React.FC = () => {
   const { preferences, updatePreferences, hasPermission } = useNotifications();
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
+  const { pendingCount, failedCount } = useMutationQueue();
   const { language, setLanguage, t } = useLanguage();
   const [isSwitching, setIsSwitching] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
@@ -473,6 +475,18 @@ export const SettingsScreen: React.FC = () => {
             subtitle={t('settings.downloadDataSubtitle')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={() => showComingSoon('Data export')}
+          />
+          <View style={styles.divider} />
+          <ListTile
+            icon="sync"
+            title={t('settings.offlineQueue')}
+            subtitle={
+              failedCount > 0
+                ? t('settings.offlineQueueSubtitleWithFailed', { count: pendingCount, failed: failedCount })
+                : t('settings.offlineQueueSubtitle', { count: pendingCount })
+            }
+            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
+            onPress={() => navigation.navigate('OfflineQueue')}
           />
           <View style={styles.divider} />
           <ListTile

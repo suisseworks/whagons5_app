@@ -30,6 +30,7 @@ import {
   getCurrentUser,
 } from '../firebase/authService';
 import { useNetwork } from './NetworkContext';
+import * as DB from '../store/database';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -277,13 +278,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await Promise.all([
       AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN),
       AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER),
+      DB.clearMutationQueue(tenantId ?? undefined),
     ]);
     setTenantId(null);
     setTenantResolved(false);
     setPendingTenants(null);
     setCachedUser(null);
     offlineResolvedRef.current = false;
-  }, []);
+  }, [tenantId]);
 
   // ------------------------------------------------------------------
   // Select a specific tenant
@@ -305,6 +307,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     tenants: string[];
     firebaseIdToken: string;
   }> => {
+    await DB.clearMutationQueue(tenantId ?? undefined).catch(() => {});
     await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
     setTenantId(null);
     setTenantResolved(false);
@@ -318,7 +321,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return { tenants: myTenants, firebaseIdToken };
-  }, [myTenants]);
+  }, [myTenants, tenantId]);
 
   const contextValue = useMemo(() => ({
     ...state,

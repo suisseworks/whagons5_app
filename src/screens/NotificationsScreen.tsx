@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { useQuery, useMutation, useConvexAuth } from 'convex/react';
+import { useQuery, useConvexAuth } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -21,6 +21,7 @@ import { useTenant } from '../hooks/useTenant';
 import { formatTimestamp, resolveNotificationNavigation } from '../utils/helpers';
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,9 +68,9 @@ export const NotificationsScreen: React.FC = () => {
     api.settings.listNotifications,
     isAuthenticated && tenantId ? { tenantId } : 'skip'
   );
-  const markAllReadMutation = useMutation(api.settings.markAllRead);
-  const markReadMutation = useMutation(api.settings.markRead);
-  const clearAllMutation = useMutation(api.settings.clearAllNotifications);
+  const markAllReadMutation = useOfflineMutation(api.settings.markAllRead, 'settings.markAllRead');
+  const markReadMutation = useOfflineMutation(api.settings.markRead, 'settings.markRead');
+  const clearAllMutation = useOfflineMutation(api.settings.clearAllNotifications, 'settings.clearAllNotifications');
 
   // Merge: Convex notifications take priority, local ones as fallback
   const notifications: AppNotification[] = useMemo(() => {

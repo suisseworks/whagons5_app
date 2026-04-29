@@ -13,7 +13,7 @@ import RenderHtml from 'react-native-render-html';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -27,6 +27,7 @@ import {
   buildApproverDetails,
   type ApproverDetail,
 } from '../utils/approvalStatus';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { SignatureModal } from '../components/SignatureModal';
 import { RejectCommentModal } from '../components/RejectCommentModal';
 import type { Id } from '../../../convex/_generated/dataModel';
@@ -52,8 +53,8 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const [deciding, setDeciding] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
 
-  const decideMutation = useMutation(api.approvals.decideByTask);
-  const acknowledgeMutation = useMutation(api.taskResources.acknowledgeTaskShare);
+  const decideMutation = useOfflineMutation(api.approvals.decideByTask, 'approvals.decideByTask');
+  const acknowledgeMutation = useOfflineMutation(api.taskResources.acknowledgeTaskShare, 'taskResources.acknowledgeTaskShare');
 
   const taskConvexId = task.taskConvexId ?? task.convexId;
   const taskSharesArgs = tenantId && taskConvexId

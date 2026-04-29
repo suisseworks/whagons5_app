@@ -46,10 +46,11 @@ import {
 } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTasks } from '../context/TaskContext';
-import { useQuery, useMutation } from 'convex/react';
+import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { apiClient } from '../services/apiClient';
 import * as DB from '../store/database';
 import { useCall } from '../context/CallContext';
@@ -572,16 +573,16 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const { tenantId } = useTenant();
   const { selectedWorkspace, workspaceObjects } = useTasks();
   const { startConversationCall, isCallActive } = useCall();
-  const markAsReadMutation = useMutation(api.chat.markAsRead);
-  const cvxSendMessage = useMutation(api.chat.sendMessage);
-  const cvxSendWorkspaceChat = useMutation(api.chat.sendWorkspaceChat);
-  const cvxCreateConversation = useMutation(api.chat.createConversation);
-  const cvxUpdateMessage = useMutation(api.chat.updateMessage);
-  const cvxDeleteMessage = useMutation(api.chat.deleteMessage);
-  const cvxUpdateWsMessage = useMutation(api.chat.updateWorkspaceChatMessage);
-  const cvxDeleteWsMessage = useMutation(api.chat.deleteWorkspaceChatMessage);
-  const cvxAddReaction = useMutation(api.chat.addReaction);
-  const cvxRemoveReaction = useMutation(api.chat.removeReaction);
+  const markAsReadMutation = useOfflineMutation(api.chat.markAsRead, 'chat.markAsRead');
+  const cvxSendMessage = useOfflineMutation(api.chat.sendMessage, 'chat.sendMessage');
+  const cvxSendWorkspaceChat = useOfflineMutation(api.chat.sendWorkspaceChat, 'chat.sendWorkspaceChat');
+  const cvxCreateConversation = useOfflineMutation(api.chat.createConversation, 'chat.createConversation');
+  const cvxUpdateMessage = useOfflineMutation(api.chat.updateMessage, 'chat.updateMessage');
+  const cvxDeleteMessage = useOfflineMutation(api.chat.deleteMessage, 'chat.deleteMessage');
+  const cvxUpdateWsMessage = useOfflineMutation(api.chat.updateWorkspaceChatMessage, 'chat.updateWorkspaceChatMessage');
+  const cvxDeleteWsMessage = useOfflineMutation(api.chat.deleteWorkspaceChatMessage, 'chat.deleteWorkspaceChatMessage');
+  const cvxAddReaction = useOfflineMutation(api.chat.addReaction, 'chat.addReaction');
+  const cvxRemoveReaction = useOfflineMutation(api.chat.removeReaction, 'chat.removeReaction');
   const { pickAndUpload, uploading: uploadingFile, attachmentPickerProps } = useConvexUpload();
   const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const toastRef = useRef<ToastRef>(null);
@@ -754,25 +755,66 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
   const currentUserId = authUser?.id ?? 0;
 
+  const buildPendingDmMessage = useCallback((conversationId: number | string, message: string): SyncedDirectMessage => {
+    const nowIso = new Date().toISOString();
+    return {
+      id: `pending_dm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      uuid: `pending_dm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      conversation_id: conversationId,
+      user_id: currentUserId,
+      message,
+      status: 'sending',
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+  }, [currentUserId]);
+
+  const buildPendingSpaceMessage = useCallback((workspaceId: number | string, message: string): SyncedWorkspaceChat => {
+    const nowIso = new Date().toISOString();
+    return {
+      id: `pending_ws_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      uuid: `pending_ws_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      workspace_id: workspaceId,
+      user_id: currentUserId,
+      message,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+  }, [currentUserId]);
+
   // Clean up pending messages once sync has picked them up
   useEffect(() => {
     if (pendingDmMessages.length > 0) {
-      const syncedUuids = new Set(data.directMessages.map((m) => m.uuid));
-      setPendingDmMessages((prev) => prev.filter((m) => !syncedUuids.has(m.uuid)));
+      setPendingDmMessages((prev) => prev.filter((pending) => {
+        const pendingTs = utcMs(pending.created_at);
+        const hasSyncedEquivalent = data.directMessages.some((synced) => {
+          if (pending.uuid && synced.uuid && pending.uuid === synced.uuid) return true;
+          if (String(synced.conversation_id) !== String(pending.conversation_id)) return false;
+          if (String(synced.user_id) !== String(pending.user_id)) return false;
+          if ((synced.message ?? '').trim() !== (pending.message ?? '').trim()) return false;
+          return Math.abs(utcMs(synced.created_at) - pendingTs) < 2 * 60 * 1000;
+        });
+        return !hasSyncedEquivalent;
+      }));
     }
-  }, [data.directMessages]);
+  }, [data.directMessages, pendingDmMessages.length]);
 
   useEffect(() => {
     if (pendingSpaceMessages.length > 0) {
-      const syncedUuids = new Set(
-        Object.values(workspaceChatCache)
-          .flat()
-          .map((m) => m.uuid)
-          .filter(Boolean),
-      );
-      setPendingSpaceMessages((prev) => prev.filter((m) => !syncedUuids.has(m.uuid)));
+      const syncedMessages = Object.values(workspaceChatCache).flat();
+      setPendingSpaceMessages((prev) => prev.filter((pending) => {
+        const pendingTs = utcMs(pending.created_at);
+        const hasSyncedEquivalent = syncedMessages.some((synced) => {
+          if (pending.uuid && synced.uuid && pending.uuid === synced.uuid) return true;
+          if (String(synced.workspace_id) !== String(pending.workspace_id)) return false;
+          if (String(synced.user_id) !== String(pending.user_id)) return false;
+          if ((synced.message ?? '').trim() !== (pending.message ?? '').trim()) return false;
+          return Math.abs(utcMs(synced.created_at) - pendingTs) < 2 * 60 * 1000;
+        });
+        return !hasSyncedEquivalent;
+      }));
     }
-  }, [workspaceChatCache]);
+  }, [workspaceChatCache, pendingSpaceMessages.length]);
 
   // Notify parent when chat view changes (for hiding bottom bar)
   const isInChat = chatView.type !== 'list';
@@ -1042,6 +1084,20 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
         ? `![${a.fileName}](convex-file:${a.storageId})`
         : `[${a.fileName}](convex-file:${a.storageId})`;
 
+      const pendingDm = !isWorkspaceChat && activeConversationId
+        ? buildPendingDmMessage(activeConversationId, text)
+        : null;
+      const pendingWs = isWorkspaceChat && spaceWsId
+        ? buildPendingSpaceMessage(spaceWsId, text)
+        : null;
+
+      if (pendingDm) {
+        setPendingDmMessages((prev) => [pendingDm, ...prev]);
+      }
+      if (pendingWs) {
+        setPendingSpaceMessages((prev) => [pendingWs, ...prev]);
+      }
+
       try {
         if (isWorkspaceChat) {
           const ws = availableWorkspaces.find((w) => String(w.id) === String(spaceWsId));
@@ -1061,6 +1117,12 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
         }
       } catch {
+        if (pendingDm) {
+          setPendingDmMessages((prev) => prev.filter((m) => m.id !== pendingDm.id));
+        }
+        if (pendingWs) {
+          setPendingSpaceMessages((prev) => prev.filter((m) => m.id !== pendingWs.id));
+        }
         Alert.alert('Error', t('colab.failedToSendFile', { fileName: a.fileName }));
       }
     }
@@ -1073,7 +1135,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     cvxSendMessage,
     cvxSendWorkspaceChat,
     data.conversations,
+    buildPendingDmMessage,
+    buildPendingSpaceMessage,
     pickAndUpload,
+    setPendingDmMessages,
+    setPendingSpaceMessages,
     t,
     tenantId,
   ]);
@@ -1083,6 +1149,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     const text = inputText.trim();
     if (!text || !activeConversationId || !currentUserId) return;
 
+    const pendingMessage = buildPendingDmMessage(activeConversationId, text);
+    setPendingDmMessages((prev) => [pendingMessage, ...prev]);
     setInputText('');
     setIsSending(true);
 
@@ -1099,12 +1167,22 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       // Convex reactive query will show the message automatically
       setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 200);
     } catch (err: any) {
+      setPendingDmMessages((prev) => prev.filter((m) => m.id !== pendingMessage.id));
       Alert.alert('Error', err?.message || t('colab.failedToSendMessage'));
       setInputText(text);
     } finally {
       setIsSending(false);
     }
-  }, [inputText, activeConversationId, currentUserId, tenantId, data.conversations, cvxSendMessage]);
+  }, [
+    inputText,
+    activeConversationId,
+    currentUserId,
+    tenantId,
+    data.conversations,
+    cvxSendMessage,
+    t,
+    buildPendingDmMessage,
+  ]);
 
   // Send workspace chat message
   const handleSendSpaceMessage = useCallback(async () => {
@@ -1112,6 +1190,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     const spaceWsId = chatView.type === 'spaceChat' ? chatView.workspaceId : currentWorkspace?.id;
     if (!text || !spaceWsId || !currentUserId) return;
 
+    const pendingMessage = buildPendingSpaceMessage(spaceWsId, text);
+    setPendingSpaceMessages((prev) => [pendingMessage, ...prev]);
     setInputText('');
     setIsSending(true);
 
@@ -1127,12 +1207,23 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       });
       setTimeout(() => chatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 200);
     } catch (err: any) {
+      setPendingSpaceMessages((prev) => prev.filter((m) => m.id !== pendingMessage.id));
       Alert.alert('Error', err?.message || t('colab.failedToSendMessage'));
       setInputText(text);
     } finally {
       setIsSending(false);
     }
-  }, [inputText, chatView, currentWorkspace, currentUserId, tenantId, availableWorkspaces, cvxSendWorkspaceChat]);
+  }, [
+    inputText,
+    chatView,
+    currentWorkspace,
+    currentUserId,
+    tenantId,
+    availableWorkspaces,
+    cvxSendWorkspaceChat,
+    t,
+    buildPendingSpaceMessage,
+  ]);
 
   const handleStartConversationCall = useCallback(async (mode: 'audio' | 'video') => {
     if (!activeConversation) return;

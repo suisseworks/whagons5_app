@@ -283,6 +283,7 @@ export type RootStackParamList = {
   VoiceTaskReview: { draftId: string };
   Notifications: undefined;
   Settings: undefined;
+  OfflineQueue: undefined;
   Themes: undefined;
   BoardDetail: { boardId: string | number };
   SpotsMap: { location: MapLocationPayload };

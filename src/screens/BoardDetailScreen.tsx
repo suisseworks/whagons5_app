@@ -25,11 +25,11 @@ import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { getInitials } from '../utils/helpers';
 import { ActivityIndicator } from 'react-native';
-import { useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 type BoardDetailRouteProp = RouteProp<RootStackParamList, 'BoardDetail'>;
 type BoardDetailNavProp = NativeStackNavigationProp<RootStackParamList, 'BoardDetail'>;
@@ -41,16 +41,17 @@ export const BoardDetailScreen: React.FC = () => {
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const { data, isSyncing, refresh } = useData();
-  const { token, subdomain } = useAuth();
+  const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
-  const createBoardMessage = useMutation(api.boards.createMessage);
-  const markBoardNotificationsRead = useMutation(api.boards.markBoardNotificationsRead);
+  const createBoardMessage = useOfflineMutation(api.boards.createMessage, 'boards.createMessage');
+  const markBoardNotificationsRead = useOfflineMutation(api.boards.markBoardNotificationsRead, 'boards.markBoardNotificationsRead');
   const { pickAndUpload, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
 
   const { boardId } = route.params;
 
   const [messageInput, setMessageInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [pendingBoardMessages, setPendingBoardMessages] = useState<SyncedBoardMessage[]>([]);
   const flatListRef = useRef<FlatList>(null);
 
   // Find the board
@@ -70,10 +71,40 @@ export const BoardDetailScreen: React.FC = () => {
     }).catch(() => {});
   }, [tenantId, board, markBoardNotificationsRead]);
 
+  const buildPendingBoardMessage = useCallback((content: string): SyncedBoardMessage => {
+    const nowIso = new Date().toISOString();
+    return {
+      id: `pending_board_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      board_id: activeBoardId,
+      created_by: authUser?.id ?? 0,
+      title: null,
+      content,
+      is_pinned: false,
+      starts_at: null,
+      ends_at: null,
+      source_type: null,
+      source_id: null,
+      deleted_at: null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+  }, [activeBoardId, authUser?.id]);
+
   // Get messages for this board, sorted: pinned first, then newest first
   const messages = useMemo(() => {
-    return data.boardMessages
-      .filter(m => String(m.board_id) === String(activeBoardId) && !m.deleted_at)
+    const synced = data.boardMessages
+      .filter((m) => String(m.board_id) === String(activeBoardId) && !m.deleted_at);
+
+    const syncedByHeuristic = new Set(
+      synced.map((m) => `${String(m.board_id)}|${String(m.created_by)}|${(m.content ?? '').trim()}|${new Date(m.created_at ?? '').toDateString()}`),
+    );
+
+    const pending = pendingBoardMessages.filter((m) => {
+      const key = `${String(m.board_id)}|${String(m.created_by)}|${(m.content ?? '').trim()}|${new Date(m.created_at ?? '').toDateString()}`;
+      return !syncedByHeuristic.has(key);
+    });
+
+    return [...synced, ...pending]
       .sort((a, b) => {
         // Pinned messages first
         if (a.is_pinned && !b.is_pinned) return -1;
@@ -83,7 +114,23 @@ export const BoardDetailScreen: React.FC = () => {
         const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
         return dateB - dateA;
       });
-  }, [data.boardMessages, activeBoardId]);
+  }, [data.boardMessages, activeBoardId, pendingBoardMessages]);
+
+  useEffect(() => {
+    if (pendingBoardMessages.length === 0) return;
+    const synced = data.boardMessages.filter((m) => String(m.board_id) === String(activeBoardId));
+
+    setPendingBoardMessages((prev) => prev.filter((pending) => {
+      const pendingTs = pending.created_at ? new Date(pending.created_at).getTime() : 0;
+      const hasSyncedEquivalent = synced.some((item) => {
+        if (String(item.created_by) !== String(pending.created_by)) return false;
+        if ((item.content ?? '').trim() !== (pending.content ?? '').trim()) return false;
+        const syncedTs = item.created_at ? new Date(item.created_at).getTime() : 0;
+        return Math.abs(syncedTs - pendingTs) < 2 * 60 * 1000;
+      });
+      return !hasSyncedEquivalent;
+    }));
+  }, [activeBoardId, data.boardMessages, pendingBoardMessages.length]);
 
   // Build user lookup
   const userMap = useMemo(() => {
@@ -116,6 +163,11 @@ export const BoardDetailScreen: React.FC = () => {
   const handleSendMessage = useCallback(async () => {
     if (!messageInput.trim() || isSending || !tenantId) return;
 
+    const content = messageInput.trim();
+    const pendingMessage = buildPendingBoardMessage(content);
+    setPendingBoardMessages((prev) => [pendingMessage, ...prev]);
+    setMessageInput('');
+
     setIsSending(true);
     try {
       // Find the Convex _id for this board
@@ -125,15 +177,16 @@ export const BoardDetailScreen: React.FC = () => {
       await createBoardMessage({
         tenantId,
         boardId: convexBoardId as any,
-        content: messageInput.trim(),
+        content,
       });
-      setMessageInput('');
     } catch (err: any) {
+      setPendingBoardMessages((prev) => prev.filter((msg) => msg.id !== pendingMessage.id));
+      setMessageInput(content);
       Alert.alert('Error', err?.message || t('boardDetail.failedToSendMessage'));
     } finally {
       setIsSending(false);
     }
-  }, [messageInput, isSending, tenantId, board, createBoardMessage]);
+  }, [messageInput, isSending, tenantId, board, createBoardMessage, t, buildPendingBoardMessage]);
 
   const handleAttachFile = useCallback(async () => {
     if (!tenantId) return;
@@ -147,6 +200,8 @@ export const BoardDetailScreen: React.FC = () => {
       const content = a.fileType.startsWith('image/')
         ? `![${a.fileName}]({{convex-file:${a.storageId}}})`
         : `[${a.fileName}]({{convex-file:${a.storageId}}})`;
+      const pendingMessage = buildPendingBoardMessage(content);
+      setPendingBoardMessages((prev) => [pendingMessage, ...prev]);
       try {
         await createBoardMessage({
           tenantId,
@@ -154,10 +209,11 @@ export const BoardDetailScreen: React.FC = () => {
           content,
         });
       } catch {
+        setPendingBoardMessages((prev) => prev.filter((msg) => msg.id !== pendingMessage.id));
         Alert.alert('Error', t('boardDetail.failedToSendFile', { fileName: a.fileName }));
       }
     }
-  }, [tenantId, board, createBoardMessage, pickAndUpload]);
+  }, [tenantId, board, createBoardMessage, pickAndUpload, t, buildPendingBoardMessage]);
 
   const onRefresh = useCallback(async () => {
     await refresh();
