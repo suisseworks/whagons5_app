@@ -551,20 +551,26 @@ function mapFormVersion(doc: any): SyncedFormVersion {
 }
 
 function mapTaskUser(doc: any, fk: FkLookups): SyncedTaskUser {
+  const rawTaskId = doc.taskId ?? doc.task_id;
+  const rawUserId = doc.userId ?? doc.user_id;
+
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    task_id: doc.taskId ? resolveFk(fk.tasks, doc.taskId) : doc.task_id,
-    user_id: doc.userId ? resolveFk(fk.users, doc.userId) : doc.user_id,
+    task_id: rawTaskId ? resolveFk(fk.tasks, rawTaskId) : rawTaskId,
+    user_id: rawUserId ? resolveFk(fk.users, rawUserId) : rawUserId,
   };
 }
 
 function mapTaskTag(doc: any, fk: FkLookups): SyncedTaskTag {
+  const rawTaskId = doc.taskId ?? doc.task_id;
+  const rawTagId = doc.tagId ?? doc.tag_id;
+
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    task_id: doc.taskId ? resolveFk(fk.tasks, doc.taskId) : doc.task_id,
-    tag_id: doc.tagId ? resolveFk(fk.tags, doc.tagId) : doc.tag_id,
+    task_id: rawTaskId ? resolveFk(fk.tasks, rawTaskId) : rawTaskId,
+    tag_id: rawTagId ? resolveFk(fk.tags, rawTagId) : rawTagId,
   };
 }
 

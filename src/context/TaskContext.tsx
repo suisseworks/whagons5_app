@@ -492,7 +492,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const tagNameMap = useMemo(() => {
     const m = new Map<AnyId, string>();
-    for (const t of data.tags) m.set(t.id, t.name);
+    for (const t of data.tags) {
+      m.set(t.id, t.name);
+      if ((t as any)._id) m.set((t as any)._id, t.name);
+      if ((t as any).pgId != null) m.set((t as any).pgId, t.name);
+    }
     return m;
   }, [data.tags]);
 

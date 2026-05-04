@@ -1,6 +1,6 @@
 {
   "name": "whagons-rn",
-  "version": "5.1.11",
+  "version": "5.1.12",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
