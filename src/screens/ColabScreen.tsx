@@ -20,7 +20,7 @@ import {
   GestureResponderEvent,
   PanResponderGestureState,
 } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { KeyboardAvoidingView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets, SafeAreaView } from 'react-native-safe-area-context';
 // KeyboardAvoidingView wraps chat views to keep input above keyboard
 import Animated, {
@@ -1895,98 +1895,101 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       const composerSurfaceColor = isDarkMode ? '#343438' : '#F3F2EF';
 
       return (
-        <View
-          style={[
-            styles.inputContainer,
-            {
-              backgroundColor: colors.surface,
-              borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
-            },
-          ]}
-        >
-          {voiceMemoRecorder.isActive ? (
-            <VoiceMemoRecordingBar
-              recorder={voiceMemoRecorder}
-              primaryColor={primaryColor}
-              textColor={colors.text}
-              mutedColor={colors.textSecondary}
-              surfaceColor={composerSurfaceColor}
-            />
-          ) : (
-            <View
-              style={[
-                styles.inputShell,
-                {
-                  backgroundColor: composerSurfaceColor,
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
-                },
-              ]}
-            >
-              <View style={styles.inputDraftColumn}>
-                <VoiceMemoDraftPreview
-                  attachments={draftAttachments}
-                  onRemove={(index) => setDraftAttachments((prev) => prev.filter((_, i) => i !== index))}
-                  recorder={voiceMemoRecorder}
-                  primaryColor={primaryColor}
-                  textColor={colors.text}
-                  mutedColor={colors.textSecondary}
-                />
-                <TextInput
-                  style={[
-                    styles.textInput,
-                    Platform.OS === 'android' && styles.textInputAndroid,
-                    {
-                      backgroundColor: composerSurfaceColor,
-                      color: colors.text,
-                    },
-                  ]}
-                  placeholder={t('colab.messagePlaceholder')}
-                  placeholderTextColor={colors.textSecondary}
-                  value={inputText}
-                  onChangeText={setInputText}
-                  onSubmitEditing={onSend}
-                  returnKeyType="send"
-                  editable={!isSending}
-                  multiline
-                  blurOnSubmit={false}
-                  underlineColorAndroid="transparent"
-                />
+        <View style={{ backgroundColor: colors.surface }}>
+          <View
+            style={[
+              styles.inputContainer,
+              {
+                backgroundColor: colors.surface,
+                borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
+              },
+            ]}
+          >
+            {voiceMemoRecorder.isActive ? (
+              <VoiceMemoRecordingBar
+                recorder={voiceMemoRecorder}
+                primaryColor={primaryColor}
+                textColor={colors.text}
+                mutedColor={colors.textSecondary}
+                surfaceColor={composerSurfaceColor}
+              />
+            ) : (
+              <View
+                style={[
+                  styles.inputShell,
+                  {
+                    backgroundColor: composerSurfaceColor,
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                  },
+                ]}
+              >
+                <View style={styles.inputDraftColumn}>
+                  <VoiceMemoDraftPreview
+                    attachments={draftAttachments}
+                    onRemove={(index) => setDraftAttachments((prev) => prev.filter((_, i) => i !== index))}
+                    recorder={voiceMemoRecorder}
+                    primaryColor={primaryColor}
+                    textColor={colors.text}
+                    mutedColor={colors.textSecondary}
+                  />
+                  <TextInput
+                    style={[
+                      styles.textInput,
+                      Platform.OS === 'android' && styles.textInputAndroid,
+                      {
+                        backgroundColor: composerSurfaceColor,
+                        color: colors.text,
+                      },
+                    ]}
+                    placeholder={t('colab.messagePlaceholder')}
+                    placeholderTextColor={colors.textSecondary}
+                    value={inputText}
+                    onChangeText={setInputText}
+                    onSubmitEditing={onSend}
+                    returnKeyType="send"
+                    editable={!isSending}
+                    multiline
+                    blurOnSubmit={false}
+                    underlineColorAndroid="transparent"
+                  />
+                </View>
+                {draftAttachments.length === 0 && (
+                  <TouchableOpacity
+                    style={[
+                      styles.attachButton,
+                      {
+                        backgroundColor: 'transparent',
+                        borderColor: 'transparent',
+                      },
+                    ]}
+                    onPress={handleAttachFile}
+                    disabled={uploadingFile}
+                  >
+                    {uploadingFile ? (
+                      <ActivityIndicator size="small" color={primaryColor} />
+                    ) : (
+                      <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                )}
               </View>
-              {draftAttachments.length === 0 && (
-                <TouchableOpacity
-                  style={[
-                    styles.attachButton,
-                    {
-                      backgroundColor: 'transparent',
-                      borderColor: 'transparent',
-                    },
-                  ]}
-                  onPress={handleAttachFile}
-                  disabled={uploadingFile}
-                >
-                  {uploadingFile ? (
-                    <ActivityIndicator size="small" color={primaryColor} />
-                  ) : (
-                    <MaterialIcons name="attach-file" size={20} color={primaryColor} />
-                  )}
-                </TouchableOpacity>
-              )}
-            </View>
-          )}
-          <VoiceMemoActionButton
-            recorder={voiceMemoRecorder}
-            hasContent={!!inputText.trim() || draftAttachments.length > 0}
-            showAddRecording={draftAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
-            isSending={isSending}
-            disabled={isSending}
-            primaryColor={primaryColor}
-            inactiveColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB'}
-            onSend={onSend}
-          />
-      </View>
+            )}
+            <VoiceMemoActionButton
+              recorder={voiceMemoRecorder}
+              hasContent={!!inputText.trim() || draftAttachments.length > 0}
+              showAddRecording={draftAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
+              isSending={isSending}
+              disabled={isSending}
+              primaryColor={primaryColor}
+              inactiveColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB'}
+              onSend={onSend}
+            />
+          </View>
+          {insets.bottom > 0 && <View style={{ height: insets.bottom }} />}
+        </View>
       );
     },
-    [draftAttachments, inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile, t, voiceMemoRecorder],
+    [draftAttachments, inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile, t, voiceMemoRecorder, insets.bottom],
   );
 
   // ---------------------------------------------------------------------------
@@ -2172,7 +2175,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     const wsColor = spaceWs.color || primaryColor;
 
     return (
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="height" keyboardVerticalOffset={insets.top + 52}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 52 : 0}
+      >
           {/* Header with back arrow */}
           <View
             style={[
@@ -2235,7 +2242,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           />
 
           {/* Input */}
-          {renderChatInput(handleSendSpaceMessage)}
+          <KeyboardStickyView enabled={Platform.OS === 'android'} offset={{ opened: insets.bottom }}>
+            {renderChatInput(handleSendSpaceMessage)}
+          </KeyboardStickyView>
       </KeyboardAvoidingView>
     );
   };
@@ -2453,7 +2462,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     }
 
     return (
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior="height" keyboardVerticalOffset={insets.top + 52}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 52 : 0}
+      >
           {/* Chat header */}
           <View
             style={[
@@ -2554,7 +2567,9 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           />
 
           {/* Input */}
-          {renderChatInput(handleSendConversationMessage)}
+          <KeyboardStickyView enabled={Platform.OS === 'android'} offset={{ opened: insets.bottom }}>
+            {renderChatInput(handleSendConversationMessage)}
+          </KeyboardStickyView>
       </KeyboardAvoidingView>
     );
   };

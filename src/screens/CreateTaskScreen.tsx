@@ -3,18 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TextInput,
   TouchableOpacity,
   Alert,
   Modal,
   FlatList,
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
   Animated,
   Image,
 } from 'react-native';
+import { KeyboardAvoidingView, KeyboardAwareScrollView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -92,24 +91,21 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
     return items.filter((i) => i.name.toLowerCase().includes(q));
   }, [items, search]);
 
+  if (!visible) return null;
+
   return (
-    <Modal visible={visible} animationType="slide" transparent statusBarTranslucent onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={modalStyles.keyboardAvoidingView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={insets.bottom}
-      >
-        <TouchableOpacity style={modalStyles.overlay} activeOpacity={1} onPress={onClose}>
+    <View style={modalStyles.overlay}>
+      <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+      <KeyboardStickyView offset={{ opened: insets.bottom }}>
+        <View style={{ backgroundColor: colors.surface }} onStartShouldSetResponder={() => true}>
           <View
             style={[
               modalStyles.sheet,
               {
                 backgroundColor: colors.surface,
                 borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
-                paddingBottom: Math.max(20, insets.bottom + 12),
               },
             ]}
-            onStartShouldSetResponder={() => true}
           >
             <View style={modalStyles.handle} />
             <Text style={[modalStyles.title, { color: colors.text }]}>{title}</Text>
@@ -164,9 +160,10 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
               }
             />
           </View>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
-    </Modal>
+          {insets.bottom > 0 && <View style={{ height: insets.bottom }} />}
+        </View>
+      </KeyboardStickyView>
+    </View>
   );
 };
 
@@ -761,11 +758,14 @@ export const CreateTaskScreen: React.FC = () => {
       </View>
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView
+        <KeyboardAwareScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          enabled={Platform.OS === 'android'}
+          bottomOffset={96}
+          disableScrollOnKeyboardHide
         >
           {/* Workspace Selector */}
           <TouchableOpacity
@@ -1106,7 +1106,7 @@ export const CreateTaskScreen: React.FC = () => {
           ))}
 
           <View style={{ height: 32 }} />
-        </ScrollView>
+        </KeyboardAwareScrollView>
       </KeyboardAvoidingView>
 
       {/* Create Button */}
@@ -1520,12 +1520,14 @@ const modalStyles = StyleSheet.create({
     flex: 1,
   },
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
     justifyContent: 'flex-end',
+    zIndex: 1000,
+    elevation: 1000,
   },
   sheet: {
-    maxHeight: '78%',
+    height: 360,
     flexShrink: 1,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -1537,7 +1539,7 @@ const modalStyles = StyleSheet.create({
     ...shadows.subtle,
   },
   list: {
-    maxHeight: 350,
+    flex: 1,
   },
   handle: {
     width: 36,
@@ -1564,7 +1566,7 @@ const modalStyles = StyleSheet.create({
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: radius.md,
     borderBottomWidth: 1,

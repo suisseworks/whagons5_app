@@ -6,12 +6,12 @@ import {
   FlatList,
   TouchableOpacity,
   TextInput,
-  KeyboardAvoidingView,
   Platform,
   RefreshControl,
   ScrollView,
   Alert,
 } from 'react-native';
+import { KeyboardAvoidingView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -391,90 +391,94 @@ export const BoardDetailScreen: React.FC = () => {
         />
 
         {/* Composer */}
-        <View
-          style={[
-            styles.composerContainer,
-            {
-              backgroundColor: colors.surface,
-              borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
-              paddingBottom: 12 + insets.bottom,
-            },
-          ]}
-        >
-          {voiceMemoRecorder.isActive ? (
-            <VoiceMemoRecordingBar
-              recorder={voiceMemoRecorder}
-              primaryColor={primaryColor}
-              textColor={colors.text}
-              mutedColor={colors.textSecondary}
-              surfaceColor={isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4'}
-            />
-          ) : (
+        <KeyboardStickyView enabled={Platform.OS === 'android'} offset={{ opened: insets.bottom }}>
+          <View style={{ backgroundColor: colors.surface }}>
             <View
               style={[
-                styles.composerShell,
+                styles.composerContainer,
                 {
-                  backgroundColor: isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4',
-                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                  backgroundColor: colors.surface,
+                  borderTopColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.08)',
                 },
               ]}
             >
-              <View style={styles.inputDraftColumn}>
-                <VoiceMemoDraftPreview
-                  attachments={draftAttachments}
-                  onRemove={(index) => setDraftAttachments((prev) => prev.filter((_, i) => i !== index))}
+              {voiceMemoRecorder.isActive ? (
+                <VoiceMemoRecordingBar
                   recorder={voiceMemoRecorder}
                   primaryColor={primaryColor}
                   textColor={colors.text}
                   mutedColor={colors.textSecondary}
+                  surfaceColor={isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4'}
                 />
-                <TextInput
+              ) : (
+                <View
                   style={[
-                    styles.composerInput,
+                    styles.composerShell,
                     {
-                      color: colors.text,
-                    },
-                  ]}
-                  placeholder={t('boardDetail.composerPlaceholder')}
-                  placeholderTextColor={colors.textSecondary}
-                  value={messageInput}
-                  onChangeText={setMessageInput}
-                  multiline
-                  maxLength={5000}
-                />
-              </View>
-              {draftAttachments.length === 0 && (
-                <TouchableOpacity
-                  style={[
-                    styles.attachButton,
-                    {
-                      backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                      backgroundColor: isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4',
                       borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
                     },
                   ]}
-                  onPress={handleAttachFile}
-                  disabled={uploadingAttachment}
                 >
-                  {uploadingAttachment ? (
-                    <ActivityIndicator size="small" color={primaryColor} />
-                  ) : (
-                    <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+                  <View style={styles.inputDraftColumn}>
+                    <VoiceMemoDraftPreview
+                      attachments={draftAttachments}
+                      onRemove={(index) => setDraftAttachments((prev) => prev.filter((_, i) => i !== index))}
+                      recorder={voiceMemoRecorder}
+                      primaryColor={primaryColor}
+                      textColor={colors.text}
+                      mutedColor={colors.textSecondary}
+                    />
+                    <TextInput
+                      style={[
+                        styles.composerInput,
+                        {
+                          color: colors.text,
+                        },
+                      ]}
+                      placeholder={t('boardDetail.composerPlaceholder')}
+                      placeholderTextColor={colors.textSecondary}
+                      value={messageInput}
+                      onChangeText={setMessageInput}
+                      multiline
+                      maxLength={5000}
+                    />
+                  </View>
+                  {draftAttachments.length === 0 && (
+                    <TouchableOpacity
+                      style={[
+                        styles.attachButton,
+                        {
+                          backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                          borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                        },
+                      ]}
+                      onPress={handleAttachFile}
+                      disabled={uploadingAttachment}
+                    >
+                      {uploadingAttachment ? (
+                        <ActivityIndicator size="small" color={primaryColor} />
+                      ) : (
+                        <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+                      )}
+                    </TouchableOpacity>
                   )}
-                </TouchableOpacity>
+                </View>
               )}
+              <VoiceMemoActionButton
+                recorder={voiceMemoRecorder}
+                hasContent={!!messageInput.trim() || draftAttachments.length > 0}
+                showAddRecording={draftAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
+                isSending={isSending}
+                disabled={isSending}
+                primaryColor={primaryColor}
+                inactiveColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB'}
+                onSend={handleSendMessage}
+              />
             </View>
-          )}
-          <VoiceMemoActionButton
-            recorder={voiceMemoRecorder}
-            hasContent={!!messageInput.trim() || draftAttachments.length > 0}
-            showAddRecording={draftAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
-            isSending={isSending}
-            disabled={isSending}
-            primaryColor={primaryColor}
-            inactiveColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB'}
-            onSend={handleSendMessage}
-          />
-        </View>
+            {insets.bottom > 0 && <View style={{ height: insets.bottom }} />}
+          </View>
+        </KeyboardStickyView>
         <AttachmentPickerSheet {...attachmentPickerProps} />
       </KeyboardAvoidingView>
     </SafeAreaView>

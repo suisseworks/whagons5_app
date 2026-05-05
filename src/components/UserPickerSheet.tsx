@@ -2,15 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Image,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
+import { KeyboardStickyView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
@@ -45,7 +43,6 @@ interface UserPickerSheetProps {
   currentUserId?: string | number | null;
   currentUserName?: string | null;
   footer?: React.ReactNode;
-  listMaxHeight?: number;
 }
 
 function normalizeForSearch(value?: string | null): string {
@@ -73,7 +70,6 @@ export const UserPickerSheet: React.FC<UserPickerSheetProps> = ({
   currentUserId,
   currentUserName,
   footer,
-  listMaxHeight = 300,
 }) => {
   const insets = useSafeAreaInsets();
   const [search, setSearch] = useState('');
@@ -132,30 +128,21 @@ export const UserPickerSheet: React.FC<UserPickerSheetProps> = ({
     });
   }, [users, search, normalizedCurrentUserId, normalizedCurrentUserName]);
 
+  if (!visible) return null;
+
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      <KeyboardAvoidingView
-        style={styles.keyboardAvoidingView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={insets.bottom}
-      >
-        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose}>
+    <View style={styles.overlay}>
+      <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={onClose} />
+      <KeyboardStickyView offset={{ opened: insets.bottom }}>
+        <View style={{ backgroundColor: colors.surface }} onStartShouldSetResponder={() => true}>
           <View
             style={[
               styles.sheet,
               {
                 backgroundColor: colors.surface,
                 borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
-                paddingBottom: Math.max(20, insets.bottom + 12),
               },
             ]}
-            onStartShouldSetResponder={() => true}
           >
             <View style={styles.handle} />
             <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
@@ -165,135 +152,135 @@ export const UserPickerSheet: React.FC<UserPickerSheetProps> = ({
               </Text>
             ) : null}
 
-            <View
-              style={[
-                styles.searchContainer,
-                {
-                  backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                  borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
-                },
-              ]}
-            >
-              <MaterialIcons
-                name="search"
-                size={20}
-                color={colors.textSecondary}
-                style={{ marginRight: 8 }}
-              />
-              <TextInput
-                style={[styles.searchInput, { color: colors.text }]}
-                placeholder={searchPlaceholder}
-                placeholderTextColor={colors.textSecondary}
-                value={search}
-                onChangeText={setSearch}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {search.length > 0 ? (
-                <TouchableOpacity onPress={() => setSearch('')}>
-                  <MaterialIcons name="close" size={18} color={colors.textSecondary} />
-                </TouchableOpacity>
-              ) : null}
-            </View>
-
-            <FlatList
-              data={filteredUsers}
-              keyExtractor={(item) => item.id}
-              style={[styles.list, { maxHeight: listMaxHeight }]}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => {
-                const isSelected = selectedIds.has(item.id);
-                const isCurrentUser =
-                  (normalizedCurrentUserId != null && item.id === normalizedCurrentUserId)
-                  || (
-                    !!normalizedCurrentUserName
-                    && normalizeForSearch(item.name) === normalizedCurrentUserName
-                  );
-
-                const rawAvatar = typeof item.avatarUrl === 'string' ? item.avatarUrl.trim() : '';
-                const optimizedAvatar = rawAvatar
-                  ? getOptimizedImageUrl(rawAvatar, { width: 40, height: 40, mode: 'fill' }) || rawAvatar
-                  : '';
-                const hasValidAvatarUrl =
-                  optimizedAvatar.startsWith('http://') || optimizedAvatar.startsWith('https://');
-                const showAvatarImage = hasValidAvatarUrl && !failedAvatarIds.has(item.id);
-
-                return (
-                  <TouchableOpacity
-                    style={[
-                      styles.item,
-                      {
-                        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
-                      },
-                      isSelected && {
-                        backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
-                      },
-                    ]}
-                    onPress={() => onToggleUser(item.id)}
-                    activeOpacity={0.7}
-                  >
-                    <View
-                      style={[
-                        styles.avatarCircle,
-                        { backgroundColor: showAvatarImage ? 'transparent' : primaryColor },
-                      ]}
-                    >
-                      {showAvatarImage ? (
-                        <Image
-                          source={{ uri: optimizedAvatar }}
-                          style={styles.avatarImage}
-                          onError={() => {
-                            setFailedAvatarIds((prev) => {
-                              const next = new Set(prev);
-                              next.add(item.id);
-                              return next;
-                            });
-                          }}
-                        />
-                      ) : (
-                        <Text style={styles.avatarInitial}>{getInitials(item.name)}</Text>
-                      )}
-                    </View>
-
-                    <Text
-                      style={[
-                        styles.itemText,
-                        { color: colors.text },
-                        isSelected && { fontFamily: fontFamilies.bodySemibold },
-                      ]}
-                    >
-                      {item.name}
-                      {isCurrentUser ? ` (${youLabel})` : ''}
-                    </Text>
-
-                    {isSelected ? <MaterialIcons name="check" size={20} color={primaryColor} /> : null}
+              <View
+                style={[
+                  styles.searchContainer,
+                  {
+                    backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                    borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)',
+                  },
+                ]}
+              >
+                <MaterialIcons
+                  name="search"
+                  size={20}
+                  color={colors.textSecondary}
+                  style={{ marginRight: 8 }}
+                />
+                <TextInput
+                  style={[styles.searchInput, { color: colors.text }]}
+                  placeholder={searchPlaceholder}
+                  placeholderTextColor={colors.textSecondary}
+                  value={search}
+                  onChangeText={setSearch}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {search.length > 0 ? (
+                  <TouchableOpacity onPress={() => setSearch('')}>
+                    <MaterialIcons name="close" size={18} color={colors.textSecondary} />
                   </TouchableOpacity>
-                );
-              }}
-              ListEmptyComponent={
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{emptyText}</Text>
-              }
-            />
+                ) : null}
+              </View>
+
+              <FlatList
+                data={filteredUsers}
+                keyExtractor={(item) => item.id}
+                style={styles.list}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => {
+                  const isSelected = selectedIds.has(item.id);
+                  const isCurrentUser =
+                    (normalizedCurrentUserId != null && item.id === normalizedCurrentUserId)
+                    || (
+                      !!normalizedCurrentUserName
+                      && normalizeForSearch(item.name) === normalizedCurrentUserName
+                    );
+
+                  const rawAvatar = typeof item.avatarUrl === 'string' ? item.avatarUrl.trim() : '';
+                  const optimizedAvatar = rawAvatar
+                    ? getOptimizedImageUrl(rawAvatar, { width: 40, height: 40, mode: 'fill' }) || rawAvatar
+                    : '';
+                  const hasValidAvatarUrl =
+                    optimizedAvatar.startsWith('http://') || optimizedAvatar.startsWith('https://');
+                  const showAvatarImage = hasValidAvatarUrl && !failedAvatarIds.has(item.id);
+
+                  return (
+                    <TouchableOpacity
+                      style={[
+                        styles.item,
+                        {
+                          borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)',
+                        },
+                        isSelected && {
+                          backgroundColor: isDarkMode ? 'rgba(255, 255, 255, 0.06)' : '#F5F5F7',
+                        },
+                      ]}
+                      onPress={() => onToggleUser(item.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View
+                        style={[
+                          styles.avatarCircle,
+                          { backgroundColor: showAvatarImage ? 'transparent' : primaryColor },
+                        ]}
+                      >
+                        {showAvatarImage ? (
+                          <Image
+                            source={{ uri: optimizedAvatar }}
+                            style={styles.avatarImage}
+                            onError={() => {
+                              setFailedAvatarIds((prev) => {
+                                const next = new Set(prev);
+                                next.add(item.id);
+                                return next;
+                              });
+                            }}
+                          />
+                        ) : (
+                          <Text style={styles.avatarInitial}>{getInitials(item.name)}</Text>
+                        )}
+                      </View>
+
+                      <Text
+                        style={[
+                          styles.itemText,
+                          { color: colors.text },
+                          isSelected && { fontFamily: fontFamilies.bodySemibold },
+                        ]}
+                      >
+                        {item.name}
+                        {isCurrentUser ? ` (${youLabel})` : ''}
+                      </Text>
+
+                      {isSelected ? <MaterialIcons name="check" size={20} color={primaryColor} /> : null}
+                    </TouchableOpacity>
+                  );
+                }}
+                ListEmptyComponent={
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{emptyText}</Text>
+                }
+              />
 
             {footer}
           </View>
-        </TouchableOpacity>
-      </KeyboardAvoidingView>
-    </Modal>
+          {insets.bottom > 0 && <View style={{ height: insets.bottom }} />}
+        </View>
+      </KeyboardStickyView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  keyboardAvoidingView: {
-    flex: 1,
-  },
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
     justifyContent: 'flex-end',
+    zIndex: 1000,
+    elevation: 1000,
   },
   sheet: {
-    maxHeight: '78%',
+    height: 360,
     flexShrink: 1,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -338,12 +325,12 @@ const styles = StyleSheet.create({
     padding: 0,
   },
   list: {
-    flexGrow: 0,
+    flex: 1,
   },
   item: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
+    paddingVertical: 12,
     paddingHorizontal: 12,
     borderRadius: radius.md,
     borderBottomWidth: 0.5,
