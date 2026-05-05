@@ -44,6 +44,7 @@ export const AppNavigator: React.FC = () => {
   const { pendingCount } = useMutationQueue();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
   const [showBackOnlineBadge, setShowBackOnlineBadge] = useState(false);
+  const [currentRouteName, setCurrentRouteName] = useState<keyof RootStackParamList | undefined>();
   const wasOfflineRef = useRef(false);
   const backOnlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
@@ -79,7 +80,7 @@ export const AppNavigator: React.FC = () => {
     };
   }, [isOnline]);
 
-  const showConnectivityBadge = !isOnline || showBackOnlineBadge;
+  const showConnectivityBadge = currentRouteName !== 'Login' && currentRouteName !== 'Splash' && (!isOnline || showBackOnlineBadge);
   const offlineLabel = pendingCount > 0
     ? t('main.syncPending', { base: t('main.syncOffline'), count: pendingCount })
     : t('main.syncOffline');
@@ -143,7 +144,13 @@ export const AppNavigator: React.FC = () => {
   }, [convexSiteUrl, shareBaseUrl]);
 
   return (
-    <NavigationContainer ref={navigationRef} theme={navigationTheme} linking={linking}>
+    <NavigationContainer
+      ref={navigationRef}
+      theme={navigationTheme}
+      linking={linking}
+      onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name)}
+      onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name)}
+    >
       <AppStatusBar />
       <Stack.Navigator
         initialRouteName="Splash"

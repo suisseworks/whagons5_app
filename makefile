@@ -1,5 +1,5 @@
 .PHONY: help android-run android-apk-debug android-apk-release android-apk-dev-backend android-clean \
-       ios-run ios-prebuild ios-build-sim ios-clean \
+       ios-run ios-prebuild ios-build-sim ios-clean ios-screenshots \
        release release-prod version
 
 # Detect OS for sed compatibility
@@ -37,6 +37,7 @@ help:
 	@echo "  make ios-run               Run app on iOS via Expo (dev)"
 	@echo "  make ios-prebuild          Generate native iOS project"
 	@echo "  make ios-build-sim         Build iOS simulator app"
+	@echo "  make ios-screenshots       Capture App Store iOS screenshots at 1284x2778"
 	@echo "  make ios-clean             Clean iOS derived data"
 
 # ===========================================================================
@@ -77,6 +78,9 @@ ios-build-sim:
 
 ios-clean:
 	rm -rf "$(IOS_DERIVED_DATA)"
+
+ios-screenshots:
+	bash scripts/appstore-ios-screenshots.sh
 
 # ===========================================================================
 #  Version info

@@ -14,6 +14,7 @@
       "backgroundColor": "#121614"
     },
     "ios": {
+      "icon": "./assets/icon.png",
       "supportsTablet": true,
       "bundleIdentifier": "com.whagons.v5",
       "googleServicesFile": "./GoogleService-Info.plist",
@@ -23,6 +24,7 @@
       }
     },
     "android": {
+      "icon": "./assets/icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#C82828"
@@ -99,6 +101,7 @@
       ],
       "expo-video",
       "./plugins/withNotifee.js",
+      "./plugins/withIosFirebasePodfileFix.js",
       "expo-localization",
       [
         "expo-asset",
