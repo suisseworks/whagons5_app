@@ -150,7 +150,6 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   const { token: authToken, subdomain } = useAuth();
   const { tenantId } = useTenant();
   const registerTokenMutation = useOfflineMutation(api.pushNotificationHelpers.registerToken, 'pushNotificationHelpers.registerToken');
-  const unregisterTokenMutation = useOfflineMutation(api.pushNotificationHelpers.unregisterToken, 'pushNotificationHelpers.unregisterToken');
 
   const [hasPermission, setHasPermission] = useState(false);
   const [fcmToken, setFcmToken] = useState<string | null>(null);
@@ -162,7 +161,6 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   const tenantIdRef = useRef(tenantId);
   const fcmTokenRef = useRef<string | null>(null);
   const registerTokenMutationRef = useRef(registerTokenMutation);
-  const unregisterTokenMutationRef = useRef(unregisterTokenMutation);
 
   useEffect(() => {
     tenantIdRef.current = tenantId;
@@ -175,10 +173,6 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   useEffect(() => {
     registerTokenMutationRef.current = registerTokenMutation;
   }, [registerTokenMutation]);
-
-  useEffect(() => {
-    unregisterTokenMutationRef.current = unregisterTokenMutation;
-  }, [unregisterTokenMutation]);
 
   // -----------------------------------------------------------------------
   // Restore persisted preferences + notifications
@@ -237,10 +231,8 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
   // -----------------------------------------------------------------------
   useEffect(() => {
     if (!authToken || !subdomain) {
-      // Logged out – unregister token and clean up
-      if (fcmTokenRef.current && tenantIdRef.current) {
-        unregisterTokenMutationRef.current({ tenantId: tenantIdRef.current, fcmToken: fcmTokenRef.current }).catch(() => {});
-      }
+      // AuthContext unregisters the token before Firebase sign-out. Once this
+      // effect sees logged-out state, Convex auth may already be unavailable.
       cleanupRefs.current.forEach(fn => fn());
       cleanupRefs.current = [];
       setFcmToken(null);

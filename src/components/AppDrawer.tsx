@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
@@ -63,9 +63,6 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
   const handleLogout = async () => {
     onClose();
     await logout();
-    navigation.dispatch(
-      CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }),
-    );
   };
 
   const handleWorkspaceSelect = (name: string) => {

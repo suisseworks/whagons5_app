@@ -157,14 +157,6 @@ export const SettingsScreen: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             await logout();
-            runAfterAlertNavigationWork(() => {
-              navigation.dispatch(
-                CommonActions.reset({
-                  index: 0,
-                  routes: [{ name: 'Login' }],
-                }),
-              );
-            });
           },
         },
       ]

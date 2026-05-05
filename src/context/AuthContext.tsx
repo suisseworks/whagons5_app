@@ -20,7 +20,7 @@ import React, {
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useConvexAuth, useQuery } from 'convex/react';
+import { useConvexAuth, useMutation, useQuery } from 'convex/react';
 import { getIdToken as getFirebaseIdToken } from '@react-native-firebase/auth';
 import { api } from '../../../convex/_generated/api';
 import {
@@ -29,8 +29,10 @@ import {
   firebaseSignOut,
   getCurrentUser,
 } from '../firebase/authService';
+import { getFCMToken } from '../firebase/notificationService';
 import { useNetwork } from './NetworkContext';
 import * as DB from '../store/database';
+import { pauseMutationQueueReplay, resumeMutationQueueReplay } from '../store/mutationQueueRuntime';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -76,6 +78,8 @@ interface AuthContextType extends AuthState {
   logout: () => Promise<void>;
   /** Non-null when user has multiple tenants and needs to pick one */
   pendingTenants: string[] | null;
+  /** Authenticated in Firebase, but not attached to any Convex tenant */
+  hasNoTenants: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -91,20 +95,32 @@ const STORAGE_KEY_CACHED_USER = 'wh_auth_cached_user';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+function summarizeTenants(tenants: string[] | undefined | null): string {
+  if (tenants === undefined) return 'loading';
+  if (tenants === null) return 'null';
+  return `${tenants.length} [${tenants.slice(0, 3).join(', ')}${tenants.length > 3 ? ', ...' : ''}]`;
+}
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
   const { isOnline } = useNetwork();
   const [tenantId, setTenantId] = useState<string | null>(null);
   const [isRestoringTenant, setIsRestoringTenant] = useState(true);
   const [pendingTenants, setPendingTenants] = useState<string[] | null>(null);
+  const [hasNoTenants, setHasNoTenants] = useState(false);
   const [tenantResolved, setTenantResolved] = useState(false);
   const [cachedUser, setCachedUser] = useState<UserInfo | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
   const offlineResolvedRef = useRef(false);
+  const loggingOutRef = useRef(false);
+  const lastAuthDebugRef = useRef('');
+  const unregisterPushToken = useMutation(api.pushNotificationHelpers.unregisterToken);
+  const claimCurrentUserByEmail = useMutation(api.users.claimCurrentUserByEmail);
 
   // Query tenants for the authenticated user
   const myTenants = useQuery(
     api.users.myTenants,
-    isAuthenticated ? {} : 'skip',
+    isAuthenticated && !isLoggingOut ? {} : 'skip',
   );
 
   // Query current user for the selected tenant
@@ -152,35 +168,92 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Auto-select tenant when myTenants loads (if no tenant selected)
   // ------------------------------------------------------------------
   useEffect(() => {
+    if (isLoggingOut || loggingOutRef.current) return;
     if (tenantResolved) return;
-    if (!isAuthenticated || !myTenants) return;
-
-    if (tenantId && myTenants.includes(tenantId)) {
-      setTenantResolved(true);
+    if (!isAuthenticated || !myTenants) {
+      console.log('[AUTH] Tenant auto-select waiting:', {
+        isAuthenticated,
+        myTenants: summarizeTenants(myTenants),
+        tenantId,
+        tenantResolved,
+      });
       return;
     }
 
-    if (tenantId && !myTenants.includes(tenantId)) {
-      setTenantId(null);
-      setCachedUser(null);
-      AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN).catch(() => {});
-      AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER).catch(() => {});
+    let cancelled = false;
+
+    const resolveTenant = async () => {
+      console.log('[AUTH] Tenant auto-select evaluating:', {
+        tenantId,
+        myTenants: summarizeTenants(myTenants),
+      });
+
+      if (tenantId && myTenants.includes(tenantId)) {
+        console.log('[AUTH] Existing tenant accepted:', tenantId);
+        await claimCurrentUserByEmail({ tenantId }).catch((err) => {
+          console.warn('[AUTH] Existing tenant email claim failed:', err);
+        });
+        if (cancelled) return;
+        setTenantResolved(true);
+        return;
+      }
+
+      if (tenantId && !myTenants.includes(tenantId)) {
+        console.log('[AUTH] Stored tenant not available, clearing:', tenantId);
+        setTenantId(null);
+        setCachedUser(null);
+        AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN).catch(() => {});
+        AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER).catch(() => {});
+      }
+
+      if (myTenants.length === 0) {
+        console.warn('[AUTH] Authenticated Firebase user has no Convex tenants');
+        setPendingTenants(null);
+        setHasNoTenants(true);
+        setTenantResolved(true);
+      } else if (myTenants.length === 1) {
+        const t = myTenants[0];
+        console.log('[AUTH] Single tenant auto-selected:', t);
+        await claimCurrentUserByEmail({ tenantId: t }).catch((err) => {
+          console.warn('[AUTH] Single tenant email claim failed:', err);
+        });
+        if (cancelled) return;
+        setTenantId(t);
+        setPendingTenants(null);
+        setHasNoTenants(false);
+        AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
+        setTenantResolved(true);
+      } else {
+        console.log('[AUTH] Multiple tenants require selection:', summarizeTenants(myTenants));
+        setPendingTenants(myTenants);
+        setHasNoTenants(false);
+        setTenantResolved(true);
+      }
+    };
+
+    void resolveTenant();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [claimCurrentUserByEmail, isAuthenticated, isLoggingOut, myTenants, tenantId, tenantResolved]);
+
+  useEffect(() => {
+    if (isAuthenticated && isLoggingOut) {
+      loggingOutRef.current = false;
+      setIsLoggingOut(false);
     }
 
-    if (myTenants.length === 0) {
-      setPendingTenants(null);
-      setTenantResolved(true);
-    } else if (myTenants.length === 1) {
-      const t = myTenants[0];
-      setTenantId(t);
-      setPendingTenants(null);
-      AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
-      setTenantResolved(true);
-    } else {
-      setPendingTenants(myTenants);
-      setTenantResolved(true);
+    if (isAuthenticated && loggingOutRef.current) {
+      loggingOutRef.current = false;
+      setIsLoggingOut(false);
     }
-  }, [isAuthenticated, myTenants, tenantId, tenantResolved]);
+
+    if (!isAuthenticated && loggingOutRef.current) {
+      loggingOutRef.current = false;
+      setIsLoggingOut(false);
+    }
+  }, [isAuthenticated, isLoggingOut]);
 
   // If the selected tenant has no active user record anymore, clear it so the
   // app returns to tenant selection instead of loading stale cached state.
@@ -218,26 +291,36 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [user]);
 
+  useEffect(() => {
+    if (isAuthenticated && tenantId) {
+      resumeMutationQueueReplay();
+    }
+  }, [isAuthenticated, tenantId]);
+
   // Use the live Convex user when available, otherwise the cached version
-  const effectiveUser = user ?? cachedUser;
+  const effectiveUser = isLoggingOut ? null : (user ?? cachedUser);
 
   // ------------------------------------------------------------------
   // Derived auth state — offline-aware
   // ------------------------------------------------------------------
-  const offlineWithCache = !isOnline && !!tenantId && !!cachedUser && !!getCurrentUser();
+  const offlineWithCache = !isLoggingOut && !isOnline && !!tenantId && !!cachedUser && !!getCurrentUser();
 
-  const isLoading = offlineWithCache
-    ? (isRestoringTenant)
-    : (
-        convexAuthLoading ||
-        isRestoringTenant ||
-        (isAuthenticated && !myTenants) ||
-        (isAuthenticated && myTenants && !tenantResolved) ||
-        (isAuthenticated && !!tenantId && convexUser === undefined)
-      );
+  const isLoading = isLoggingOut
+    ? false
+    : offlineWithCache
+      ? (isRestoringTenant)
+      : (
+          convexAuthLoading ||
+          isRestoringTenant ||
+          (isAuthenticated && !myTenants) ||
+          (isAuthenticated && myTenants && !tenantResolved) ||
+          (isAuthenticated && !!tenantId && convexUser === undefined)
+        );
 
   const hasActiveTenantUser = !!convexUser || offlineWithCache;
-  const token = offlineWithCache
+  const token = isLoggingOut
+    ? null
+    : offlineWithCache
     ? 'offline-cached'
     : (isAuthenticated && tenantId && hasActiveTenantUser ? 'convex-authenticated' : null);
 
@@ -248,11 +331,40 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     user: effectiveUser,
   };
 
+  useEffect(() => {
+    const snapshot = JSON.stringify({
+      convexAuthLoading,
+      isAuthenticated,
+      isOnline,
+      isRestoringTenant,
+      isLoggingOut,
+      tenantId,
+      tenantResolved,
+      myTenants: summarizeTenants(myTenants),
+      convexUser: convexUser === undefined ? 'loading' : convexUser === null ? 'null' : 'present',
+      cachedUser: cachedUser ? 'present' : 'null',
+      token,
+      pendingTenants: summarizeTenants(pendingTenants),
+      hasNoTenants,
+      isLoading,
+    });
+    if (snapshot === lastAuthDebugRef.current) return;
+    lastAuthDebugRef.current = snapshot;
+    console.log('[AUTH] State snapshot:', JSON.parse(snapshot));
+  }, [cachedUser, convexAuthLoading, convexUser, hasNoTenants, isAuthenticated, isLoading, isLoggingOut, isOnline, isRestoringTenant, myTenants, pendingTenants, tenantId, tenantResolved, token]);
+
   // ------------------------------------------------------------------
   // Google Sign-In
   // ------------------------------------------------------------------
   const signInWithGoogle = useCallback(async () => {
+    console.log('[AUTH] Google sign-in requested');
+    loggingOutRef.current = false;
+    setIsLoggingOut(false);
+    setPendingTenants(null);
+    setHasNoTenants(false);
+    setTenantResolved(false);
     await fbSignInWithGoogle();
+    console.log('[AUTH] Google sign-in returned from Firebase');
     // ConvexProviderWithAuth picks up the Firebase user automatically
   }, []);
 
@@ -261,43 +373,86 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ------------------------------------------------------------------
   const signInWithEmail = useCallback(
     async ({ email, password }: { email: string; password: string }) => {
+      console.log('[AUTH] Email sign-in requested:', `${email.slice(0, 2)}***@${email.split('@')[1] ?? 'unknown'}`);
+      loggingOutRef.current = false;
+      setIsLoggingOut(false);
+      setPendingTenants(null);
+      setHasNoTenants(false);
+      setTenantResolved(false);
       await fbSignInWithEmail(email, password);
+      console.log('[AUTH] Email sign-in returned from Firebase');
       // ConvexProviderWithAuth picks up the Firebase user automatically
     },
     [],
   );
 
+  const unregisterCurrentPushToken = useCallback(async (tenant: string | null) => {
+    if (!tenant) return;
+
+    try {
+      const fcmToken = await getFCMToken();
+      if (fcmToken) {
+        await unregisterPushToken({ tenantId: tenant, fcmToken });
+      }
+    } catch {
+      // Logout and tenant switching should not be blocked by push cleanup.
+    }
+  }, [unregisterPushToken]);
+
   // ------------------------------------------------------------------
   // Logout
   // ------------------------------------------------------------------
   const logout = useCallback(async () => {
+    const tenantToLogout = tenantId;
+    loggingOutRef.current = true;
+    setIsLoggingOut(true);
+    setPendingTenants(null);
+    setHasNoTenants(false);
+    pauseMutationQueueReplay();
+
+    await unregisterCurrentPushToken(tenantToLogout);
+
+    setTenantId(null);
+    setTenantResolved(false);
+    setPendingTenants(null);
+    setHasNoTenants(false);
+    setCachedUser(null);
+    offlineResolvedRef.current = false;
+
     try {
       await firebaseSignOut();
     } catch {}
 
-    await Promise.all([
+    await Promise.allSettled([
       AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN),
       AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER),
-      DB.clearMutationQueue(tenantId ?? undefined),
+      DB.clearMutationQueue(tenantToLogout ?? undefined),
     ]);
-    setTenantId(null);
-    setTenantResolved(false);
-    setPendingTenants(null);
-    setCachedUser(null);
-    offlineResolvedRef.current = false;
-  }, [tenantId]);
+    if (!getCurrentUser()) {
+      loggingOutRef.current = false;
+      setIsLoggingOut(false);
+    }
+  }, [tenantId, unregisterCurrentPushToken]);
 
   // ------------------------------------------------------------------
   // Select a specific tenant
   // ------------------------------------------------------------------
   const selectTenant = useCallback(
     async (tenant: string) => {
+      console.log('[AUTH] Selecting tenant:', tenant);
+      const claimResult = await claimCurrentUserByEmail({ tenantId: tenant }).catch((err) => {
+        console.warn('[AUTH] Tenant email claim failed:', err);
+        return null;
+      });
+      console.log('[AUTH] Tenant email claim result:', claimResult);
+      resumeMutationQueueReplay();
       setTenantId(tenant);
       setPendingTenants(null);
+      setHasNoTenants(false);
       await AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, tenant);
       setTenantResolved(true);
     },
-    [],
+    [claimCurrentUserByEmail],
   );
 
   // ------------------------------------------------------------------
@@ -307,21 +462,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     tenants: string[];
     firebaseIdToken: string;
   }> => {
-    await DB.clearMutationQueue(tenantId ?? undefined).catch(() => {});
-    await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
-    setTenantId(null);
-    setTenantResolved(false);
+    const tenantToSwitchFrom = tenantId;
+    pauseMutationQueueReplay();
 
-    const fbUser = getCurrentUser();
-    if (!fbUser) throw new Error('Not signed in');
-    const firebaseIdToken = await getFirebaseIdToken(fbUser, true);
+    try {
+      await unregisterCurrentPushToken(tenantToSwitchFrom);
+      await DB.clearMutationQueue(tenantToSwitchFrom ?? undefined).catch(() => {});
+      await AsyncStorage.removeItem(STORAGE_KEY_SUBDOMAIN);
+      setTenantId(null);
+      setTenantResolved(false);
 
-    if (!myTenants || myTenants.length === 0) {
-      throw new Error('No workspaces found for your account');
+      const fbUser = getCurrentUser();
+      if (!fbUser) throw new Error('Not signed in');
+      const firebaseIdToken = await getFirebaseIdToken(fbUser, true);
+
+      if (!myTenants || myTenants.length === 0) {
+        throw new Error('No workspaces found for your account');
+      }
+
+      return { tenants: myTenants, firebaseIdToken };
+    } catch (error) {
+      resumeMutationQueueReplay();
+      throw error;
     }
-
-    return { tenants: myTenants, firebaseIdToken };
-  }, [myTenants, tenantId]);
+  }, [myTenants, tenantId, unregisterCurrentPushToken]);
 
   const contextValue = useMemo(() => ({
     ...state,
@@ -330,8 +494,9 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     selectTenant,
     switchTenant,
     logout,
-    pendingTenants,
-  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithEmail, selectTenant, switchTenant, logout, pendingTenants]);
+    pendingTenants: isLoggingOut ? null : pendingTenants,
+    hasNoTenants: !isLoggingOut && hasNoTenants,
+  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithEmail, selectTenant, switchTenant, logout, isLoggingOut, pendingTenants, hasNoTenants]);
 
   return (
     <AuthContext.Provider value={contextValue}>

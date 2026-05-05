@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Image,
   FlatList,
+  InteractionManager,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -30,6 +31,18 @@ export const TenantSelectScreen: React.FC = () => {
   const { tenants, firebaseIdToken } = route.params;
   const [selecting, setSelecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const resetToLogin = () => {
+    InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          navigation.dispatch(
+            CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }),
+          );
+        });
+      });
+    });
+  };
 
   const handleSelect = async (tenant: string) => {
     setSelecting(tenant);
@@ -127,9 +140,7 @@ export const TenantSelectScreen: React.FC = () => {
           style={styles.backButton}
           onPress={async () => {
             await logout();
-            navigation.dispatch(
-              CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }),
-            );
+            resetToLogin();
           }}
         >
           <MaterialIcons name="arrow-back" size={18} color="#8B8E84" />

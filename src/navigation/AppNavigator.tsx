@@ -1,17 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { StatusBar, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions, getStateFromPath as defaultGetStateFromPath, useNavigationContainerRef } from '@react-navigation/native';
+import { InteractionManager, Platform, StatusBar, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions, getStateFromPath as defaultGetStateFromPath, useNavigationContainerRef, CommonActions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
 import { useNetwork } from '../context/NetworkContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
+import { useAuth } from '../context/AuthContext';
 import { fontFamilies } from '../config/designTokens';
 
 // Screens
 import { SplashScreen } from '../screens/SplashScreen';
 import { LoginScreen } from '../screens/LoginScreen';
+import { NoTenantsScreen } from '../screens/NoTenantsScreen';
 import { MainScreen } from '../screens/MainScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { TaskShareLinkScreen } from '../screens/TaskShareLinkScreen';
@@ -41,11 +43,13 @@ export const AppNavigator: React.FC = () => {
   const { isDarkMode, colors } = useTheme();
   const { isOnline } = useNetwork();
   const { t } = useLanguage();
+  const { isLoading: authLoading, token, hasNoTenants } = useAuth();
   const { pendingCount } = useMutationQueue();
   const navigationRef = useNavigationContainerRef<RootStackParamList>();
   const [showBackOnlineBadge, setShowBackOnlineBadge] = useState(false);
   const [currentRouteName, setCurrentRouteName] = useState<keyof RootStackParamList | undefined>();
   const wasOfflineRef = useRef(false);
+  const authResetPendingRef = useRef(false);
   const backOnlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
   const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim();
@@ -85,6 +89,44 @@ export const AppNavigator: React.FC = () => {
     ? t('main.syncPending', { base: t('main.syncOffline'), count: pendingCount })
     : t('main.syncOffline');
   const connectivityLabel = isOnline ? t('main.backOnline') : offlineLabel;
+
+  useEffect(() => {
+    if (authLoading || !navigationRef.isReady()) return;
+
+    const currentRoute = navigationRef.getCurrentRoute()?.name;
+    if (hasNoTenants && currentRoute !== 'NoTenants' && currentRoute !== 'Splash' && !authResetPendingRef.current) {
+      authResetPendingRef.current = true;
+      InteractionManager.runAfterInteractions(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (navigationRef.isReady()) {
+              navigationRef.dispatch(
+                CommonActions.reset({ index: 0, routes: [{ name: 'NoTenants' }] }),
+              );
+            }
+            authResetPendingRef.current = false;
+          });
+        });
+      });
+      return;
+    }
+
+    if (!token && !hasNoTenants && currentRoute !== 'Login' && currentRoute !== 'Splash' && !authResetPendingRef.current) {
+      authResetPendingRef.current = true;
+      InteractionManager.runAfterInteractions(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (navigationRef.isReady()) {
+              navigationRef.dispatch(
+                CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }),
+              );
+            }
+            authResetPendingRef.current = false;
+          });
+        });
+      });
+    }
+  }, [authLoading, hasNoTenants, navigationRef, token]);
 
   const navigationTheme: Theme = useMemo(
     () => ({
@@ -156,12 +198,13 @@ export const AppNavigator: React.FC = () => {
         initialRouteName="Splash"
         screenOptions={{
           headerShown: false,
-          animation: 'slide_from_right',
+          animation: Platform.OS === 'android' ? 'none' : 'slide_from_right',
           contentStyle: { backgroundColor: colors.background },
         }}
       >
         <Stack.Screen name="Splash" component={SplashScreen} />
         <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="NoTenants" component={NoTenantsScreen} />
         <Stack.Screen name="TenantSelect" component={TenantSelectScreen} />
         <Stack.Screen name="Main" component={MainScreen} />
         <Stack.Screen name="Profile" component={ProfileScreen} />

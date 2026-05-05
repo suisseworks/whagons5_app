@@ -7,7 +7,7 @@
  */
 import React, { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { ConvexReactClient, ConvexProviderWithAuth } from 'convex/react';
-import { getIdToken as getFirebaseIdToken } from '@react-native-firebase/auth';
+import { getIdToken as getFirebaseIdToken, onAuthStateChanged } from '@react-native-firebase/auth';
 import { auth } from '../firebase/firebaseConfig';
 
 const CONVEX_URL = process.env.EXPO_PUBLIC_CONVEX_URL;
@@ -22,7 +22,7 @@ function useFirebaseAuth() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setUser(firebaseUser);
       setIsLoading(false);
     });

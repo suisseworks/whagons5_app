@@ -21,7 +21,7 @@ export interface ConvexAttachment {
   fileType: string;
 }
 
-interface PendingFile {
+export interface PendingFile {
   uri: string;
   fileName: string;
   fileSize: number;

@@ -19,6 +19,7 @@ import { useNetwork } from './NetworkContext';
 import { convex } from '../providers/ConvexClientProvider';
 import { api } from '../../../convex/_generated/api';
 import * as DB from '../store/database';
+import { isMutationQueueReplayPaused } from '../store/mutationQueueRuntime';
 import { useTenant } from '../hooks/useTenant';
 
 // ---------------------------------------------------------------------------
@@ -239,15 +240,22 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
 
   const replayQueue = useCallback(async () => {
     if (!isOnline) return;
+    if (!tenantId) return;
+    if (isMutationQueueReplayPaused()) return;
     if (replayingRef.current) return;
+
+    const replayTenantId = tenantId;
+    const shouldStopReplay = () => isMutationQueueReplayPaused() || replayTenantId !== tenantId;
 
     replayingRef.current = true;
     setIsReplaying(true);
 
     try {
-      let pending = await DB.getReplayableMutations(tenantId);
-      if (tenantId) {
+      let pending = await DB.getReplayableMutations(replayTenantId);
+      if (shouldStopReplay()) return;
+      if (replayTenantId) {
         const globalPending = await DB.getReplayableMutations();
+        if (shouldStopReplay()) return;
         if (globalPending.length > pending.length) {
           pending = globalPending;
         }
@@ -255,6 +263,7 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
       if (pending.length === 0) return;
 
       for (const mutation of pending) {
+        if (shouldStopReplay()) return;
         const attempts = (mutation.attempts ?? 0) + 1;
         const apiRef = resolveApiRef(mutation.api_path);
         if (!apiRef) {
@@ -285,8 +294,11 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
         const pushAttemptAt = Date.now();
 
         try {
+          if (shouldStopReplay()) return;
           await DB.markMutationSyncing(mutation.id, attempts);
+          if (shouldStopReplay()) return;
           await convex.mutation(apiRef, args);
+          if (shouldStopReplay()) return;
           await DB.archiveMutation(
             {
               ...mutation,
@@ -297,8 +309,10 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
             pushAttemptAt,
             null,
           );
+          if (shouldStopReplay()) return;
           await DB.removeMutation(mutation.id);
         } catch (err: any) {
+          if (shouldStopReplay()) return;
           const errMessage = String(err?.message ?? 'Replay failed');
           const shouldRetry = attempts < REPLAY_MAX_ATTEMPTS && isRetriableError(err);
 
@@ -346,14 +360,17 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
     } finally {
       replayingRef.current = false;
       setIsReplaying(false);
-      await refreshQueue();
+      if (!isMutationQueueReplayPaused()) {
+        await refreshQueue();
+      }
     }
   }, [REPLAY_MAX_ATTEMPTS, getBackoffMs, isOnline, isRetriableError, refreshQueue, tenantId]);
 
   const replayNow = useCallback(async () => {
     if (!isOnline) return;
+    if (!tenantId) return;
     await replayQueue();
-  }, [isOnline, replayQueue]);
+  }, [isOnline, replayQueue, tenantId]);
 
   const retryMutation = useCallback(async (id: string) => {
     let rows = await DB.getQueuedMutations(tenantId);
@@ -389,17 +406,19 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
   // Replay on startup and whenever we reconnect
   useEffect(() => {
     if (!isOnline) return;
+    if (!tenantId) return;
     void replayQueue();
-  }, [isOnline, replayQueue]);
+  }, [isOnline, replayQueue, tenantId]);
 
   // Keep trying due retries while online
   useEffect(() => {
     if (!isOnline) return;
+    if (!tenantId) return;
     const interval = setInterval(() => {
       void replayQueue();
     }, 15000);
     return () => clearInterval(interval);
-  }, [isOnline, replayQueue]);
+  }, [isOnline, replayQueue, tenantId]);
 
   return (
     <MutationQueueContext.Provider

@@ -10,7 +10,7 @@
  */
 
 import { Platform, PermissionsAndroid } from 'react-native';
-import { getInitialNotification as getMessagingInitialNotification, getMessaging, getToken, onMessage, onTokenRefresh } from '@react-native-firebase/messaging';
+import { getInitialNotification as getMessagingInitialNotification, getMessaging, getToken, onMessage, onTokenRefresh, requestPermission as requestMessagingPermission } from '@react-native-firebase/messaging';
 import notifee, {
   AndroidImportance,
   AndroidStyle,
@@ -169,7 +169,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
     // FCM also has its own authorization (mainly relevant for iOS)
     const messaging = getMessaging(getApp());
-    const authStatus = await messaging.requestPermission();
+    const authStatus = await requestMessagingPermission(messaging);
 
     // authStatus is 1 (AUTHORIZED) or 2 (PROVISIONAL) on success
     const granted = authStatus === 1 || authStatus === 2;

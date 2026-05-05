@@ -96,11 +96,13 @@ class TaskNavigationMapSafe extends React.Component<
 }
 import { priorityColor, statusColor, getInitials, parseWorkspaceIcon, contrastTextColor } from '../utils/helpers';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
+import { useVoiceMemoRecorder } from '../hooks/useVoiceMemoRecorder';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { Toast, ToastRef } from '../components/Toast';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { ProgressiveImage } from '../components/ProgressiveImage';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
+import { VoiceMemoActionButton, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 import * as DB from '../store/database';
 
 /** Parse markdown checklist items from a description string */
@@ -883,8 +885,12 @@ export const TaskDetailScreen: React.FC = () => {
   const commentsScrollRef = useRef<ScrollView>(null);
   const commentEditInputRef = useRef<TextInput>(null);
 
-  const { pickAndUpload, takePhotoAndUpload, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
+  const { pickAndUpload, takePhotoAndUpload, uploadFile, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
+  const handleVoiceMemoRecorded = useCallback((attachment: ConvexAttachment) => {
+    setPendingAttachments((prev) => [...prev, attachment]);
+  }, []);
+  const voiceMemoRecorder = useVoiceMemoRecorder(uploadFile, handleVoiceMemoRecorded);
 
   // ─── Task views ("Seen by") — Convex taskViews table ───────────────────────
   const recordTaskView = useOfflineMutation(api.taskResources.recordTaskViewByTaskPgId, 'taskResources.recordTaskViewByTaskPgId');
@@ -2191,7 +2197,7 @@ export const TaskDetailScreen: React.FC = () => {
           {pendingAttachments.map((a, i) => (
             <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7', borderColor: cardBorder }]}>
               <MaterialIcons
-                name={a.fileType.startsWith('image/') ? 'image' : 'attach-file'}
+                name={a.fileType.startsWith('image/') ? 'image' : a.fileType.startsWith('audio/') ? 'mic' : 'attach-file'}
                 size={14}
                 color={colors.textSecondary}
               />
@@ -2211,69 +2217,67 @@ export const TaskDetailScreen: React.FC = () => {
           { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
         ]}
       >
-        <View
-          style={[
-            styles.commentComposerShell,
-            {
-              backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
-              borderColor: cardBorder,
-            },
-          ]}
-        >
-          <TextInput
-            style={[
-              styles.commentInput,
-              {
-                color: colors.text,
-              },
-            ]}
-            placeholder={t('taskDetail.addCommentPlaceholder')}
-            placeholderTextColor={colors.textSecondary}
-            value={commentText}
-            onChangeText={setCommentText}
-            onSubmitEditing={handleAddComment}
-            editable={!sendingComment}
+        {voiceMemoRecorder.isActive ? (
+          <VoiceMemoRecordingBar
+            recorder={voiceMemoRecorder}
+            primaryColor={primaryColor}
+            textColor={colors.text}
+            mutedColor={colors.textSecondary}
+            surfaceColor={isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7'}
           />
-          <TouchableOpacity
+        ) : (
+          <View
             style={[
-              styles.attachButton,
+              styles.commentComposerShell,
               {
-                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
                 borderColor: cardBorder,
               },
             ]}
-            onPress={handleAttach}
-            disabled={uploadingAttachment}
           >
-            {uploadingAttachment ? (
-              <ActivityIndicator size="small" color={primaryColor} />
-            ) : (
-              <MaterialIcons name="attach-file" size={20} color={primaryColor} />
-            )}
-          </TouchableOpacity>
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.sendButton,
-            {
-              backgroundColor:
-                commentText.trim() || pendingAttachments.length > 0
-                  ? primaryColor
-                  : isDarkMode
-                    ? 'rgba(255,255,255,0.10)'
-                    : 'rgba(0,0,0,0.08)',
-              opacity: sendingComment ? 0.6 : 1,
-            },
-          ]}
-          onPress={handleAddComment}
-          disabled={sendingComment || (!commentText.trim() && pendingAttachments.length === 0)}
-        >
-          {sendingComment ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <MaterialIcons name="send" size={20} color="#FFFFFF" />
-          )}
-        </TouchableOpacity>
+            <TextInput
+              style={[
+                styles.commentInput,
+                {
+                  color: colors.text,
+                },
+              ]}
+              placeholder={t('taskDetail.addCommentPlaceholder')}
+              placeholderTextColor={colors.textSecondary}
+              value={commentText}
+              onChangeText={setCommentText}
+              onSubmitEditing={handleAddComment}
+              editable={!sendingComment}
+            />
+            <TouchableOpacity
+              style={[
+                styles.attachButton,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                  borderColor: cardBorder,
+                },
+              ]}
+              onPress={handleAttach}
+              disabled={uploadingAttachment}
+            >
+              {uploadingAttachment ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+        <VoiceMemoActionButton
+          recorder={voiceMemoRecorder}
+          hasContent={!!commentText.trim() || pendingAttachments.length > 0}
+          showAddRecording={pendingAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
+          isSending={sendingComment}
+          disabled={sendingComment}
+          primaryColor={primaryColor}
+          inactiveColor={isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}
+          onSend={handleAddComment}
+        />
       </View>
       <AttachmentPickerSheet {...attachmentPickerProps} />
     </View>

@@ -49,7 +49,7 @@ const GoogleLogo = () => (
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const { width } = useWindowDimensions();
-  const { signInWithGoogle, signInWithEmail, token, pendingTenants } = useAuth();
+  const { signInWithGoogle, signInWithEmail, token, pendingTenants, hasNoTenants } = useAuth();
   const { t } = useLanguage();
 
   const [email, setEmail] = useState('');
@@ -96,17 +96,42 @@ export const LoginScreen: React.FC = () => {
 
   const isLargeScreen = width > 800;
   const anyLoading = isLoading || isGoogleLoading;
+  const lastLoginDebugRef = useRef('');
 
   // Watch for auth state changes and navigate accordingly
   const hasNavigated = useRef(false);
   useEffect(() => {
+    const snapshot = JSON.stringify({
+      token,
+      pendingTenantsCount: pendingTenants?.length ?? null,
+      hasNoTenants,
+      hasNavigated: hasNavigated.current,
+      isLoading,
+      isGoogleLoading,
+    });
+    if (snapshot !== lastLoginDebugRef.current) {
+      lastLoginDebugRef.current = snapshot;
+      console.log('[LoginScreen] Auth/navigation state:', JSON.parse(snapshot));
+    }
+
+    if (!token && !pendingTenants && !hasNoTenants) {
+      hasNavigated.current = false;
+    }
     if (hasNavigated.current) return;
-    if (token) {
+    if (hasNoTenants) {
+      console.log('[LoginScreen] Navigating to NoTenants');
+      hasNavigated.current = true;
+      navigation.dispatch(
+        CommonActions.reset({ index: 0, routes: [{ name: 'NoTenants' }] }),
+      );
+    } else if (token) {
+      console.log('[LoginScreen] Navigating to Main');
       hasNavigated.current = true;
       navigation.dispatch(
         CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }),
       );
     } else if (pendingTenants && pendingTenants.length > 1) {
+      console.log('[LoginScreen] Navigating to TenantSelect:', pendingTenants.length);
       hasNavigated.current = true;
       navigation.dispatch(
         CommonActions.reset({
@@ -115,14 +140,16 @@ export const LoginScreen: React.FC = () => {
         }),
       );
     }
-  }, [token, pendingTenants]);
+  }, [navigation, token, pendingTenants, hasNoTenants]);
 
   const handleGoogleSignIn = async () => {
+    console.log('[LoginScreen] Google button pressed');
     setIsGoogleLoading(true);
     try {
       await signInWithGoogle();
       // Navigation handled by effect above when auth resolves
     } catch (err: any) {
+      console.error('[LoginScreen] Google sign-in failed:', err);
       const msg = err?.message || t('login.googleSignInFailed');
       if (msg.includes('CANCELED') || msg.includes('cancelled')) {
         // User cancelled
@@ -146,9 +173,12 @@ export const LoginScreen: React.FC = () => {
 
     setIsLoading(true);
     try {
+      console.log('[LoginScreen] Email button pressed:', `${email.trim().slice(0, 2)}***@${email.trim().split('@')[1] ?? 'unknown'}`);
       await signInWithEmail({ email: email.trim(), password });
+      console.log('[LoginScreen] Email sign-in call completed');
       // Navigation handled by effect above when auth resolves
     } catch (err: any) {
+      console.error('[LoginScreen] Email sign-in failed:', err);
       let msg = err?.message || t('login.unableToLogin');
       if (msg.includes('wrong-password') || msg.includes('invalid-credential')) {
         msg = t('login.incorrectCredentials');

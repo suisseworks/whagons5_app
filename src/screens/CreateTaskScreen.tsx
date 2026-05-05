@@ -214,6 +214,7 @@ export const CreateTaskScreen: React.FC = () => {
   const [description, setDescription] = useState('');
   const [showDescription, setShowDescription] = useState(false);
   const [selectedPriorityConvexId, setSelectedPriorityConvexId] = useState<string | null>(null);
+  const [priorityModalVisible, setPriorityModalVisible] = useState(false);
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
   const [photoPickerVisible, setPhotoPickerVisible] = useState(false);
@@ -411,10 +412,14 @@ export const CreateTaskScreen: React.FC = () => {
 
     return (scopedPriorities.length > 0 ? scopedPriorities : data.priorities).map((priority: any) => ({
       _id: String(priority._id),
-      label: String(priority.name ?? ''),
+      name: String(priority.name ?? ''),
       color: priority.color ?? '#9CA3AF',
     }));
   }, [data.priorities, workspaceCategoryIds, workspaceCategoryPgIds]);
+
+  const selectedPriority = useMemo(() => {
+    return priorityOptions.find((option) => option._id === selectedPriorityConvexId) ?? null;
+  }, [priorityOptions, selectedPriorityConvexId]);
 
   useEffect(() => {
     setSelectedPriorityConvexId((current) => {
@@ -423,7 +428,7 @@ export const CreateTaskScreen: React.FC = () => {
       }
 
       const preferred = priorityOptions.find((option) => {
-        const normalized = option.label.toLowerCase();
+        const normalized = option.name.toLowerCase();
         return normalized.includes('medium') || normalized.includes('normal') || normalized.includes('media');
       });
 
@@ -860,43 +865,33 @@ export const CreateTaskScreen: React.FC = () => {
 
           {/* Priority Selector */}
           <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.priorityLabel')}</Text>
-          <View style={styles.priorityRow}>
-            {priorityOptions.map((opt) => {
-              const isActive = selectedPriorityConvexId === opt._id;
-              return (
-                <TouchableOpacity
-                  key={opt._id}
-                  style={[
-                    styles.priorityPill,
-                    {
-                      backgroundColor: isActive ? `${opt.color}15` : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-                      borderColor: isActive ? opt.color : borderColor,
-                    },
-                  ]}
-                  onPress={() => setSelectedPriorityConvexId(opt._id)}
-                  activeOpacity={0.7}
-                >
-                  <View
-                    style={[
-                      styles.priorityDot,
-                      { backgroundColor: opt.color },
-                    ]}
-                  />
-                  <Text
-                    style={[
-                      styles.priorityPillText,
-                      {
-                        color: isActive ? opt.color : (isDarkMode ? 'rgba(255,255,255,0.5)' : '#8C8780'),
-                        fontFamily: isActive ? fontFamilies.bodySemibold : fontFamilies.bodyMedium,
-                      },
-                    ]}
-                  >
-                    {opt.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <TouchableOpacity
+            style={[
+              styles.fieldSelector,
+              {
+                borderColor: selectedPriority ? selectedPriority.color : borderColor,
+                backgroundColor: selectedPriority
+                  ? `${selectedPriority.color}08`
+                  : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
+              },
+            ]}
+            onPress={() => setPriorityModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.priorityDot, { backgroundColor: selectedPriority?.color ?? '#9CA3AF' }]} />
+            <Text
+              style={[
+                styles.fieldSelectorText,
+                selectedPriority
+                  ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
+                  : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
+              ]}
+              numberOfLines={1}
+            >
+              {selectedPriority?.name ?? t('createTask.priorityLabel')}
+            </Text>
+            <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
+          </TouchableOpacity>
 
           {/* Assign To */}
           <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.assignToLabel')}</Text>
@@ -1216,6 +1211,23 @@ export const CreateTaskScreen: React.FC = () => {
         primaryColor={primaryColor}
       />
 
+      {/* Priority Modal */}
+      <SelectorModal
+        visible={priorityModalVisible}
+        title={t('createTask.priorityLabel')}
+        items={priorityOptions}
+        selectedId={selectedPriorityConvexId}
+        onSelect={(item) => {
+          setSelectedPriorityConvexId(item._id);
+          setPriorityModalVisible(false);
+        }}
+        onClose={() => setPriorityModalVisible(false)}
+        searchable={priorityOptions.length > 8}
+        colors={colors}
+        isDarkMode={isDarkMode}
+        primaryColor={primaryColor}
+      />
+
       {/* Assignee Modal (multi-select) */}
       <UserPickerSheet
         visible={assigneeModalVisible}
@@ -1417,27 +1429,10 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 10,
   },
-  priorityRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  priorityPill: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-    gap: 4,
-  },
   priorityDot: {
     width: 10,
     height: 10,
     borderRadius: 5,
-  },
-  priorityPillText: {
-    fontSize: fontSizes.xs,
   },
   attachmentButtonsRow: {
     flexDirection: 'row',

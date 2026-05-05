@@ -23,6 +23,7 @@ import {
   sendEmailVerification,
   onAuthStateChanged as fbOnAuthStateChanged,
   GoogleAuthProvider,
+  signOut as firebaseAuthSignOut,
 } from '@react-native-firebase/auth';
 import { getApp } from '@react-native-firebase/app';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
@@ -38,6 +39,12 @@ GoogleSignin.configure({
 
 // Modular auth instance
 const auth = getAuth(getApp());
+
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return '<invalid-email>';
+  return `${local.slice(0, 2)}***@${domain}`;
+}
 
 // ---------------------------------------------------------------------------
 // Google Sign-In
@@ -78,7 +85,12 @@ export async function signInWithEmail(
   email: string,
   password: string,
 ): Promise<FirebaseAuthTypes.UserCredential> {
+  console.log('[AuthService] Email sign-in start:', maskEmail(email));
   const userCredential = await signInWithEmailAndPassword(auth, email, password);
+  console.log('[AuthService] Email sign-in success:', {
+    uid: userCredential.user.uid,
+    emailVerified: userCredential.user.emailVerified,
+  });
 
   // Check email verification (matching web client behaviour).
   // In dev you might want to skip this check.
@@ -118,7 +130,7 @@ export async function firebaseSignOut(): Promise<void> {
   } catch {
     // Google sign-out may fail if user didn't sign in with Google -- that's OK.
   }
-  await auth.signOut();
+  await firebaseAuthSignOut(auth);
 }
 
 // ---------------------------------------------------------------------------

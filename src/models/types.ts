@@ -273,6 +273,7 @@ export interface MapLocationPayload {
 export type RootStackParamList = {
   Splash: undefined;
   Login: undefined;
+  NoTenants: undefined;
   TenantSelect: { tenants: string[]; firebaseIdToken: string };
   Main: { tab?: number; conversationId?: string | number } | undefined;
   Profile: undefined;

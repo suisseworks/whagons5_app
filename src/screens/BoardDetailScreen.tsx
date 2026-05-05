@@ -28,7 +28,9 @@ import { ActivityIndicator } from 'react-native';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
+import { useVoiceMemoRecorder } from '../hooks/useVoiceMemoRecorder';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
+import { VoiceMemoActionButton, VoiceMemoDraftPreview, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 type BoardDetailRouteProp = RouteProp<RootStackParamList, 'BoardDetail'>;
@@ -45,11 +47,12 @@ export const BoardDetailScreen: React.FC = () => {
   const { tenantId } = useTenant();
   const createBoardMessage = useOfflineMutation(api.boards.createMessage, 'boards.createMessage');
   const markBoardNotificationsRead = useOfflineMutation(api.boards.markBoardNotificationsRead, 'boards.markBoardNotificationsRead');
-  const { pickAndUpload, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
+  const { pickAndUpload, uploadFile, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
 
   const { boardId } = route.params;
 
   const [messageInput, setMessageInput] = useState('');
+  const [draftAttachments, setDraftAttachments] = useState<Awaited<ReturnType<typeof pickAndUpload>>>([]);
   const [isSending, setIsSending] = useState(false);
   const [pendingBoardMessages, setPendingBoardMessages] = useState<SyncedBoardMessage[]>([]);
   const flatListRef = useRef<FlatList>(null);
@@ -160,13 +163,31 @@ export const BoardDetailScreen: React.FC = () => {
     return date.toLocaleDateString();
   };
 
-  const handleSendMessage = useCallback(async () => {
-    if (!messageInput.trim() || isSending || !tenantId) return;
+  const buildInputMessage = useCallback(() => {
+    const parts = [];
+    const text = messageInput.trim();
+    if (text) parts.push(text);
+    for (const attachment of draftAttachments) {
+      const label = (attachment as any).displayName || (attachment.fileType.startsWith('audio/') ? 'Voice memo' : attachment.fileName);
+      parts.push(
+        attachment.fileType.startsWith('image/')
+          ? `![${label}]({{convex-file:${attachment.storageId}}})`
+          : `[${label}]({{convex-file:${attachment.storageId}}})`,
+      );
+    }
+    return parts.join('\n');
+  }, [draftAttachments, messageInput]);
 
-    const content = messageInput.trim();
+  const handleSendMessage = useCallback(async () => {
+    const content = buildInputMessage();
+    if (!content || isSending || !tenantId) return;
+
+    const originalText = messageInput.trim();
+    const originalAttachments = draftAttachments;
     const pendingMessage = buildPendingBoardMessage(content);
     setPendingBoardMessages((prev) => [pendingMessage, ...prev]);
     setMessageInput('');
+    setDraftAttachments([]);
 
     setIsSending(true);
     try {
@@ -181,16 +202,16 @@ export const BoardDetailScreen: React.FC = () => {
       });
     } catch (err: any) {
       setPendingBoardMessages((prev) => prev.filter((msg) => msg.id !== pendingMessage.id));
-      setMessageInput(content);
+      setMessageInput(originalText);
+      setDraftAttachments(originalAttachments);
       Alert.alert('Error', err?.message || t('boardDetail.failedToSendMessage'));
     } finally {
       setIsSending(false);
     }
-  }, [messageInput, isSending, tenantId, board, createBoardMessage, t, buildPendingBoardMessage]);
+  }, [buildInputMessage, messageInput, draftAttachments, isSending, tenantId, board, createBoardMessage, t, buildPendingBoardMessage]);
 
-  const handleAttachFile = useCallback(async () => {
+  const sendUploadedAttachments = useCallback(async (attachments: Awaited<ReturnType<typeof pickAndUpload>>) => {
     if (!tenantId) return;
-    const attachments = await pickAndUpload();
     if (attachments.length === 0) return;
 
     const convexBoardId = (board as any)?._id;
@@ -213,7 +234,18 @@ export const BoardDetailScreen: React.FC = () => {
         Alert.alert('Error', t('boardDetail.failedToSendFile', { fileName: a.fileName }));
       }
     }
-  }, [tenantId, board, createBoardMessage, pickAndUpload, t, buildPendingBoardMessage]);
+  }, [tenantId, board, createBoardMessage, t, buildPendingBoardMessage]);
+
+  const handleVoiceMemoRecorded = useCallback((attachment: Awaited<ReturnType<typeof pickAndUpload>>[number]) => {
+    setDraftAttachments((prev) => [...prev, attachment]);
+  }, []);
+
+  const voiceMemoRecorder = useVoiceMemoRecorder(uploadFile, handleVoiceMemoRecorded);
+
+  const handleAttachFile = useCallback(async () => {
+    const attachments = await pickAndUpload();
+    await sendUploadedAttachments(attachments);
+  }, [pickAndUpload, sendUploadedAttachments]);
 
   const onRefresh = useCallback(async () => {
     await refresh();
@@ -369,65 +401,79 @@ export const BoardDetailScreen: React.FC = () => {
             },
           ]}
         >
-          <View
-            style={[
-              styles.composerShell,
-              {
-                backgroundColor: isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4',
-                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
-              },
-            ]}
-          >
-            <TextInput
-              style={[
-                styles.composerInput,
-                {
-                  color: colors.text,
-                },
-              ]}
-              placeholder={t('boardDetail.composerPlaceholder')}
-              placeholderTextColor={colors.textSecondary}
-              value={messageInput}
-              onChangeText={setMessageInput}
-              multiline
-              maxLength={5000}
+          {voiceMemoRecorder.isActive ? (
+            <VoiceMemoRecordingBar
+              recorder={voiceMemoRecorder}
+              primaryColor={primaryColor}
+              textColor={colors.text}
+              mutedColor={colors.textSecondary}
+              surfaceColor={isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4'}
             />
-            <TouchableOpacity
+          ) : (
+            <View
               style={[
-                styles.attachButton,
+                styles.composerShell,
                 {
-                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                  backgroundColor: isDarkMode ? 'rgba(31,36,34,0.7)' : '#F3EEE4',
                   borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
                 },
               ]}
-              onPress={handleAttachFile}
-              disabled={uploadingAttachment}
             >
-              {uploadingAttachment ? (
-                <ActivityIndicator size="small" color={primaryColor} />
-              ) : (
-                <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+              <View style={styles.inputDraftColumn}>
+                <VoiceMemoDraftPreview
+                  attachments={draftAttachments}
+                  onRemove={(index) => setDraftAttachments((prev) => prev.filter((_, i) => i !== index))}
+                  recorder={voiceMemoRecorder}
+                  primaryColor={primaryColor}
+                  textColor={colors.text}
+                  mutedColor={colors.textSecondary}
+                />
+                <TextInput
+                  style={[
+                    styles.composerInput,
+                    {
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder={t('boardDetail.composerPlaceholder')}
+                  placeholderTextColor={colors.textSecondary}
+                  value={messageInput}
+                  onChangeText={setMessageInput}
+                  multiline
+                  maxLength={5000}
+                />
+              </View>
+              {draftAttachments.length === 0 && (
+                <TouchableOpacity
+                  style={[
+                    styles.attachButton,
+                    {
+                      backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
+                      borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                    },
+                  ]}
+                  onPress={handleAttachFile}
+                  disabled={uploadingAttachment}
+                >
+                  {uploadingAttachment ? (
+                    <ActivityIndicator size="small" color={primaryColor} />
+                  ) : (
+                    <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+                  )}
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
-          </View>
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              {
-                backgroundColor: messageInput.trim() && !isSending
-                  ? primaryColor
-                  : isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB',
-              },
-            ]}
-            onPress={handleSendMessage}
-            disabled={!messageInput.trim() || isSending}
-          >
-            <MaterialIcons
-              name={isSending ? 'hourglass-empty' : 'send'}
-              size={20}
-              color="#FFFFFF"
-            />
-          </TouchableOpacity>
+            </View>
+          )}
+          <VoiceMemoActionButton
+            recorder={voiceMemoRecorder}
+            hasContent={!!messageInput.trim() || draftAttachments.length > 0}
+            showAddRecording={draftAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
+            isSending={isSending}
+            disabled={isSending}
+            primaryColor={primaryColor}
+            inactiveColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB'}
+            onSend={handleSendMessage}
+          />
         </View>
         <AttachmentPickerSheet {...attachmentPickerProps} />
       </KeyboardAvoidingView>
@@ -561,6 +607,24 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
     paddingRight: 6,
     paddingVertical: 4,
+  },
+  inputDraftColumn: {
+    flex: 1,
+  },
+  draftAttachment: {
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 8,
+    marginTop: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  draftAttachmentText: {
+    flex: 1,
+    fontFamily: fontFamilies.bodyMedium,
+    fontSize: fontSizes.sm,
   },
   composerInput: {
     flex: 1,

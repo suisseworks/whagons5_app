@@ -20,11 +20,11 @@ type SplashScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 
 
 export const SplashScreen: React.FC = () => {
   const navigation = useNavigation<SplashScreenNavigationProp>();
-  const { isLoading: authLoading, token, pendingTenants } = useAuth();
+  const { isLoading: authLoading, token, pendingTenants, hasNoTenants } = useAuth();
   const { t } = useLanguage();
   const navigatedRef = useRef(false);
-  const latestAuth = useRef({ token, pendingTenants });
-  latestAuth.current = { token, pendingTenants };
+  const latestAuth = useRef({ token, pendingTenants, hasNoTenants });
+  latestAuth.current = { token, pendingTenants, hasNoTenants };
 
   const logoScale = useRef(new Animated.Value(0.8)).current;
   const logoFade = useRef(new Animated.Value(0)).current;
@@ -34,10 +34,12 @@ export const SplashScreen: React.FC = () => {
   const goNext = () => {
     if (navigatedRef.current) return;
     navigatedRef.current = true;
-    const { token: t, pendingTenants: pt } = latestAuth.current;
+    const { token: t, pendingTenants: pt, hasNoTenants: noTenants } = latestAuth.current;
     let destination: string = t ? 'Main' : 'Login';
     let params: any = undefined;
-    if (pt && pt.length > 1) {
+    if (noTenants) {
+      destination = 'NoTenants';
+    } else if (pt && pt.length > 1) {
       destination = 'TenantSelect';
       params = { tenants: pt, firebaseIdToken: '' };
     }
@@ -86,7 +88,7 @@ export const SplashScreen: React.FC = () => {
       const timer = setTimeout(goNext, 1200);
       return () => clearTimeout(timer);
     }
-  }, [authLoading, token]);
+  }, [authLoading, token, hasNoTenants]);
 
   return (
     <TouchableWithoutFeedback onPress={goNext}>

@@ -50,6 +50,7 @@ import { useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useConvexUpload } from '../hooks/useConvexUpload';
+import { useVoiceMemoRecorder } from '../hooks/useVoiceMemoRecorder';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { apiClient } from '../services/apiClient';
 import * as DB from '../store/database';
@@ -60,6 +61,7 @@ import { Toast, ToastRef } from '../components/Toast';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { ProgressiveImage } from '../components/ProgressiveImage';
+import { VoiceMemoActionButton, VoiceMemoBubble, VoiceMemoDraftPreview, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -135,10 +137,12 @@ const MD_LINK_REGEX = /!?\[([^\]]*)\]\(([^)]+)\)/g;
 
 const IMAGE_EXTS = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
 const VIDEO_EXTS = /\.(mp4|mov|webm|avi|mkv)$/i;
+const AUDIO_EXTS = /\.(m4a|mp3|aac|wav|caf|ogg|oga|webm)$/i;
 
 type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'image'; url: string; label: string; storageId?: string }
+  | { type: 'audio'; url: string; label: string; storageId?: string }
   | { type: 'video'; url: string; label: string }
   | { type: 'file'; url: string; label: string; storageId?: string };
 
@@ -173,6 +177,8 @@ function parseMessageContent(text: string): MessagePart[] {
 
     if (isImageMd || IMAGE_EXTS.test(url) || IMAGE_EXTS.test(label)) {
       parts.push({ type: 'image', url, label, storageId });
+    } else if (AUDIO_EXTS.test(url) || AUDIO_EXTS.test(label) || label.toLowerCase().includes('voice memo')) {
+      parts.push({ type: 'audio', url, label, storageId });
     } else if (VIDEO_EXTS.test(url) || VIDEO_EXTS.test(label)) {
       parts.push({ type: 'video', url, label });
     } else if (storageId) {
@@ -538,6 +544,49 @@ const ConvexFileImage = memo(({
   );
 });
 
+const ConvexFileAudio = memo(({
+  storageId,
+  isMe,
+  primaryColor,
+  incomingBackgroundColor,
+  incomingTextColor,
+}: {
+  storageId: string;
+  isMe: boolean;
+  primaryColor: string;
+  incomingBackgroundColor: string;
+  incomingTextColor: string;
+}) => {
+  const { tenantId } = useTenant();
+  const cached = storageUrlCache.get(storageId);
+  const rawUrl = useQuery(
+    api.files.getFileUrl,
+    cached || !tenantId ? 'skip' : { tenantId, storageId: storageId as any },
+  );
+  const url = cached ?? (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
+
+  if (url && !cached) storageUrlCache.set(storageId, url);
+
+  if (!url) {
+    return (
+      <View style={[styles.voiceLoadingBubble, { backgroundColor: isMe ? primaryColor : incomingBackgroundColor }]}> 
+        <ActivityIndicator size="small" color={isMe ? '#FFFFFF' : primaryColor} />
+      </View>
+    );
+  }
+
+  return (
+    <VoiceMemoBubble
+      uri={url}
+      outgoing={isMe}
+      primaryColor={primaryColor}
+      incomingBackgroundColor={incomingBackgroundColor}
+      incomingTextColor={incomingTextColor}
+      timeLabel=""
+    />
+  );
+});
+
 // ---------------------------------------------------------------------------
 // InlineVideoPlayer – wraps useVideoPlayer hook
 // ---------------------------------------------------------------------------
@@ -583,7 +632,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const cvxDeleteWsMessage = useOfflineMutation(api.chat.deleteWorkspaceChatMessage, 'chat.deleteWorkspaceChatMessage');
   const cvxAddReaction = useOfflineMutation(api.chat.addReaction, 'chat.addReaction');
   const cvxRemoveReaction = useOfflineMutation(api.chat.removeReaction, 'chat.removeReaction');
-  const { pickAndUpload, uploading: uploadingFile, attachmentPickerProps } = useConvexUpload();
+  const { pickAndUpload, uploadFile, uploading: uploadingFile, attachmentPickerProps } = useConvexUpload();
   const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
   const toastRef = useRef<ToastRef>(null);
 
@@ -674,6 +723,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
   const [chatView, setChatView] = useState<ChatView>({ type: 'list' });
   const [inputText, setInputText] = useState('');
+  const [draftAttachments, setDraftAttachments] = useState<Awaited<ReturnType<typeof pickAndUpload>>>([]);
   const [isSending, setIsSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const chatListRef = useRef<FlatList>(null);
@@ -1028,6 +1078,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const handleBack = useCallback(() => {
     setChatView({ type: 'list' });
     setInputText('');
+    setDraftAttachments([]);
     setEditingMessageId(null);
     setEditText('');
     setReactionMessageId(null);
@@ -1046,6 +1097,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const openConversation = useCallback((convId: number | string) => {
     setChatView({ type: 'conversation', conversationId: convId });
     setInputText('');
+    setDraftAttachments([]);
     // Find the Convex _id for this conversation to call markAsRead
     const conv = data.conversations.find((c) => String(c.id) === String(convId));
     const convexId = (conv as any)?._id;
@@ -1065,8 +1117,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     }
   }, [activeConversationId, conversationMessages.length, data.conversations, tenantId, markAsReadMutation]);
 
-  // Attach file to conversation
-  const handleAttachFile = useCallback(async () => {
+  const sendUploadedAttachments = useCallback(async (attachments: Awaited<ReturnType<typeof pickAndUpload>>) => {
     if (!currentUserId || !tenantId) return;
 
     const isWorkspaceChat = chatView.type === 'spaceChat';
@@ -1075,7 +1126,6 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     if (!isWorkspaceChat && !activeConversationId) return;
     if (isWorkspaceChat && !spaceWsId) return;
 
-    const attachments = await pickAndUpload();
     if (attachments.length === 0) return;
 
     // Send each attachment as a markdown-style link message
@@ -1137,21 +1187,50 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     data.conversations,
     buildPendingDmMessage,
     buildPendingSpaceMessage,
-    pickAndUpload,
     setPendingDmMessages,
     setPendingSpaceMessages,
     t,
     tenantId,
   ]);
 
+  const handleVoiceMemoRecorded = useCallback((attachment: Awaited<ReturnType<typeof pickAndUpload>>[number]) => {
+    setDraftAttachments((prev) => [...prev, attachment]);
+  }, []);
+
+  const voiceMemoRecorder = useVoiceMemoRecorder(uploadFile, handleVoiceMemoRecorded);
+
+  // Attach file to conversation
+  const handleAttachFile = useCallback(async () => {
+    const attachments = await pickAndUpload();
+    await sendUploadedAttachments(attachments);
+  }, [pickAndUpload, sendUploadedAttachments]);
+
+  const buildInputMessage = useCallback(() => {
+    const parts = [];
+    const text = inputText.trim();
+    if (text) parts.push(text);
+    for (const attachment of draftAttachments) {
+      const label = (attachment as any).displayName || (attachment.fileType.startsWith('audio/') ? 'Voice memo' : attachment.fileName);
+      parts.push(
+        attachment.fileType.startsWith('image/')
+          ? `![${label}](convex-file:${attachment.storageId})`
+          : `[${label}](convex-file:${attachment.storageId})`,
+      );
+    }
+    return parts.join('\n');
+  }, [draftAttachments, inputText]);
+
   // Send message (DM/group)
   const handleSendConversationMessage = useCallback(async () => {
-    const text = inputText.trim();
+    const text = buildInputMessage();
     if (!text || !activeConversationId || !currentUserId) return;
 
+    const originalText = inputText.trim();
+    const originalAttachments = draftAttachments;
     const pendingMessage = buildPendingDmMessage(activeConversationId, text);
     setPendingDmMessages((prev) => [pendingMessage, ...prev]);
     setInputText('');
+    setDraftAttachments([]);
     setIsSending(true);
 
     try {
@@ -1169,12 +1248,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     } catch (err: any) {
       setPendingDmMessages((prev) => prev.filter((m) => m.id !== pendingMessage.id));
       Alert.alert('Error', err?.message || t('colab.failedToSendMessage'));
-      setInputText(text);
+      setInputText(originalText);
+      setDraftAttachments(originalAttachments);
     } finally {
       setIsSending(false);
     }
   }, [
-    inputText,
+    buildInputMessage,
     activeConversationId,
     currentUserId,
     tenantId,
@@ -1182,17 +1262,22 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     cvxSendMessage,
     t,
     buildPendingDmMessage,
+    inputText,
+    draftAttachments,
   ]);
 
   // Send workspace chat message
   const handleSendSpaceMessage = useCallback(async () => {
-    const text = inputText.trim();
+    const text = buildInputMessage();
     const spaceWsId = chatView.type === 'spaceChat' ? chatView.workspaceId : currentWorkspace?.id;
     if (!text || !spaceWsId || !currentUserId) return;
 
+    const originalText = inputText.trim();
+    const originalAttachments = draftAttachments;
     const pendingMessage = buildPendingSpaceMessage(spaceWsId, text);
     setPendingSpaceMessages((prev) => [pendingMessage, ...prev]);
     setInputText('');
+    setDraftAttachments([]);
     setIsSending(true);
 
     try {
@@ -1209,12 +1294,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     } catch (err: any) {
       setPendingSpaceMessages((prev) => prev.filter((m) => m.id !== pendingMessage.id));
       Alert.alert('Error', err?.message || t('colab.failedToSendMessage'));
-      setInputText(text);
+      setInputText(originalText);
+      setDraftAttachments(originalAttachments);
     } finally {
       setIsSending(false);
     }
   }, [
-    inputText,
+    buildInputMessage,
     chatView,
     currentWorkspace,
     currentUserId,
@@ -1223,6 +1309,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     cvxSendWorkspaceChat,
     t,
     buildPendingSpaceMessage,
+    inputText,
+    draftAttachments,
   ]);
 
   const handleStartConversationCall = useCallback(async (mode: 'audio' | 'video') => {
@@ -1484,6 +1572,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
       const sender = getUser(userId);
       const senderName = isMe ? t('colab.senderYou') : sender?.name || t('colab.fallbackUnknown');
       const isEditing = editingMessageId === msgId;
+      const messageParts = parseMessageContent(message);
+      const isAttachmentOnlyMessage = messageParts.length > 0 && messageParts.every((part) => part.type !== 'text');
 
       // Group reactions by emoji
       const reactionGroups: { emoji: string; count: number; hasOwn: boolean }[] = [];
@@ -1563,8 +1653,8 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
               <View>
                 {/* Media content rendered outside Pressable so taps work */}
                 {(() => {
-                  const parts = parseMessageContent(message);
-                  const mediaParts = parts.filter((p) => p.type === 'image' || p.type === 'video');
+                  const parts = messageParts;
+                  const mediaParts = parts.filter((p) => p.type === 'image' || p.type === 'video' || p.type === 'audio');
                   if (mediaParts.length === 0) return null;
                   return (
                     <View style={[
@@ -1572,6 +1662,31 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                       { padding: 0, overflow: 'hidden', backgroundColor: 'transparent', borderWidth: 0 },
                     ]}>
                       {mediaParts.map((part, idx) => {
+                        if (part.type === 'audio' && part.storageId) {
+                          return (
+                            <ConvexFileAudio
+                              key={idx}
+                              storageId={part.storageId}
+                              isMe={isMe}
+                              primaryColor={primaryColor}
+                              incomingBackgroundColor={isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF'}
+                              incomingTextColor={colors.textSecondary}
+                            />
+                          );
+                        }
+                        if (part.type === 'audio') {
+                          return (
+                            <VoiceMemoBubble
+                              key={idx}
+                              uri={part.url}
+                              outgoing={isMe}
+                              primaryColor={primaryColor}
+                              incomingBackgroundColor={isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF'}
+                              incomingTextColor={colors.textSecondary}
+                              timeLabel=""
+                            />
+                          );
+                        }
                         if (part.type === 'image' && part.storageId) {
                           return (
                             <ConvexFileImage
@@ -1628,7 +1743,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                 })()}
                 {/* Text content wrapped in Pressable for long-press actions */}
                 {(() => {
-                  const parts = parseMessageContent(message);
+                  const parts = messageParts;
                   const textParts = parts.filter((p) => p.type === 'text' || p.type === 'file');
                   if (textParts.length === 0) return null;
                   return (
@@ -1638,7 +1753,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                           setReactionMessageId(msgId);
                         } else if (isMe) {
                           Alert.alert(t('colab.alertMessageTitle'), undefined, [
-                            { text: t('colab.alertEditButton'), onPress: () => handleStartEdit(msgId, message) },
+                            ...(!isAttachmentOnlyMessage ? [{ text: t('colab.alertEditButton'), onPress: () => handleStartEdit(msgId, message) }] : []),
                             { text: t('colab.alertDeleteButton'), style: 'destructive', onPress: () => handleDeleteMessage(msgId, msgType) },
                             { text: t('colab.cancelButton'), style: 'cancel' },
                           ]);
@@ -1730,14 +1845,16 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
             {/* Long-press actions for own messages */}
             {!isEditing && isMe && msgType === 'dm' && reactionMessageId !== msgId && (
-              <View style={[styles.messageActions, { alignSelf: 'flex-end' }]}>
-                <TouchableOpacity
-                  style={styles.actionBtn}
-                  onPress={() => handleStartEdit(msgId, message)}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                >
-                  <MaterialIcons name="edit" size={14} color={colors.textSecondary} />
-                </TouchableOpacity>
+              <View style={[styles.messageActions, { alignSelf: 'flex-end' }]}> 
+                {!isAttachmentOnlyMessage && (
+                  <TouchableOpacity
+                    style={styles.actionBtn}
+                    onPress={() => handleStartEdit(msgId, message)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <MaterialIcons name="edit" size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={styles.actionBtn}
                   onPress={() => handleDeleteMessage(msgId, msgType)}
@@ -1787,77 +1904,89 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
             },
           ]}
         >
-          <View
-            style={[
-              styles.inputShell,
-              {
-                backgroundColor: composerSurfaceColor,
-                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
-              },
-            ]}
-          >
-          <TextInput
-            style={[
-              styles.textInput,
-              Platform.OS === 'android' && styles.textInputAndroid,
-              {
-                backgroundColor: composerSurfaceColor,
-                color: colors.text,
-              },
-            ]}
-            placeholder={t('colab.messagePlaceholder')}
-            placeholderTextColor={colors.textSecondary}
-            value={inputText}
-            onChangeText={setInputText}
-            onSubmitEditing={onSend}
-            returnKeyType="send"
-            editable={!isSending}
-            multiline
-            blurOnSubmit={false}
-            underlineColorAndroid="transparent"
-          />
-          <TouchableOpacity
-            style={[
-              styles.attachButton,
-              {
-                backgroundColor: 'transparent',
-                borderColor: 'transparent',
-              },
-            ]}
-            onPress={handleAttachFile}
-            disabled={uploadingFile}
-          >
-            {uploadingFile ? (
-              <ActivityIndicator size="small" color={primaryColor} />
-            ) : (
-              <MaterialIcons name="attach-file" size={20} color={primaryColor} />
-            )}
-          </TouchableOpacity>
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.sendButton,
-            {
-              backgroundColor: inputText.trim()
-                ? primaryColor
-                : isDarkMode
-                  ? 'rgba(255,255,255,0.08)'
-                  : '#D1D5DB',
-            },
-          ]}
-          onPress={onSend}
-          disabled={!inputText.trim() || isSending}
-        >
-          {isSending ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
+          {voiceMemoRecorder.isActive ? (
+            <VoiceMemoRecordingBar
+              recorder={voiceMemoRecorder}
+              primaryColor={primaryColor}
+              textColor={colors.text}
+              mutedColor={colors.textSecondary}
+              surfaceColor={composerSurfaceColor}
+            />
           ) : (
-            <MaterialIcons name="send" size={20} color="#FFFFFF" />
+            <View
+              style={[
+                styles.inputShell,
+                {
+                  backgroundColor: composerSurfaceColor,
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                },
+              ]}
+            >
+              <View style={styles.inputDraftColumn}>
+                <VoiceMemoDraftPreview
+                  attachments={draftAttachments}
+                  onRemove={(index) => setDraftAttachments((prev) => prev.filter((_, i) => i !== index))}
+                  recorder={voiceMemoRecorder}
+                  primaryColor={primaryColor}
+                  textColor={colors.text}
+                  mutedColor={colors.textSecondary}
+                />
+                <TextInput
+                  style={[
+                    styles.textInput,
+                    Platform.OS === 'android' && styles.textInputAndroid,
+                    {
+                      backgroundColor: composerSurfaceColor,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder={t('colab.messagePlaceholder')}
+                  placeholderTextColor={colors.textSecondary}
+                  value={inputText}
+                  onChangeText={setInputText}
+                  onSubmitEditing={onSend}
+                  returnKeyType="send"
+                  editable={!isSending}
+                  multiline
+                  blurOnSubmit={false}
+                  underlineColorAndroid="transparent"
+                />
+              </View>
+              {draftAttachments.length === 0 && (
+                <TouchableOpacity
+                  style={[
+                    styles.attachButton,
+                    {
+                      backgroundColor: 'transparent',
+                      borderColor: 'transparent',
+                    },
+                  ]}
+                  onPress={handleAttachFile}
+                  disabled={uploadingFile}
+                >
+                  {uploadingFile ? (
+                    <ActivityIndicator size="small" color={primaryColor} />
+                  ) : (
+                    <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
           )}
-        </TouchableOpacity>
+          <VoiceMemoActionButton
+            recorder={voiceMemoRecorder}
+            hasContent={!!inputText.trim() || draftAttachments.length > 0}
+            showAddRecording={draftAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
+            isSending={isSending}
+            disabled={isSending}
+            primaryColor={primaryColor}
+            inactiveColor={isDarkMode ? 'rgba(255,255,255,0.08)' : '#D1D5DB'}
+            onSend={onSend}
+          />
       </View>
       );
     },
-    [inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile, t],
+    [draftAttachments, inputText, isSending, primaryColor, isDarkMode, colors, handleAttachFile, uploadingFile, t, voiceMemoRecorder],
   );
 
   // ---------------------------------------------------------------------------
@@ -2976,6 +3105,15 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
     lineHeight: 20,
   },
+  voiceLoadingBubble: {
+    alignItems: 'center',
+    borderRadius: 18,
+    justifyContent: 'center',
+    minHeight: 58,
+    minWidth: 230,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
   messageImage: {
     width: 220,
     height: 180,
@@ -3134,6 +3272,24 @@ const styles = StyleSheet.create({
     paddingRight: 6,
     paddingVertical: 4,
     ...shadows.subtle,
+  },
+  inputDraftColumn: {
+    flex: 1,
+  },
+  draftAttachment: {
+    alignItems: 'center',
+    borderRadius: radius.sm,
+    flexDirection: 'row',
+    gap: 8,
+    marginHorizontal: 8,
+    marginTop: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  draftAttachmentText: {
+    flex: 1,
+    fontFamily: fontFamilies.bodyMedium,
+    fontSize: fontSizes.sm,
   },
   textInput: {
     flex: 1,
