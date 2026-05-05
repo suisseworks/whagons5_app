@@ -16,6 +16,7 @@
     "ios": {
       "icon": "./assets/icon.png",
       "supportsTablet": true,
+      "buildNumber": "1",
       "bundleIdentifier": "com.whagons.v5",
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
@@ -102,6 +103,7 @@
       "expo-video",
       "./plugins/withNotifee.js",
       "./plugins/withIosFirebasePodfileFix.js",
+      "./plugins/withIosVersionFromAppJson.js",
       "expo-localization",
       [
         "expo-asset",
