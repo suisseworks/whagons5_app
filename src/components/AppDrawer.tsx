@@ -22,6 +22,9 @@ import { DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
+import { useTenant } from '../hooks/useTenant';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -38,6 +41,11 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
   const { logout, user, subdomain } = useAuth();
   const { data } = useData();
   const { unreadCount: notificationCount } = useNotifications();
+  const { tenantId } = useTenant();
+  const rawWorkspaceTaskCounts = useQuery(
+    api.bulk.workspaceTaskCounts,
+    tenantId ? { tenantId } : 'skip',
+  );
 
   const surfaceSecondary = isDarkMode ? '#2A2A2A' : '#F5F5F7';
   const borderTertiary = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
@@ -46,6 +54,19 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
 
   const taskCountsByWorkspace = useMemo(() => {
     const counts = new Map<string | number, number>();
+
+    if (rawWorkspaceTaskCounts) {
+      for (const ws of workspaceObjects) {
+        const convexId = (ws as any)._id;
+        const count = convexId ? rawWorkspaceTaskCounts[String(convexId)] : undefined;
+        if (typeof count === 'number') {
+          counts.set(ws.id, count);
+          if (convexId) counts.set(String(convexId), count);
+        }
+      }
+      return counts;
+    }
+
     for (const task of data.tasks) {
       const wsId = (task as any).workspace_id;
       if (wsId != null) {
@@ -53,7 +74,15 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
       }
     }
     return counts;
-  }, [data.tasks]);
+  }, [data.tasks, rawWorkspaceTaskCounts, workspaceObjects]);
+
+  const aggregateTotalTaskCount = useMemo<number>(() => {
+    if (!rawWorkspaceTaskCounts) return totalTaskCount;
+    return Object.values(rawWorkspaceTaskCounts as Record<string, unknown>).reduce<number>(
+      (sum, count) => sum + (typeof count === 'number' ? count : 0),
+      0,
+    );
+  }, [rawWorkspaceTaskCounts, totalTaskCount]);
 
   const handleNavigate = (screen: keyof RootStackParamList) => {
     onClose();
@@ -144,7 +173,7 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
           >
             {t('component.appDrawer.workspaceEverything')}
           </Text>
-          <Text style={[styles.workspaceCount, { color: textTertiary }]}>{totalTaskCount}</Text>
+          <Text style={[styles.workspaceCount, { color: textTertiary }]}>{aggregateTotalTaskCount}</Text>
         </TouchableOpacity>
 
         {workspaceObjects.map((ws) => {

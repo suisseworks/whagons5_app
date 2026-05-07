@@ -223,6 +223,10 @@ export const MainScreen: React.FC = () => {
     isAuthenticated && tenantId ? { tenantId, slug: 'scheduling' } : 'skip',
   );
   const markBoardNotificationsRead = useOfflineMutation(api.boards.markBoardNotificationsRead, 'boards.markBoardNotificationsRead');
+  const rawWorkspaceTaskCounts = useQuery(
+    api.bulk.workspaceTaskCounts,
+    isAuthenticated && tenantId ? { tenantId } : 'skip',
+  );
 
   const isCleaningEnabled = useMemo(() => {
     const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
@@ -938,9 +942,23 @@ export const MainScreen: React.FC = () => {
     );
   };
 
-  // Task counts per workspace for the workspace list
+  // Task counts per workspace for the workspace list. Use the backend aggregate
+  // counter so badges are not capped by the mobile task-row fetch limit.
   const taskCountsByWorkspace = useMemo(() => {
     const counts = new Map<string | number, number>();
+
+    if (rawWorkspaceTaskCounts) {
+      for (const ws of workspaceObjects) {
+        const convexId = (ws as any)._id;
+        const count = convexId ? rawWorkspaceTaskCounts[String(convexId)] : undefined;
+        if (typeof count === 'number') {
+          counts.set(ws.id, count);
+          if (convexId) counts.set(String(convexId), count);
+        }
+      }
+      return counts;
+    }
+
     for (const t of data.tasks) {
       const wsId = (t as any).workspace_id;
       if (wsId != null) {
@@ -948,7 +966,7 @@ export const MainScreen: React.FC = () => {
       }
     }
     return counts;
-  }, [data.tasks]);
+  }, [data.tasks, rawWorkspaceTaskCounts, workspaceObjects]);
 
   const renderWorkspacesList = () => {
     const wsItems = workspaceObjects;

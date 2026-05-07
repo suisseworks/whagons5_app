@@ -18,7 +18,7 @@ import React, {
   useCallback,
   ReactNode,
 } from 'react';
-import { useQuery } from 'convex/react';
+import { usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useNetwork } from './NetworkContext';
@@ -731,6 +731,9 @@ const SQLITE_TABLES: (keyof SyncedData)[] = [
   'kpiCards', 'plugins',
 ];
 
+const TASKS_PAGE_SIZE = 512;
+const MAX_TASK_ROWS = 4096;
+
 /** Persist an array of mapped docs to SQLite (fire-and-forget). */
 function persistToSqlite(table: string, rows: any[]) {
   if (!rows || rows.length === 0) return;
@@ -805,11 +808,29 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     skipArgs ?? { tenantId: tenantId! },
   );
 
-  // Tasks
-  const rawTasks = useQuery(
+  // Tasks: use the paginated path so mobile does not hit the legacy 1000-row cap.
+  const {
+    results: pagedTasks,
+    status: tasksStatus,
+    loadMore: loadMoreTaskRows,
+  } = usePaginatedQuery(
     api.bulk.tasksByWorkspace,
-    skipArgs ?? { tenantId: tenantId!, limit: 4096 },
+    skipArgs ?? { tenantId: tenantId! },
+    { initialNumItems: Math.min(TASKS_PAGE_SIZE, MAX_TASK_ROWS) },
   );
+
+  useEffect(() => {
+    if (!tenantId) return;
+    if (tasksStatus !== 'CanLoadMore') return;
+    if (pagedTasks.length >= MAX_TASK_ROWS) return;
+
+    const remaining = MAX_TASK_ROWS - pagedTasks.length;
+    loadMoreTaskRows(Math.min(TASKS_PAGE_SIZE, remaining));
+  }, [loadMoreTaskRows, pagedTasks.length, tasksStatus, tenantId]);
+
+  const rawTasks = tasksStatus === 'LoadingFirstPage'
+    ? undefined
+    : pagedTasks;
 
   // Pivot data (taskUsers, taskTags)
   const pivotData = useQuery(
