@@ -42,8 +42,8 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
   const { data } = useData();
   const { unreadCount: notificationCount } = useNotifications();
   const { tenantId } = useTenant();
-  const rawWorkspaceTaskCounts = useQuery(
-    api.bulk.workspaceTaskCounts,
+  const taskSummaryCounts = useQuery(
+    api.bulk.taskSummaryCounts,
     tenantId ? { tenantId } : 'skip',
   );
 
@@ -55,10 +55,10 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
   const taskCountsByWorkspace = useMemo(() => {
     const counts = new Map<string | number, number>();
 
-    if (rawWorkspaceTaskCounts) {
+    if (taskSummaryCounts?.byWorkspace) {
       for (const ws of workspaceObjects) {
         const convexId = (ws as any)._id;
-        const count = convexId ? rawWorkspaceTaskCounts[String(convexId)] : undefined;
+        const count = convexId ? taskSummaryCounts.byWorkspace[String(convexId)] : undefined;
         if (typeof count === 'number') {
           counts.set(ws.id, count);
           if (convexId) counts.set(String(convexId), count);
@@ -74,15 +74,11 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
       }
     }
     return counts;
-  }, [data.tasks, rawWorkspaceTaskCounts, workspaceObjects]);
+  }, [data.tasks, taskSummaryCounts, workspaceObjects]);
 
   const aggregateTotalTaskCount = useMemo<number>(() => {
-    if (!rawWorkspaceTaskCounts) return totalTaskCount;
-    return Object.values(rawWorkspaceTaskCounts as Record<string, unknown>).reduce<number>(
-      (sum, count) => sum + (typeof count === 'number' ? count : 0),
-      0,
-    );
-  }, [rawWorkspaceTaskCounts, totalTaskCount]);
+    return taskSummaryCounts?.total ?? data.tasks.length ?? totalTaskCount;
+  }, [data.tasks.length, taskSummaryCounts?.total, totalTaskCount]);
 
   const handleNavigate = (screen: keyof RootStackParamList) => {
     onClose();

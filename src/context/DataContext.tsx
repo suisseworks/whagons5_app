@@ -371,6 +371,12 @@ export interface SyncedData {
   plugins: SyncedPlugin[];
 }
 
+export interface TaskQueryOptions {
+  workspaceId?: string;
+  mode?: 'hot' | 'all' | 'archive';
+  statusIds?: string[];
+}
+
 interface DataContextType {
   data: SyncedData;
   sharedTaskIds: Set<number | string>;
@@ -384,8 +390,11 @@ interface DataContextType {
   isSyncing: boolean;
   hasEverSynced: boolean;
   syncError: string | null;
-  syncProgress: null;
+  syncProgress: number | null;
   isInitialSync: boolean;
+  hasMoreTaskRows: boolean;
+  loadMoreTaskRows: () => void;
+  setTaskQuery: (query: TaskQueryOptions) => void;
   refresh: () => Promise<void>;
   forceResync: () => Promise<void>;
   dataManager: null;
@@ -732,7 +741,6 @@ const SQLITE_TABLES: (keyof SyncedData)[] = [
 ];
 
 const TASKS_PAGE_SIZE = 512;
-const MAX_TASK_ROWS = 4096;
 
 /** Persist an array of mapped docs to SQLite (fire-and-forget). */
 function persistToSqlite(table: string, rows: any[]) {
@@ -757,6 +765,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { tenantId } = useTenant();
   const { isOnline } = useNetwork();
   const skipArgs = !tenantId ? 'skip' as const : undefined;
+  const [taskQuery, setTaskQueryState] = useState<TaskQueryOptions>({ mode: 'hot' });
+  const taskStatusIdsKey = (taskQuery.statusIds ?? []).join('|');
+
+  const setTaskQuery = useCallback((query: TaskQueryOptions) => {
+    setTaskQueryState((prev) => {
+      const prevStatusIds = prev.statusIds ?? [];
+      const nextStatusIds = query.statusIds ?? [];
+      const sameStatusIds = prevStatusIds.length === nextStatusIds.length
+        && prevStatusIds.every((id, index) => id === nextStatusIds[index]);
+      const nextMode = query.mode ?? 'hot';
+      if (prev.workspaceId === query.workspaceId && prev.mode === nextMode && sameStatusIds) return prev;
+      return {
+        workspaceId: query.workspaceId,
+        mode: nextMode,
+        statusIds: nextStatusIds.length > 0 ? nextStatusIds : undefined,
+      };
+    });
+  }, []);
 
   // SQLite-hydrated data (loaded once on mount, replaced when Convex arrives)
   const [cachedData, setCachedData] = useState<SyncedData | null>(null);
@@ -808,28 +834,52 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     skipArgs ?? { tenantId: tenantId! },
   );
 
+  const taskQueryArgs = useMemo(() => {
+    if (!tenantId) return 'skip' as const;
+    return {
+      tenantId,
+      mode: taskQuery.mode ?? 'hot',
+      ...(taskQuery.workspaceId ? { workspaceId: taskQuery.workspaceId } : {}),
+      ...(taskQuery.statusIds && taskQuery.statusIds.length > 0 ? { statusIds: taskQuery.statusIds } : {}),
+    };
+  }, [tenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
+
+  const taskQueryKey = useMemo(() => JSON.stringify({
+    tenantId: tenantId ?? null,
+    mode: taskQuery.mode ?? 'hot',
+    workspaceId: taskQuery.workspaceId ?? null,
+    statusIds: taskQuery.statusIds ?? [],
+  }), [tenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
+
+  const taskRowsByQueryRef = useRef<Map<string, any[]>>(new Map());
+  const lastTaskRowsRef = useRef<any[] | undefined>(undefined);
+
   // Tasks: use the paginated path so mobile does not hit the legacy 1000-row cap.
   const {
     results: pagedTasks,
     status: tasksStatus,
-    loadMore: loadMoreTaskRows,
+    loadMore: loadMoreTaskRowsPage,
   } = usePaginatedQuery(
     api.bulk.tasksByWorkspace,
-    skipArgs ?? { tenantId: tenantId! },
-    { initialNumItems: Math.min(TASKS_PAGE_SIZE, MAX_TASK_ROWS) },
+    taskQueryArgs,
+    { initialNumItems: TASKS_PAGE_SIZE },
   );
 
-  useEffect(() => {
-    if (!tenantId) return;
-    if (tasksStatus !== 'CanLoadMore') return;
-    if (pagedTasks.length >= MAX_TASK_ROWS) return;
+  const hasMoreTaskRows = tasksStatus === 'CanLoadMore';
+  const loadMoreTaskRows = useCallback(() => {
+    if (tasksStatus === 'CanLoadMore') {
+      loadMoreTaskRowsPage(TASKS_PAGE_SIZE);
+    }
+  }, [loadMoreTaskRowsPage, tasksStatus]);
 
-    const remaining = MAX_TASK_ROWS - pagedTasks.length;
-    loadMoreTaskRows(Math.min(TASKS_PAGE_SIZE, remaining));
-  }, [loadMoreTaskRows, pagedTasks.length, tasksStatus, tenantId]);
+  useEffect(() => {
+    if (tasksStatus === 'LoadingFirstPage') return;
+    taskRowsByQueryRef.current.set(taskQueryKey, pagedTasks);
+    lastTaskRowsRef.current = pagedTasks;
+  }, [pagedTasks, taskQueryKey, tasksStatus]);
 
   const rawTasks = tasksStatus === 'LoadingFirstPage'
-    ? undefined
+    ? (taskRowsByQueryRef.current.get(taskQueryKey) ?? lastTaskRowsRef.current)
     : pagedTasks;
 
   // Pivot data (taskUsers, taskTags)
@@ -1020,6 +1070,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         persistToSqlite(table, rows);
       }
     }
+
+    if (data.tasks.length > 0) {
+      const statusNameById = new Map(data.statuses.map((status) => [String(status.id), status.name]));
+      DB.upsertTaskCacheRows(data.tasks.map((task) => ({
+        ...task,
+        status: task.status_id == null ? null : statusNameById.get(String(task.status_id)) ?? null,
+      }))).catch(() => {});
+    }
+
     DB.setMeta('last_sync_ts', String(Date.now())).catch(() => {});
   }, [data, tenantId, refData, rawTasks]);
 
@@ -1065,10 +1124,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     syncError,
     syncProgress: null as number | null,
     isInitialSync: isLoading,
+    hasMoreTaskRows,
+    loadMoreTaskRows,
+    setTaskQuery,
     refresh,
     forceResync,
     dataManager: null,
-  }), [effectiveData, sharedTaskIds, sharedCount, rawSharedToMe, approvals, approvalApprovers, taskApprovalInstances, userTeamsData, rolesData, isSyncing, hasEverSynced, syncError, isLoading, refresh, forceResync]);
+  }), [effectiveData, sharedTaskIds, sharedCount, rawSharedToMe, approvals, approvalApprovers, taskApprovalInstances, userTeamsData, rolesData, isSyncing, hasEverSynced, syncError, isLoading, hasMoreTaskRows, loadMoreTaskRows, setTaskQuery, refresh, forceResync]);
 
   return (
     <DataContext.Provider value={contextValue}>

@@ -863,35 +863,43 @@ export const CreateTaskScreen: React.FC = () => {
             </TouchableOpacity>
           )}
 
-          {/* Priority Selector */}
-          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.priorityLabel')}</Text>
-          <TouchableOpacity
-            style={[
-              styles.fieldSelector,
-              {
-                borderColor: selectedPriority ? selectedPriority.color : borderColor,
-                backgroundColor: selectedPriority
-                  ? `${selectedPriority.color}08`
-                  : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-              },
-            ]}
-            onPress={() => setPriorityModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.priorityDot, { backgroundColor: selectedPriority?.color ?? '#9CA3AF' }]} />
-            <Text
-              style={[
-                styles.fieldSelectorText,
-                selectedPriority
-                  ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                  : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-              ]}
-              numberOfLines={1}
-            >
-              {selectedPriority?.name ?? t('createTask.priorityLabel')}
-            </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-          </TouchableOpacity>
+          {/* Spot / Location */}
+          {spotItems.length > 0 && (
+            <>
+              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.locationLabel')}</Text>
+              <TouchableOpacity
+                style={[
+                  styles.fieldSelector,
+                  {
+                    borderColor: selectedSpot ? primaryColor : borderColor,
+                    backgroundColor: selectedSpot
+                      ? `${primaryColor}08`
+                      : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
+                  },
+                ]}
+                onPress={() => setSpotModalVisible(true)}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons
+                  name="place"
+                  size={18}
+                  color={selectedSpot ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
+                />
+                <Text
+                  style={[
+                    styles.fieldSelectorText,
+                    selectedSpot
+                      ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
+                      : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {selectedSpot?.name ?? t('createTask.selectLocation')}
+                </Text>
+                <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
+              </TouchableOpacity>
+            </>
+          )}
 
           {/* Assign To */}
           <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.assignToLabel')}</Text>
@@ -939,43 +947,35 @@ export const CreateTaskScreen: React.FC = () => {
             </View>
           )}
 
-          {/* Spot / Location */}
-          {spotItems.length > 0 && (
-            <>
-              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.locationLabel')}</Text>
-              <TouchableOpacity
-                style={[
-                  styles.fieldSelector,
-                  {
-                    borderColor: selectedSpot ? primaryColor : borderColor,
-                    backgroundColor: selectedSpot
-                      ? `${primaryColor}08`
-                      : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-                  },
-                ]}
-                onPress={() => setSpotModalVisible(true)}
-                activeOpacity={0.7}
-              >
-                <MaterialIcons
-                  name="place"
-                  size={18}
-                  color={selectedSpot ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
-                />
-                <Text
-                  style={[
-                    styles.fieldSelectorText,
-                    selectedSpot
-                      ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                      : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-                  ]}
-                  numberOfLines={1}
-                >
-                  {selectedSpot?.name ?? t('createTask.selectLocation')}
-                </Text>
-                <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-              </TouchableOpacity>
-            </>
-          )}
+          {/* Priority Selector */}
+          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.priorityLabel')}</Text>
+          <TouchableOpacity
+            style={[
+              styles.fieldSelector,
+              {
+                borderColor: selectedPriority ? selectedPriority.color : borderColor,
+                backgroundColor: selectedPriority
+                  ? `${selectedPriority.color}08`
+                  : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
+              },
+            ]}
+            onPress={() => setPriorityModalVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={[styles.priorityDot, { backgroundColor: selectedPriority?.color ?? '#9CA3AF' }]} />
+            <Text
+              style={[
+                styles.fieldSelectorText,
+                selectedPriority
+                  ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
+                  : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
+              ]}
+              numberOfLines={1}
+            >
+              {selectedPriority?.name ?? t('createTask.priorityLabel')}
+            </Text>
+            <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
+          </TouchableOpacity>
 
           {/* Tags */}
           {tagItems.length > 0 && (

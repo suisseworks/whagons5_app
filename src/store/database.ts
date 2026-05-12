@@ -15,7 +15,7 @@
 import { openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 
 const DB_NAME = 'whagons_sync.db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 let _db: SQLiteDatabase | null = null;
 
@@ -142,6 +142,29 @@ async function migrate(db: SQLiteDatabase): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS idx_mutation_history_tenant_action
         ON mutation_history(tenant_id, action_at DESC, archived_at DESC);
+    `);
+  }
+
+  if (currentVersion < 5) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS task_cache (
+        id          TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        status_name  TEXT,
+        status_id    TEXT,
+        sort_id      INTEGER NOT NULL DEFAULT 0,
+        deleted_at   TEXT,
+        data         TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_status_sort
+        ON task_cache(status_name, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspace_status_sort
+        ON task_cache(workspace_id, status_name, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspace_sort
+        ON task_cache(workspace_id, sort_id DESC);
     `);
   }
 
@@ -275,7 +298,7 @@ export async function clearTable(table: string): Promise<void> {
 /** Drop all synced data (used on logout or forced resync). */
 export async function clearAllData(): Promise<void> {
   const db = await getDb();
-  await db.execAsync(`DELETE FROM sync_data; DELETE FROM sync_meta; DELETE FROM mutation_queue; DELETE FROM mutation_history;`);
+  await db.execAsync(`DELETE FROM sync_data; DELETE FROM sync_meta; DELETE FROM task_cache; DELETE FROM mutation_queue; DELETE FROM mutation_history;`);
 }
 
 /** Get count of rows for a given table. */
@@ -286,6 +309,89 @@ export async function getRowCount(table: string): Promise<number> {
     [table],
   );
   return row?.cnt ?? 0;
+}
+
+// ---- indexed task cache helpers ------------------------------------------
+
+export interface CachedTaskRecord {
+  id?: string | number;
+  status?: string | null;
+  status_id?: string | number | null;
+  workspace_id?: string | number | null;
+  deleted_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface TaskCacheQuery {
+  workspaceId?: string | number | null;
+  statuses?: string[];
+  limit: number;
+  offset?: number;
+}
+
+function numericSortId(id: unknown): number {
+  const n = Number(id);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export async function upsertTaskCacheRows(rows: CachedTaskRecord[]): Promise<void> {
+  if (rows.length === 0) return;
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    for (const row of rows) {
+      if (row.id == null) continue;
+      await db.runAsync(
+        `INSERT OR REPLACE INTO task_cache
+          (id, workspace_id, status_name, status_id, sort_id, deleted_at, data)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          String(row.id),
+          row.workspace_id == null ? null : String(row.workspace_id),
+          row.status == null ? null : String(row.status),
+          row.status_id == null ? null : String(row.status_id),
+          numericSortId(row.id),
+          row.deleted_at == null ? null : String(row.deleted_at),
+          JSON.stringify(row),
+        ],
+      );
+    }
+  });
+}
+
+export async function queryTaskCache<T = CachedTaskRecord>({
+  workspaceId,
+  statuses,
+  limit,
+  offset = 0,
+}: TaskCacheQuery): Promise<{ rows: T[]; total: number }> {
+  const db = await getDb();
+  const where: string[] = [`(deleted_at IS NULL OR deleted_at = '')`];
+  const params: unknown[] = [];
+
+  if (workspaceId != null) {
+    where.push(`workspace_id = ?`);
+    params.push(String(workspaceId));
+  }
+
+  if (statuses && statuses.length > 0) {
+    where.push(`status_name IN (${statuses.map(() => '?').join(', ')})`);
+    params.push(...statuses);
+  }
+
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  const countRow = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM task_cache ${whereSql}`,
+    params as any[],
+  );
+  const rows = await db.getAllAsync<{ data: string }>(
+    `SELECT data FROM task_cache ${whereSql} ORDER BY sort_id DESC LIMIT ? OFFSET ?`,
+    [...params, Math.max(1, Math.trunc(limit)), Math.max(0, Math.trunc(offset))] as any[],
+  );
+
+  return {
+    total: countRow?.cnt ?? 0,
+    rows: rows.map((row) => JSON.parse(row.data) as T),
+  };
 }
 
 // ---- sync_meta helpers ---------------------------------------------------
