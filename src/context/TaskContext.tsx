@@ -10,6 +10,7 @@
 import React, { createContext, useContext, useState, useMemo, useCallback, useRef, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
+import { useQuery } from 'convex/react';
 import { TaskItem, Assignee, CardDensity } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
 import { useAuth } from './AuthContext';
@@ -19,9 +20,11 @@ import { computeApprovalStatusForTask } from '../utils/approvalStatus';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useMutationQueue } from './MutationQueueContext';
 import { useNetwork } from './NetworkContext';
+import * as DB from '../store/database';
 
 const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
 const MAX_WORKING_TASKS = 5;
+const TASK_SQL_THRESHOLD = 10000;
 
 // ---------------------------------------------------------------------------
 // Helpers – map synced backend data → UI TaskItem
@@ -336,9 +339,24 @@ interface TaskContextType {
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const { data, sharedTaskIds, sharedCount, rawSharedToMe, approvals: approvalsList, approvalApprovers, taskApprovalInstances } = useData();
+  const {
+    data,
+    sharedTaskIds,
+    sharedCount,
+    rawSharedToMe,
+    approvals: approvalsList,
+    approvalApprovers,
+    taskApprovalInstances,
+    hasMoreTaskRows,
+    loadMoreTaskRows,
+    setTaskQuery,
+  } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
+  const taskSummaryCounts = useQuery(
+    api.bulk.taskSummaryCounts,
+    tenantId ? { tenantId } : 'skip',
+  );
   const { queue } = useMutationQueue();
   const { isOnline } = useNetwork();
   const [storedTenantId, setStoredTenantId] = useState<string | null>(null);
@@ -1019,7 +1037,169 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
   const hasActiveFilters = filters.categoryIds.length > 0 || filters.statuses.length > 0 || filters.priorities.length > 0 || filters.assignees.length > 0 || filters.flagColors.length > 0 || filters.tags.length > 0;
 
+  const PAGE_SIZE = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const sqlFilterWorkspaceId = useMemo(() => {
+    if (selectedWorkspace === 'Everything') return undefined;
+    if (selectedWorkspace === 'Shared') return null;
+    const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
+    return ws?.id ?? null;
+  }, [data.workspaces, selectedWorkspace]);
+
+  const canUseIndexedTaskList = useMemo(() => (
+    selectedWorkspace !== 'Shared'
+    && filters.categoryIds.length === 0
+    && filters.priorities.length === 0
+    && filters.assignees.length === 0
+    && filters.flagColors.length === 0
+    && filters.tags.length === 0
+    && !shouldShowPendingTaskState
+  ), [filters, selectedWorkspace, shouldShowPendingTaskState]);
+
+  const effectiveTaskUniverseCount = taskSummaryCounts?.total ?? allMappedTasks.length;
+  const shouldUseSqlTaskList = canUseIndexedTaskList && effectiveTaskUniverseCount >= TASK_SQL_THRESHOLD;
+
+  const indexedTaskLists = useMemo(() => {
+    if (!canUseIndexedTaskList || shouldUseSqlTaskList) return null;
+
+    const sortedAll = [...allMappedTasks].sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
+    const byWorkspace = new Map<string, TaskItem[]>();
+    const byStatus = new Map<string, TaskItem[]>();
+    const byWorkspaceStatus = new Map<string, Map<string, TaskItem[]>>();
+
+    for (const task of sortedAll) {
+      const workspaceKey = task.workspaceId == null ? '' : String(task.workspaceId);
+      const statusKey = task.status;
+
+      if (workspaceKey) {
+        const workspaceList = byWorkspace.get(workspaceKey) ?? [];
+        workspaceList.push(task);
+        byWorkspace.set(workspaceKey, workspaceList);
+      }
+
+      const statusList = byStatus.get(statusKey) ?? [];
+      statusList.push(task);
+      byStatus.set(statusKey, statusList);
+
+      if (workspaceKey) {
+        let statusMap = byWorkspaceStatus.get(workspaceKey);
+        if (!statusMap) {
+          statusMap = new Map<string, TaskItem[]>();
+          byWorkspaceStatus.set(workspaceKey, statusMap);
+        }
+        const workspaceStatusList = statusMap.get(statusKey) ?? [];
+        workspaceStatusList.push(task);
+        statusMap.set(statusKey, workspaceStatusList);
+      }
+    }
+
+    return { sortedAll, byWorkspace, byStatus, byWorkspaceStatus };
+  }, [allMappedTasks, canUseIndexedTaskList, shouldUseSqlTaskList]);
+
+  const activeIndexedTasks = useMemo(() => {
+    if (!indexedTaskLists) return null;
+
+    const statuses = filters.statuses;
+    const workspaceKey = sqlFilterWorkspaceId == null ? undefined : String(sqlFilterWorkspaceId);
+
+    if (workspaceKey && statuses.length === 1) {
+      return indexedTaskLists.byWorkspaceStatus.get(workspaceKey)?.get(statuses[0]) ?? EMPTY_TASKS;
+    }
+
+    if (workspaceKey && statuses.length === 0) {
+      return indexedTaskLists.byWorkspace.get(workspaceKey) ?? EMPTY_TASKS;
+    }
+
+    if (!workspaceKey && statuses.length === 1) {
+      return indexedTaskLists.byStatus.get(statuses[0]) ?? EMPTY_TASKS;
+    }
+
+    if (!workspaceKey && statuses.length === 0) {
+      return indexedTaskLists.sortedAll;
+    }
+
+    if (workspaceKey) {
+      const statusMap = indexedTaskLists.byWorkspaceStatus.get(workspaceKey);
+      if (!statusMap) return EMPTY_TASKS;
+      return statuses
+        .flatMap((status) => statusMap.get(status) ?? EMPTY_TASKS)
+        .sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
+    }
+
+    return statuses
+      .flatMap((status) => indexedTaskLists.byStatus.get(status) ?? EMPTY_TASKS)
+      .sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
+  }, [filters.statuses, indexedTaskLists, sqlFilterWorkspaceId]);
+
+  const sqlFilterKey = useMemo(() => {
+    if (!shouldUseSqlTaskList) return '';
+    return JSON.stringify({
+      workspaceId: sqlFilterWorkspaceId ?? null,
+      statuses: filters.statuses,
+      limit: visibleCount,
+    });
+  }, [filters.statuses, shouldUseSqlTaskList, sqlFilterWorkspaceId, visibleCount]);
+
+  const [sqlFilteredState, setSqlFilteredState] = useState<{
+    key: string;
+    tasks: TaskItem[];
+    total: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!shouldUseSqlTaskList || !sqlFilterKey) {
+      setSqlFilteredState(null);
+      return;
+    }
+
+    let cancelled = false;
+    DB.queryTaskCache<SyncedTask>({
+      workspaceId: sqlFilterWorkspaceId ?? undefined,
+      statuses: filters.statuses,
+      limit: visibleCount,
+    })
+      .then(({ rows, total }) => {
+        if (cancelled) return;
+        if (total === 0 && allMappedTasks.length > 0) {
+          setSqlFilteredState(null);
+          return;
+        }
+        const mapped = rows.map((task) =>
+          mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap),
+        );
+        setSqlFilteredState({ key: sqlFilterKey, tasks: mapped, total });
+      })
+      .catch(() => {
+        if (!cancelled) setSqlFilteredState(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    allMappedTasks.length,
+    assigneeMap,
+    categoryInfoMap,
+    filters.statuses,
+    initialStatus,
+    priorityMap,
+    spotMap,
+    sqlFilterKey,
+    sqlFilterWorkspaceId,
+    statusMap,
+    shouldUseSqlTaskList,
+    tagMap,
+    templateFormMap,
+    userFlagMap,
+    visibleCount,
+  ]);
+
+  const activeSqlFilteredState = sqlFilteredState?.key === sqlFilterKey ? sqlFilteredState : null;
+
   const filteredTasks = useMemo(() => {
+    if (activeSqlFilteredState) return activeSqlFilteredState.tasks;
+    if (activeIndexedTasks) return activeIndexedTasks;
     if (allMappedTasks.length === 0) return EMPTY_TASKS;
 
     let result: TaskItem[];
@@ -1100,7 +1280,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return result;
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap]);
+  }, [activeIndexedTasks, activeSqlFilteredState, allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap]);
 
   const wsFilteredTasks = useMemo(() => {
     let result = selectedWorkspace === 'Everything' ? allMappedTasks : EMPTY_TASKS;
@@ -1175,10 +1355,33 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return statuses.filter((s) => statusIds.has(s.id));
   }, [wsFilteredTasks, statuses, categoryStatusIdsMap]);
 
-  // Pagination
-  const PAGE_SIZE = 30;
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const taskQueryWorkspaceId = useMemo(() => {
+    if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') return undefined;
+    const workspace = data.workspaces.find((w) => w.name === selectedWorkspace);
+    const convexId = (workspace as any)?._id;
+    return convexId ? String(convexId) : undefined;
+  }, [data.workspaces, selectedWorkspace]);
 
+  const taskQueryStatusIds = useMemo(() => {
+    if (filters.statuses.length === 0) return undefined;
+    const selectedNames = new Set(filters.statuses.map((status) => status.toLowerCase()));
+    const ids = data.statuses
+      .filter((status) => selectedNames.has(String(status.name).toLowerCase()))
+      .map((status) => (status as any)._id)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+    return ids.length > 0 ? ids : undefined;
+  }, [data.statuses, filters.statuses]);
+
+  useEffect(() => {
+    const useServerFilteredRows = shouldUseSqlTaskList;
+    setTaskQuery({
+      workspaceId: taskQueryWorkspaceId,
+      mode: useServerFilteredRows ? 'all' : 'hot',
+      statusIds: useServerFilteredRows ? taskQueryStatusIds : undefined,
+    });
+  }, [setTaskQuery, shouldUseSqlTaskList, taskQueryStatusIds, taskQueryWorkspaceId]);
+
+  // Pagination
   const prevWorkspaceRef = useRef(selectedWorkspace);
   useEffect(() => {
     if (prevWorkspaceRef.current !== selectedWorkspace) {
@@ -1197,14 +1400,18 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [filters]);
 
   const tasks = useMemo(() => filteredTasks.slice(0, visibleCount), [filteredTasks, visibleCount]);
-  const totalTaskCount = filteredTasks.length;
-  const hasMoreTasks = visibleCount < filteredTasks.length;
+  const totalTaskCount = activeSqlFilteredState?.total ?? filteredTasks.length;
+  const hasMoreTasks = visibleCount < totalTaskCount || (!activeSqlFilteredState && hasMoreTaskRows);
 
   const loadMoreTasks = useCallback(() => {
-    if (hasMoreTasks) {
-      setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, filteredTasks.length));
+    if (visibleCount < totalTaskCount) {
+      setVisibleCount((prev) => Math.min(prev + PAGE_SIZE, totalTaskCount));
+      return;
     }
-  }, [hasMoreTasks, filteredTasks.length]);
+    if (!activeSqlFilteredState && hasMoreTaskRows) {
+      loadMoreTaskRows();
+    }
+  }, [activeSqlFilteredState, hasMoreTaskRows, loadMoreTaskRows, totalTaskCount, visibleCount]);
 
   // ---------------------------------------------------------------------------
   // Working tasks

@@ -1031,8 +1031,21 @@ export const TaskDetailScreen: React.FC = () => {
     )) ?? null;
   }, [unfilteredTasks, data.tasks, task]);
 
-  const canFillForm = useMemo(() => {
-    const action = String((liveTaskForPermissions as any)?.statusAction ?? currentStatusAction ?? task.statusAction ?? '').toUpperCase();
+  const formEligibility = useMemo(() => {
+    const liveStatusId = (liveTaskForPermissions as any)?.statusId ?? currentStatusId ?? task.statusId;
+    const liveStatus = data.statuses.find((status: any) => (
+      String(status.id ?? '') === String(liveStatusId)
+      || String(status.pgId ?? '') === String(liveStatusId)
+      || String(status._id ?? '') === String(liveStatusId)
+    ));
+    const action = String(
+      (liveTaskForPermissions as any)?.statusAction
+      ?? liveStatus?.action
+      ?? currentStatusAction
+      ?? task.statusAction
+      ?? '',
+    ).toUpperCase();
+    const isFinished = action === 'FINISHED' || action === 'DONE' || liveStatus?.final === true;
     const isInProgress = action === 'WORKING' || action === 'PAUSED';
 
     const currentUserKeys = new Set<string>();
@@ -1040,8 +1053,18 @@ export const TaskDetailScreen: React.FC = () => {
     if (currentUserConvexId) currentUserKeys.add(String(currentUserConvexId));
 
     const isAssignedToMe = Array.from(currentUserKeys).some((key) => assignedUserIds.has(key));
-    return isInProgress && isAssignedToMe;
-  }, [liveTaskForPermissions, currentStatusAction, task.statusAction, currentUserId, currentUserConvexId, assignedUserIds]);
+    if (isFinished) {
+      return { canFillForm: false, readOnlyMessageKey: 'taskDetail.formReadOnlyFinalized' };
+    }
+    if (!isInProgress) {
+      return { canFillForm: false, readOnlyMessageKey: 'taskDetail.formReadOnlyMustStart' };
+    }
+    if (!isAssignedToMe) {
+      return { canFillForm: false, readOnlyMessageKey: 'taskDetail.formReadOnlyMustAssign' };
+    }
+    return { canFillForm: true, readOnlyMessageKey: '' };
+  }, [liveTaskForPermissions, currentStatusId, task.statusId, task.statusAction, data.statuses, currentStatusAction, currentUserId, currentUserConvexId, assignedUserIds]);
+  const canFillForm = formEligibility.canFillForm;
 
   type TaskViewer = {
     key: string;
@@ -1808,25 +1831,6 @@ export const TaskDetailScreen: React.FC = () => {
         </TouchableOpacity>
       )}
 
-      {/* Created-from GPS */}
-      {showCreatedFromCard && (
-        <TaskNavigationMapSafe
-          taskLatitude={task.latitude!}
-          taskLongitude={task.longitude!}
-          taskTitle={task.title}
-          spotName={!hasSpotCoordinates && task.spot ? task.spot : undefined}
-          helperText={t('taskDetail.creationLocationHelper')}
-          warningText={!hasSpotCoordinates && task.spot ? t('taskDetail.spotLocationFallbackHelper') : undefined}
-          isDarkMode={isDarkMode}
-          secondarySurface={secondarySurface}
-          tertiaryText={tertiaryText}
-          sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
-          sectionLabelText={!hasSpotCoordinates && task.spot ? t('taskDetail.reportedFromLabel') : t('taskDetail.createdFromLabel')}
-          primaryColor={primaryColor}
-          actionText={t('taskDetail.navigateToTask')}
-        />
-      )}
-
       {/* Tags */}
       {task.tags.length > 0 && (
         <>
@@ -1974,6 +1978,46 @@ export const TaskDetailScreen: React.FC = () => {
           <Text style={[styles.seenEmptyText, { color: tertiaryText }]}>{t('common.unknown')}</Text>
         </View>
       )}
+
+      {/* Created-from GPS */}
+      {showCreatedFromCard && (
+        <>
+          <Text style={[styles.sectionLabel, { color: tertiaryText }]}> 
+            {!hasSpotCoordinates && task.spot ? t('taskDetail.reportedFromLabel') : t('taskDetail.createdFromLabel')}
+          </Text>
+          <TouchableOpacity
+            style={[styles.reportedFromCard, { backgroundColor: secondarySurface }]}
+            activeOpacity={0.75}
+            onPress={() => {
+              const url = Platform.select({
+                ios: `maps:${task.latitude},${task.longitude}?q=${task.latitude},${task.longitude}`,
+                android: `geo:${task.latitude},${task.longitude}?q=${task.latitude},${task.longitude}`,
+              });
+              if (url) Linking.openURL(url).catch(() => {});
+            }}
+          >
+            <View style={[styles.reportedFromIcon, { backgroundColor: `${primaryColor}18` }]}> 
+              <MaterialIcons name="my-location" size={16} color={primaryColor} />
+            </View>
+            <View style={styles.reportedFromTextWrap}>
+              <Text style={[styles.reportedFromTitle, { color: colors.text }]} numberOfLines={1}>
+                {!hasSpotCoordinates && task.spot ? task.spot : t('taskDetail.createdFromLabel')}
+              </Text>
+              <Text style={[styles.reportedFromHelper, { color: tertiaryText }]} numberOfLines={2}>
+                {!hasSpotCoordinates && task.spot
+                  ? t('taskDetail.spotLocationFallbackHelper')
+                  : t('taskDetail.creationLocationHelper')}
+              </Text>
+            </View>
+            <View style={styles.reportedFromAction}>
+              <MaterialIcons name="directions" size={16} color={primaryColor} />
+              <Text style={[styles.reportedFromActionText, { color: primaryColor }]}> 
+                {t('taskDetail.navigateToTask')}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </>
+      )}
     </ScrollView>
   );
 
@@ -2015,7 +2059,7 @@ export const TaskDetailScreen: React.FC = () => {
             >
               <MaterialIcons name="lock-outline" size={14} color={isDarkMode ? '#FDE68A' : '#92400E'} />
               <Text style={[styles.formReadOnlyText, { color: isDarkMode ? '#FEF3C7' : '#92400E' }]}>
-                {t('taskDetail.formReadOnlyMustStartAndAssign')}
+                {t(formEligibility.readOnlyMessageKey || 'taskDetail.formReadOnlyMustStartAndAssign')}
               </Text>
             </View>
           </View>
@@ -3183,6 +3227,46 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: fontFamilies.bodyRegular,
     fontStyle: 'italic',
+  },
+
+  /* ── Reported from ── */
+  reportedFromCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  reportedFromIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reportedFromTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  reportedFromTitle: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  reportedFromHelper: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  reportedFromAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  reportedFromActionText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
   },
 
   /* ── Signature ── */

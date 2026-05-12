@@ -214,6 +214,13 @@ export const MainScreen: React.FC = () => {
   } = useTasks();
 
   const { data, isSyncing, hasEverSynced, refresh, isInitialSync } = useData();
+  const selectedWorkspaceConvexId = useMemo(() => {
+    if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') {
+      return undefined;
+    }
+    const workspace = workspaceObjects.find((item) => item.name === selectedWorkspace);
+    return workspace ? String((workspace as any)._id ?? '') || undefined : undefined;
+  }, [selectedWorkspace, workspaceObjects]);
   const convexNotifications = useQuery(
     api.settings.listNotifications,
     isAuthenticated && tenantId ? { tenantId } : 'skip',
@@ -223,9 +230,18 @@ export const MainScreen: React.FC = () => {
     isAuthenticated && tenantId ? { tenantId, slug: 'scheduling' } : 'skip',
   );
   const markBoardNotificationsRead = useOfflineMutation(api.boards.markBoardNotificationsRead, 'boards.markBoardNotificationsRead');
-  const rawWorkspaceTaskCounts = useQuery(
-    api.bulk.workspaceTaskCounts,
+  const allTaskSummaryCounts = useQuery(
+    api.bulk.taskSummaryCounts,
     isAuthenticated && tenantId ? { tenantId } : 'skip',
+  );
+  const scopedTaskSummaryCounts = useQuery(
+    api.bulk.taskSummaryCounts,
+    isAuthenticated && tenantId && selectedWorkspaceConvexId
+      ? {
+        tenantId,
+        workspaceId: selectedWorkspaceConvexId,
+      }
+      : 'skip',
   );
 
   const isCleaningEnabled = useMemo(() => {
@@ -419,14 +435,6 @@ export const MainScreen: React.FC = () => {
 
   const surfaces = isDarkMode ? SURFACE.dark : SURFACE.light;
 
-  const selectedWorkspaceConvexId = useMemo(() => {
-    if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') {
-      return undefined;
-    }
-    const workspace = workspaceObjects.find((item) => item.name === selectedWorkspace);
-    return workspace ? String((workspace as any)._id ?? '') || undefined : undefined;
-  }, [selectedWorkspace, workspaceObjects]);
-
   const handleCreateTask = useCallback(() => {
     if (voiceCapturePhase !== 'idle') {
       void stopCapture('manual');
@@ -480,21 +488,30 @@ export const MainScreen: React.FC = () => {
   }, [refresh]);
 
   const statusChips = useMemo(() => {
-    // Use unfilteredTasks (workspace-filtered, before status/priority/etc filters)
-    // so counts are always correct regardless of active filters
+    const summary = selectedWorkspace === 'Shared'
+      ? undefined
+      : (selectedWorkspaceConvexId ? scopedTaskSummaryCounts : allTaskSummaryCounts);
     const source = unfilteredTasks;
     const counts = new Map<string, { count: number; color: string }>();
-    for (const t of source) {
-      const key = t.status.toLowerCase();
-      const existing = counts.get(key);
-      if (existing) {
-        existing.count++;
-      } else {
-        counts.set(key, { count: 1, color: t.statusColor || '#9CA3AF' });
+
+    if (summary?.byStatus) {
+      for (const entry of Object.values(summary.byStatus as Record<string, { name: string; color: string | null; count: number }>)) {
+        counts.set(entry.name.toLowerCase(), { count: entry.count, color: entry.color || '#9CA3AF' });
+      }
+    } else {
+      for (const item of source) {
+        const key = item.status.toLowerCase();
+        const existing = counts.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          counts.set(key, { count: 1, color: item.statusColor || '#9CA3AF' });
+        }
       }
     }
+
     const chips: { label: string; statusKey: string; color: string; count: number }[] = [
-      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: source.length },
+      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: summary?.total ?? source.length },
     ];
     const seen = new Set<string>();
     for (const s of availableStatuses) {
@@ -510,7 +527,7 @@ export const MainScreen: React.FC = () => {
       });
     }
     return chips;
-  }, [unfilteredTasks, availableStatuses, isDarkMode, t]);
+  }, [unfilteredTasks, availableStatuses, isDarkMode, allTaskSummaryCounts, scopedTaskSummaryCounts, selectedWorkspace, selectedWorkspaceConvexId, t]);
 
   // Client-side search filter (status filtering is already handled by context filters)
   const displayedTasks = useMemo(() => {
@@ -947,10 +964,10 @@ export const MainScreen: React.FC = () => {
   const taskCountsByWorkspace = useMemo(() => {
     const counts = new Map<string | number, number>();
 
-    if (rawWorkspaceTaskCounts) {
+    if (allTaskSummaryCounts?.byWorkspace) {
       for (const ws of workspaceObjects) {
         const convexId = (ws as any)._id;
-        const count = convexId ? rawWorkspaceTaskCounts[String(convexId)] : undefined;
+        const count = convexId ? allTaskSummaryCounts.byWorkspace[String(convexId)] : undefined;
         if (typeof count === 'number') {
           counts.set(ws.id, count);
           if (convexId) counts.set(String(convexId), count);
@@ -966,7 +983,7 @@ export const MainScreen: React.FC = () => {
       }
     }
     return counts;
-  }, [data.tasks, rawWorkspaceTaskCounts, workspaceObjects]);
+  }, [data.tasks, allTaskSummaryCounts, workspaceObjects]);
 
   const renderWorkspacesList = () => {
     const wsItems = workspaceObjects;
