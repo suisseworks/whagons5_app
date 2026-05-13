@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, Easing, TouchableOpacity } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
+import { useLanguage } from '../context/LanguageContext';
 
 interface Props {
   phase: 'starting' | 'recording' | 'processing';
@@ -33,6 +34,7 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
   isDarkMode,
   onPress,
 }) => {
+  const { t } = useLanguage();
   const pulse = useRef(new Animated.Value(1)).current;
   const spin = useRef(new Animated.Value(0)).current;
   const [processingDots, setProcessingDots] = useState('');
@@ -92,10 +94,14 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
 
   const label =
     phase === 'processing'
-      ? `Creating draft${processingDots}`
+      ? `${t('voiceTaskCapture.creatingDraft')}${processingDots}`
       : phase === 'starting'
-        ? 'Starting microphone...'
-        : 'Speak your task';
+        ? t('voiceTaskCapture.startingMicrophone')
+        : t('voiceTaskCapture.speakYourTask');
+  const subtitle =
+    phase === 'recording'
+      ? `${formatDuration(durationMs)} · ${t('voiceTaskCapture.tapToSend')}`
+      : t('voiceTaskCapture.holdPlusButton');
 
   const processingSpin = spin.interpolate({
     inputRange: [0, 1],
@@ -135,7 +141,7 @@ export const VoiceTaskCaptureOverlay: React.FC<Props> = ({
       <View style={styles.textBlock}>
         <Text style={[styles.title, { color: colors.text }]}>{label}</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}> 
-          {phase === 'recording' ? `${formatDuration(durationMs)} · Tap to send` : 'Hold the plus button and keep speaking'}
+          {subtitle}
         </Text>
       </View>
       <View style={styles.meterWrap}>
