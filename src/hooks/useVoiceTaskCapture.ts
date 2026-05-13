@@ -13,6 +13,7 @@ import { useAction, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { RootStackParamList } from '../models/types';
 import { useTenant } from './useTenant';
+import { useLanguage } from '../context/LanguageContext';
 
 type VoiceCapturePhase = 'idle' | 'starting' | 'recording' | 'processing';
 
@@ -35,6 +36,7 @@ function getAudioMimeType(fileName: string): string {
 export function useVoiceTaskCapture() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { tenantId } = useTenant();
+  const { t } = useLanguage();
   const generateUploadUrl = useMutation(api.voiceTaskDrafts.generateUploadUrl);
   const createFromAudio = useAction(api.voiceTaskDraftActions.createFromAudio);
   const recorder = useAudioRecorder({
@@ -78,7 +80,7 @@ export function useVoiceTaskCapture() {
   }, []);
 
   const uploadRecording = useCallback(async (uri: string, fileName: string, mimeType: string) => {
-    if (!tenantId) throw new Error('No tenant selected');
+    if (!tenantId) throw new Error(t('voiceTaskCapture.noTenantSelected'));
 
     let uploadUrl = await generateUploadUrl({ tenantId });
     const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
@@ -94,14 +96,14 @@ export function useVoiceTaskCapture() {
     }
 
     if (!uploadUrl || typeof uploadUrl !== 'string') {
-      throw new Error('Failed to get upload URL');
+      throw new Error(t('voiceTaskCapture.failedUploadUrl'));
     }
     const safeUploadUrl = uploadUrl;
 
     const blob: Blob = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.onload = () => resolve(xhr.response as Blob);
-      xhr.onerror = () => reject(new Error('Failed to read recording'));
+      xhr.onerror = () => reject(new Error(t('voiceTaskCapture.failedReadRecording')));
       xhr.responseType = 'blob';
       xhr.open('GET', String(uri), true);
       xhr.send(null);
@@ -114,12 +116,12 @@ export function useVoiceTaskCapture() {
     });
     if (!uploadResponse.ok) {
       const body = await uploadResponse.text().catch(() => '');
-      throw new Error(`Upload failed (${uploadResponse.status}): ${body}`);
+      throw new Error(t('voiceTaskCapture.uploadFailedWithStatus', { status: uploadResponse.status, body }));
     }
 
     const { storageId } = await uploadResponse.json();
     return { storageId, fileName, mimeType };
-  }, [generateUploadUrl, tenantId]);
+  }, [generateUploadUrl, t, tenantId]);
 
   const stopCapture = useCallback(async (reason: 'manual' | 'vad' = 'manual') => {
     if (!tenantId) {
@@ -146,7 +148,7 @@ export function useVoiceTaskCapture() {
       if (!uri || recordedMs < MIN_ACCEPTED_AUDIO_MS || !speechDetectedRef.current) {
         resetLocalState();
         if (reason === 'manual') {
-          Alert.alert('No speech detected', 'Hold the button a bit longer and speak before releasing.');
+          Alert.alert(t('voiceTaskCapture.noSpeechDetectedTitle'), t('voiceTaskCapture.noSpeechDetectedBody'));
         }
         return;
       }
@@ -166,7 +168,7 @@ export function useVoiceTaskCapture() {
       navigation.navigate('VoiceTaskReview', { draftId: String(result.draftId) });
     } catch (error: any) {
       resetLocalState();
-      Alert.alert('Voice capture failed', error?.message || 'Could not create a task draft from this recording.');
+      Alert.alert(t('voiceTaskCapture.captureFailedTitle'), error?.message || t('voiceTaskCapture.createDraftFailedFallback'));
     }
   }, [
     createFromAudio,
@@ -175,6 +177,7 @@ export function useVoiceTaskCapture() {
     recorder,
     resetLocalState,
     tenantId,
+    t,
     uploadRecording,
   ]);
 
@@ -192,7 +195,7 @@ export function useVoiceTaskCapture() {
 
       const permission = await requestRecordingPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Microphone permission', 'Microphone access is required to create tasks by voice.');
+        Alert.alert(t('voiceTaskCapture.microphonePermissionTitle'), t('voiceTaskCapture.microphonePermissionBody'));
         resetLocalState();
         return;
       }
@@ -211,9 +214,9 @@ export function useVoiceTaskCapture() {
       }
     } catch (error: any) {
       resetLocalState();
-      Alert.alert('Voice capture failed', error?.message || 'Could not start audio recording.');
+      Alert.alert(t('voiceTaskCapture.captureFailedTitle'), error?.message || t('voiceTaskCapture.startRecordingFailedFallback'));
     }
-  }, [isActive, recorder, resetLocalState, stopCapture, tenantId]);
+  }, [isActive, recorder, resetLocalState, stopCapture, tenantId, t]);
 
   useEffect(() => {
     if (phase !== 'recording') return;

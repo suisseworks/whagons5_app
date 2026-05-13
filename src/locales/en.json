@@ -214,6 +214,24 @@
       "assignees": "Assignees"
     }
   },
+  "voiceTaskCapture": {
+    "creatingDraft": "Creating draft",
+    "startingMicrophone": "Starting microphone...",
+    "speakYourTask": "Speak your task",
+    "tapToSend": "Tap to send",
+    "holdPlusButton": "Hold the plus button and keep speaking",
+    "noSpeechDetectedTitle": "No speech detected",
+    "noSpeechDetectedBody": "Hold the button a bit longer and speak before releasing.",
+    "captureFailedTitle": "Voice capture failed",
+    "createDraftFailedFallback": "Could not create a task draft from this recording.",
+    "startRecordingFailedFallback": "Could not start audio recording.",
+    "microphonePermissionTitle": "Microphone permission",
+    "microphonePermissionBody": "Microphone access is required to create tasks by voice.",
+    "noTenantSelected": "No tenant selected",
+    "failedUploadUrl": "Failed to get upload URL",
+    "failedReadRecording": "Failed to read recording",
+    "uploadFailedWithStatus": "Upload failed (%{status}): %{body}"
+  },
   "taskDetail": {
     "headerTitle": "Task Details",
     "tabDetails": "Details",

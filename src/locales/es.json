@@ -214,6 +214,24 @@
       "assignees": "Asignados"
     }
   },
+  "voiceTaskCapture": {
+    "creatingDraft": "Creando borrador",
+    "startingMicrophone": "Iniciando micrófono...",
+    "speakYourTask": "Di tu tarea",
+    "tapToSend": "Toca para enviar",
+    "holdPlusButton": "Mantén presionado el botón de más y sigue hablando",
+    "noSpeechDetectedTitle": "No se detectó voz",
+    "noSpeechDetectedBody": "Mantén presionado el botón un poco más y habla antes de soltarlo.",
+    "captureFailedTitle": "Error en captura de voz",
+    "createDraftFailedFallback": "No se pudo crear un borrador de tarea desde esta grabación.",
+    "startRecordingFailedFallback": "No se pudo iniciar la grabación de audio.",
+    "microphonePermissionTitle": "Permiso de micrófono",
+    "microphonePermissionBody": "Se necesita acceso al micrófono para crear tareas por voz.",
+    "noTenantSelected": "No hay tenant seleccionado",
+    "failedUploadUrl": "No se pudo obtener la URL de subida",
+    "failedReadRecording": "No se pudo leer la grabación",
+    "uploadFailedWithStatus": "Error al subir (%{status}): %{body}"
+  },
   "taskDetail": {
     "headerTitle": "Detalles de la Tarea",
     "tabDetails": "Detalles",
