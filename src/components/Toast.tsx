@@ -48,7 +48,7 @@ export const Toast = forwardRef<ToastRef>((_, ref) => {
   const translateY = useSharedValue(-120);
   const opacity = useSharedValue(0);
   const [message, setMessage] = React.useState<ToastMessage | null>(null);
-  const timeoutRef = React.useRef<ReturnType<typeof setTimeout>>();
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hide = useCallback(() => {
     translateY.value = withTiming(-120, { duration: ANIM_OUT, easing: Easing.in(Easing.cubic) });

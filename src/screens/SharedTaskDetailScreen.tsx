@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import RenderHtml from 'react-native-render-html';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useQuery } from 'convex/react';
@@ -30,6 +30,7 @@ import {
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { SignatureModal } from '../components/SignatureModal';
 import { RejectCommentModal } from '../components/RejectCommentModal';
+import { Toast, ToastRef } from '../components/Toast';
 import type { Id } from '../../../convex/_generated/dataModel';
 
 type SharedTaskDetailRoute = RouteProp<RootStackParamList, 'SharedTaskDetail'>;
@@ -41,6 +42,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const { colors, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const { width: screenWidth } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const { tenantId } = useTenant();
   const { user: authUser } = useAuth();
   const {
@@ -52,6 +54,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const [rejectVisible, setRejectVisible] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
+  const toastRef = useRef<ToastRef>(null);
 
   const decideMutation = useOfflineMutation(api.approvals.decideByTask, 'approvals.decideByTask');
   const acknowledgeMutation = useOfflineMutation(api.taskResources.acknowledgeTaskShare, 'taskResources.acknowledgeTaskShare');
@@ -138,6 +141,17 @@ export const SharedTaskDetailScreen: React.FC = () => {
       }
     }
 
+    const hasDirectPendingInstance = (taskApprovalInstances as any[]).some((instance: any) => {
+      const instanceTaskId = instance.taskId ?? instance.task_id;
+      if (instanceTaskId == null) return false;
+      const matchesTask = String(instanceTaskId) === String(task.id) || (taskConvexId && String(instanceTaskId) === String(taskConvexId));
+      if (!matchesTask) return false;
+      const approverUserId = instance.approverUserId ?? instance.approver_user_id;
+      const pendingLike = !instance.status || instance.status === 'pending' || instance.status === 'not started';
+      return pendingLike && approverUserId != null && currentUserIds.has(String(approverUserId));
+    });
+    if (hasDirectPendingInstance) return true;
+
     return approverDetails.some((d) => {
       const pendingLike = !d.status || d.status === 'pending' || d.status === 'not started';
       if (!pendingLike) return false;
@@ -147,7 +161,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
       if (d.approverTeamId && currentUserTeamIds.has(String(d.approverTeamId))) return true;
       return false;
     });
-  }, [approvalPending, authUser, data.users, userTeams, approverDetails]);
+  }, [approvalPending, authUser, data.users, userTeams, taskApprovalInstances, task.id, taskConvexId, approverDetails]);
 
   const requireSignature = !!(approval?.require_signature ?? approval?.requireSignature);
 
@@ -218,7 +232,13 @@ export const SharedTaskDetailScreen: React.FC = () => {
         ...(responseComment ? { responseComment } : {}),
         ...(signatureStorageId ? { signatureStorageId: signatureStorageId as Id<'_storage'> } : {}),
       });
-      Alert.alert(t('common.success'), decision === 'approved' ? t('sharedTask.approvedSuccessfully') : t('sharedTask.rejectedSuccessfully'));
+      toastRef.current?.show({
+        type: 'success',
+        title: decision === 'approved' ? t('sharedTask.approvedSuccessfully') : t('sharedTask.rejectedSuccessfully'),
+        body: decision === 'approved'
+          ? t('sharedTask.approvalDecisionSaved')
+          : t('sharedTask.rejectionDecisionSaved'),
+      });
     } catch (err: any) {
       Alert.alert(t('common.error'), err?.message || t('sharedTask.failedToRecordDecision'));
     } finally {
@@ -379,12 +399,12 @@ export const SharedTaskDetailScreen: React.FC = () => {
         )}
 
         {/* Bottom padding for footer */}
-        {canAct && <View style={{ height: 80 }} />}
+        {canAct && <View style={{ height: 112 + insets.bottom }} />}
       </ScrollView>
 
       {/* Sticky Footer: Approve/Reject */}
       {canAct && (
-        <View style={[styles.footer, { backgroundColor: colors.surface, borderTopColor: borderColor }]}>
+        <View style={[styles.footer, { backgroundColor: colors.surface, borderTopColor: borderColor, paddingBottom: 28 + insets.bottom }]}> 
           <TouchableOpacity
             style={[styles.rejectFooterBtn, { borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#E5E7EB' }]}
             onPress={handleReject}
@@ -430,6 +450,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
           submitDecision('rejected', undefined, comment);
         }}
       />
+      <Toast ref={toastRef} />
     </SafeAreaView>
   );
 };

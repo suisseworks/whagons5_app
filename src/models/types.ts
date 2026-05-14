@@ -68,6 +68,10 @@ export interface TaskItem {
   longitude?: number | null;
   /** Task requires a signature before completion */
   requiresSignature?: boolean;
+  /** Number of comments/notes on this task */
+  commentCount?: number;
+  /** Text from the latest comment/note, if present */
+  lastCommentText?: string | null;
 }
 
 // Notification item model
@@ -95,7 +99,7 @@ export interface ChecklistItem {
 }
 
 // Card density display mode
-export type CardDensity = 'compact' | 'normal' | 'detailed';
+export type CardDensity = 'normal' | 'detailed';
 
 // Theme names
 export type ThemeName = 'default' | 'ocean' | 'sunset' | 'forest';
@@ -275,7 +279,7 @@ export type RootStackParamList = {
   Login: undefined;
   NoTenants: undefined;
   TenantSelect: { tenants: string[]; firebaseIdToken: string };
-  Main: { tab?: number; conversationId?: string | number } | undefined;
+  Main: { tab?: number; conversationId?: string | number; workspace?: 'Shared' | 'Everything' } | undefined;
   Profile: undefined;
   TaskShareLink: { token: string };
   TaskDetail: { task: TaskItem };

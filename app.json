@@ -18,6 +18,7 @@
       "supportsTablet": true,
       "buildNumber": "1",
       "bundleIdentifier": "com.whagons.v5",
+      "usesAppleSignIn": true,
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSCameraUsageDescription": "Allow Whagons to access your camera for video calls and barcode scanning.",
@@ -50,6 +51,7 @@
       "./node_modules/@react-native-firebase/auth/app.plugin.js",
       "./node_modules/@react-native-firebase/messaging/app.plugin.js",
       "@react-native-google-signin/google-signin",
+      "expo-apple-authentication",
       [
         "expo-font",
         {

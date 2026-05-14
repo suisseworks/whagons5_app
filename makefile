@@ -1,6 +1,6 @@
 .PHONY: help android-run android-apk-debug android-apk-release android-apk-dev-backend android-clean \
        ios-run ios-prebuild ios-build-sim ios-clean ios-screenshots \
-       release release-prod version
+       release release-prod release-notes-preview version
 
 # Detect OS for sed compatibility
 UNAME_S := $(shell uname -s)
@@ -11,6 +11,7 @@ else
 endif
 
 REMOTE_REPO := $(shell git remote get-url origin)
+OPENROUTER_MODEL ?= moonshotai/kimi-k2.5
 
 # ---- iOS build vars ----
 IOS_WORKSPACE ?= ios/Whagons.xcworkspace
@@ -27,6 +28,7 @@ help:
 	@echo "  make release VERSION=2.0.0 Same but with explicit version"
 	@echo "  make release-prod          Same as release but publishes to production (not draft)"
 	@echo "  make release-prod VERSION=2.0.0  Production release with explicit version"
+	@echo "  make release-notes-preview Safe: generate release notes only into /tmp"
 	@echo "  make version               Show current version info"
 	@echo ""
 	@echo "  make android-run           Run app on Android via Expo (dev)"
@@ -98,6 +100,44 @@ version:
 	@echo "Git tags:           $$(git describe --tags --abbrev=0 2>/dev/null || echo 'none')"
 
 # ===========================================================================
+#  release-notes-preview — run only the agentic release-note generator
+#
+#  Safe preview target. It does not build, upload, commit, tag, push, publish,
+#  or write bundled notes into src/config. It writes files under /tmp only.
+# ===========================================================================
+release-notes-preview:
+	@set -e && \
+	set -a && . ../.env && set +a && \
+	\
+	echo "=== Release notes preview ===" && \
+	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
+	if [ -z "$$latest_tag" ]; then latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1); fi && \
+	if [ -z "$$latest_tag" ]; then \
+		last_version="4.255.255"; \
+	else \
+		last_version=$$(echo $$latest_tag | sed 's/^v//'); \
+	fi && \
+	if [ -n "$(VERSION)" ]; then \
+		version="$(VERSION)"; \
+	else \
+		version=$$(python3 -c "v='$$last_version'.split('.'); v[2]=str(int(v[2])+1); print('.'.join(v))"); \
+	fi && \
+	build_code=$$(grep 'versionCode' android/app/build.gradle | head -1 | grep -o '[0-9]*') && \
+	git_hash=$$(git rev-parse --short HEAD) && \
+	release_name="$$version (Preview Build $$build_code) #$$git_hash" && \
+	release_notes_file="/tmp/whagons-release-notes-preview-$$version.md" && \
+	bundled_preview_file="/tmp/whagons-release-notes-preview-$$version.ts" && \
+	echo "  previous tag: $${latest_tag:-none}" && \
+	echo "  preview version: $$version" && \
+	echo "  notes file: $$release_notes_file" && \
+	echo "  bundled preview: $$bundled_preview_file" && \
+	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$build_code" RELEASE_GIT_HASH="$$git_hash" BUNDLED_RELEASE_NOTES_FILE="$$bundled_preview_file" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
+	echo "" && \
+	echo "Preview generated:" && \
+	echo "  $$release_notes_file" && \
+	echo "  $$bundled_preview_file"
+
+# ===========================================================================
 #  release — the one command that does everything atomically
 #
 #  Version is derived from git tags (latest v* tag).
@@ -109,16 +149,18 @@ version:
 #    3. Query Play Store for latest versionCode, increment, update build.gradle
 #    4. Sync versionName across files
 #    5. Stamp git hash into version.ts
-#    6. Build release AAB with the new versionCode
-#    7. Upload AAB to Google Play Console
-#    8. Commit, tag, push
+#    6. Generate AI release notes through OpenRouter and bundle them into the app
+#    7. Build release AAB with the new versionCode
+#    8. Upload AAB to Google Play Console
+#    9. Commit, tag, create GitHub release, publish app release notes to Convex
 # ===========================================================================
 release:
 	@set -e && \
 	set -a && . ./.env.production && set +a && export EXPO_NO_DOTENV=1 && \
 	\
 	echo "=== Step 1: Determine version ===" && \
-	latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1) && \
+	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
+	if [ -z "$$latest_tag" ]; then latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1); fi && \
 	if [ -z "$$latest_tag" ]; then \
 		last_version="4.255.255"; \
 	else \
@@ -155,21 +197,29 @@ release:
 	$(SED_INPLACE) "s/export const GIT_HASH = '.*';/export const GIT_HASH = '$$git_hash';/" src/config/version.ts && \
 	echo "  hash: $$git_hash" && \
 	\
-	echo "=== Step 6: Build AAB ===" && \
-	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
-	\
-	echo "=== Step 7: Upload to Google Play Console ===" && \
-	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
-	\
-	echo "=== Step 8: Commit, tag, push ===" && \
 	release_name="$$version (Build $$next_code) #$$git_hash" && \
 	tag_name="v$$version" && \
+	release_notes_file="/tmp/whagons-release-notes-$$version.md" && \
+	release_tag_file="/tmp/whagons-release-tag-$$version.txt" && \
+	echo "=== Step 6: Generate release notes ===" && \
+	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
+	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
+	cat "$$release_notes_file" >> "$$release_tag_file" && \
+	\
+	echo "=== Step 7: Build AAB ===" && \
+	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
+	\
+	echo "=== Step 8: Upload to Google Play Console ===" && \
+	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
+	\
+	echo "=== Step 9: Commit, tag, push, and publish release notes ===" && \
 	git add . && \
 	git commit -m "Release $$release_name" && \
-	git tag -a "$$tag_name" -m "Release $$release_name" && \
+	git tag -a "$$tag_name" -F "$$release_tag_file" && \
 	git push $(REMOTE_REPO) main && \
 	git push $(REMOTE_REPO) --tags && \
-	\
+	gh release create "$$tag_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
+	RELEASE_VERSION="$$version" RELEASE_TAG="$$tag_name" RELEASE_TITLE="Release $$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" RELEASE_GITHUB_URL="$$(gh release view "$$tag_name" --json url --jq .url)" RELEASE_PUBLISHED_AT="$$(node -e 'console.log(Date.now())')" node scripts/publish-release-notes.mjs && \
 	echo "" && \
 	echo "Done: $$release_name published to Play Console and tagged on GitHub."
 
@@ -181,7 +231,8 @@ release-prod:
 	set -a && . ./.env.production && set +a && export EXPO_NO_DOTENV=1 && \
 	\
 	echo "=== Step 1: Determine version ===" && \
-	latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1) && \
+	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
+	if [ -z "$$latest_tag" ]; then latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1); fi && \
 	if [ -z "$$latest_tag" ]; then \
 		last_version="4.255.255"; \
 	else \
@@ -218,20 +269,28 @@ release-prod:
 	$(SED_INPLACE) "s/export const GIT_HASH = '.*';/export const GIT_HASH = '$$git_hash';/" src/config/version.ts && \
 	echo "  hash: $$git_hash" && \
 	\
-	echo "=== Step 6: Build AAB ===" && \
-	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
-	\
-	echo "=== Step 7: Upload to Google Play Console (PRODUCTION) ===" && \
-	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab --track production --publish && cd .. && \
-	\
-	echo "=== Step 8: Commit, tag, push ===" && \
 	release_name="$$version (Build $$next_code) #$$git_hash" && \
 	tag_name="v$$version" && \
+	release_notes_file="/tmp/whagons-release-notes-$$version.md" && \
+	release_tag_file="/tmp/whagons-release-tag-$$version.txt" && \
+	echo "=== Step 6: Generate release notes ===" && \
+	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
+	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
+	cat "$$release_notes_file" >> "$$release_tag_file" && \
+	\
+	echo "=== Step 7: Build AAB ===" && \
+	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
+	\
+	echo "=== Step 8: Upload to Google Play Console (PRODUCTION) ===" && \
+	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab --track production --publish && cd .. && \
+	\
+	echo "=== Step 9: Commit, tag, push, and publish release notes ===" && \
 	git add . && \
 	git commit -m "Release $$release_name" && \
-	git tag -a "$$tag_name" -m "Release $$release_name" && \
+	git tag -a "$$tag_name" -F "$$release_tag_file" && \
 	git push $(REMOTE_REPO) main && \
 	git push $(REMOTE_REPO) --tags && \
-	\
+	gh release create "$$tag_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
+	RELEASE_VERSION="$$version" RELEASE_TAG="$$tag_name" RELEASE_TITLE="Release $$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" RELEASE_GITHUB_URL="$$(gh release view "$$tag_name" --json url --jq .url)" RELEASE_PUBLISHED_AT="$$(node -e 'console.log(Date.now())')" node scripts/publish-release-notes.mjs && \
 	echo "" && \
 	echo "Done: $$release_name published to PRODUCTION on Play Console and tagged on GitHub."

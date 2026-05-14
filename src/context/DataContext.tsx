@@ -452,6 +452,46 @@ function mapIds(docs: any[] | undefined): any[] {
   return docs.map(mapId);
 }
 
+function mapApproval(doc: any): any {
+  return {
+    ...mapId(doc),
+    approval_type: doc.approvalType ?? doc.approval_type,
+    require_all: doc.requireAll ?? doc.require_all,
+    minimum_approvals: doc.minimumApprovals ?? doc.minimum_approvals,
+    require_signature: doc.requireSignature ?? doc.require_signature,
+    require_rejection_comment: doc.requireRejectionComment ?? doc.require_rejection_comment,
+  };
+}
+
+function mapApprovalApprover(doc: any): any {
+  return {
+    ...mapId(doc),
+    approval_id: doc.approvalId ?? doc.approval_id,
+    approver_type: doc.approverType ?? doc.approver_type,
+    approver_id: doc.approverId ?? doc.approver_id,
+    order_index: doc.orderIndex ?? doc.order_index,
+  };
+}
+
+function mapTaskApprovalInstance(doc: any, fk: FkLookups): any {
+  const rawTaskId = doc.taskId ?? doc.task_id;
+  const rawApprovalId = doc.approvalId ?? doc.approval_id;
+  const rawApproverUserId = doc.approverUserId ?? doc.approver_user_id;
+
+  return {
+    ...mapId(doc),
+    task_id: rawTaskId ? (resolveFk(fk.tasks, rawTaskId) ?? rawTaskId) : rawTaskId,
+    approval_id: rawApprovalId ? (resolveFk(fk.approvals, rawApprovalId) ?? rawApprovalId) : rawApprovalId,
+    approver_user_id: rawApproverUserId ? (resolveFk(fk.users, rawApproverUserId) ?? rawApproverUserId) : rawApproverUserId,
+    source_approver_id: doc.sourceApproverId ?? doc.source_approver_id,
+    order_index: doc.orderIndex ?? doc.order_index,
+    is_required: doc.isRequired ?? doc.is_required,
+    response_comment: doc.responseComment ?? doc.response_comment,
+    responded_at: doc.respondedAt ?? doc.responded_at,
+    signature_storage_id: doc.signatureStorageId ?? doc.signature_storage_id,
+  };
+}
+
 /**
  * Build a lookup map from Convex _id → pgId for a set of docs.
  * Used to resolve FK references on tasks from Convex _id strings to pgId numbers.
@@ -485,6 +525,7 @@ interface FkLookups {
   statusTransitionGroups: Map<string, any>;
   forms: Map<string, any>;
   formVersions: Map<string, any>;
+  approvals: Map<string, any>;
 }
 
 /** Map a Convex task doc to the SyncedTask shape, resolving FK fields to pgIds */
@@ -962,6 +1003,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       statusTransitionGroups: buildPgLookup(refData?.statusTransitionGroups),
       forms: buildPgLookup(refData?.forms),
       formVersions: buildPgLookup(refData?.formVersions),
+      approvals: buildPgLookup(refData?.approvals),
     };
 
     return {
@@ -1046,9 +1088,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const sharedCount = sharedTaskIds.size;
 
-  const approvals = useMemo(() => refData?.approvals ? mapIds(refData.approvals) : EMPTY, [refData?.approvals]);
-  const approvalApprovers = useMemo(() => refData?.approvalApprovers ? mapIds(refData.approvalApprovers) : EMPTY, [refData?.approvalApprovers]);
-  const taskApprovalInstances = useMemo(() => refData?.taskApprovalInstances ? mapIds(refData.taskApprovalInstances) : EMPTY, [refData?.taskApprovalInstances]);
+  const approvalFk = useMemo(() => ({
+    workspaces: new Map<string, any>(),
+    categories: new Map<string, any>(),
+    statuses: new Map<string, any>(),
+    priorities: new Map<string, any>(),
+    spots: new Map<string, any>(),
+    templates: new Map<string, any>(),
+    users: buildPgLookup(refData?.users),
+    tasks: buildPgLookup(rawTasks),
+    tags: new Map<string, any>(),
+    statusTransitionGroups: new Map<string, any>(),
+    forms: new Map<string, any>(),
+    formVersions: new Map<string, any>(),
+    approvals: buildPgLookup(refData?.approvals),
+  }), [refData?.approvals, refData?.users, rawTasks]);
+  const approvals = useMemo(() => refData?.approvals ? refData.approvals.map(mapApproval) : EMPTY, [refData?.approvals]);
+  const approvalApprovers = useMemo(() => refData?.approvalApprovers ? refData.approvalApprovers.map(mapApprovalApprover) : EMPTY, [refData?.approvalApprovers]);
+  const taskApprovalInstances = useMemo(() => refData?.taskApprovalInstances ? refData.taskApprovalInstances.map((doc: any) => mapTaskApprovalInstance(doc, approvalFk)) : EMPTY, [approvalFk, refData?.taskApprovalInstances]);
   const userTeamsData = useMemo(() => refData?.userTeams ? mapIds(refData.userTeams) : EMPTY, [refData?.userTeams]);
   const rolesData = useMemo(() => refData?.roles ? mapIds(refData.roles) : EMPTY, [refData?.roles]);
 

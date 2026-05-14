@@ -259,14 +259,14 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
         {/* Card density */}
         <View style={styles.menuRow}>
           <MaterialIcons
-            name={cardDensity === 'compact' ? 'view-agenda' : cardDensity === 'detailed' ? 'view-stream' : 'view-day'}
+            name={cardDensity === 'detailed' ? 'view-stream' : 'view-day'}
             size={20}
             color={colors.textSecondary}
           />
           <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuCardDensity')}</Text>
         </View>
         <View style={styles.densityPills}>
-          {(['compact', 'normal', 'detailed'] as CardDensity[]).map((d) => {
+          {(['normal', 'detailed'] as CardDensity[]).map((d) => {
             const isActive = cardDensity === d;
             return (
               <TouchableOpacity

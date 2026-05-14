@@ -63,6 +63,14 @@ import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { ProgressiveImage } from '../components/ProgressiveImage';
 import { VoiceMemoActionButton, VoiceMemoBubble, VoiceMemoDraftPreview, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 
+const TIGHT_TAB_SPRING = {
+  damping: 90,
+  stiffness: 1600,
+  overshootClamping: true,
+  restDisplacementThreshold: 0.5,
+  restSpeedThreshold: 0.5,
+};
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -669,8 +677,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
   useEffect(() => {
     tabTranslateX.value = withSpring(activeTab === 'workspaces' ? 0 : -screenWidth, {
-      damping: 100,
-      stiffness: 800,
+      ...TIGHT_TAB_SPRING,
     });
   }, [activeTab, screenWidth]);
 
@@ -678,11 +685,34 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
     transform: [{ translateX: tabTranslateX.value }],
   }));
 
+  const finishTabSwipe = useCallback((dx: number, vx: number) => {
+    const currentX = dragStartX.current + dx;
+    const velocityThreshold = 0.28;
+    const distanceThreshold = screenWidth * 0.16;
+    let snapToChats: boolean;
+
+    if (vx < -velocityThreshold || dx < -distanceThreshold) {
+      snapToChats = true;
+    } else if (vx > velocityThreshold || dx > distanceThreshold) {
+      snapToChats = false;
+    } else {
+      snapToChats = currentX < -screenWidth / 2;
+    }
+
+    const target = snapToChats ? -screenWidth : 0;
+    tabTranslateX.value = withSpring(target, { ...TIGHT_TAB_SPRING, velocity: vx * screenWidth });
+
+    const newTab = snapToChats ? 'chats' : 'workspaces';
+    if (newTab !== activeTab) {
+      setActiveTab(newTab);
+    }
+  }, [activeTab, screenWidth, tabTranslateX]);
+
   const tabPanResponder = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
-          Math.abs(gs.dx) > 15 && Math.abs(gs.dy) < 20,
+          Math.abs(gs.dx) > 8 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.15,
         onPanResponderGrant: () => {
           // Capture current position at drag start
           dragStartX.current = activeTab === 'workspaces' ? 0 : -screenWidth;
@@ -693,32 +723,13 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
           tabTranslateX.value = newX;
         },
         onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          // Snap to nearest tab, factoring in velocity for a natural feel
-          const currentX = dragStartX.current + gs.dx;
-          const velocityThreshold = 0.5;
-          let snapToChats: boolean;
-
-          if (gs.vx < -velocityThreshold) {
-            // Fast swipe left → chats
-            snapToChats = true;
-          } else if (gs.vx > velocityThreshold) {
-            // Fast swipe right → workspaces
-            snapToChats = false;
-          } else {
-            // Snap to whichever tab is closer
-            snapToChats = currentX < -screenWidth / 2;
-          }
-
-          const target = snapToChats ? -screenWidth : 0;
-          tabTranslateX.value = withSpring(target, { damping: 100, stiffness: 800 });
-
-          const newTab = snapToChats ? 'chats' : 'workspaces';
-          if (newTab !== activeTab) {
-            setActiveTab(newTab);
-          }
+          finishTabSwipe(gs.dx, gs.vx);
+        },
+        onPanResponderTerminate: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          finishTabSwipe(gs.dx, gs.vx);
         },
       }),
-    [activeTab, screenWidth],
+    [activeTab, finishTabSwipe, screenWidth, tabTranslateX],
   );
 
   const [chatView, setChatView] = useState<ChatView>({ type: 'list' });

@@ -192,6 +192,7 @@ function VoiceMemoDraftItem({
         isScrubbingRef.current = false;
         void flushPendingSeek();
       },
+      onPanResponderTerminationRequest: () => false,
       onPanResponderTerminate: () => {
         isScrubbingRef.current = false;
         void flushPendingSeek();
@@ -402,6 +403,7 @@ export function VoiceMemoBubble({
         isScrubbingRef.current = false;
         void flushPendingSeek();
       },
+      onPanResponderTerminationRequest: () => false,
       onPanResponderTerminate: () => {
         isScrubbingRef.current = false;
         void flushPendingSeek();

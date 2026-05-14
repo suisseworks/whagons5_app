@@ -20,9 +20,12 @@ import { computeApprovalStatusForTask } from '../utils/approvalStatus';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useMutationQueue } from './MutationQueueContext';
 import { useNetwork } from './NetworkContext';
+import { useLanguage } from './LanguageContext';
 import * as DB from '../store/database';
+import type { TimeFormatPreference } from './LanguageContext';
 
 const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
+const CARD_DENSITY_STORAGE_KEY = '@whagons/card_density';
 const MAX_WORKING_TASKS = 5;
 const TASK_SQL_THRESHOLD = 10000;
 
@@ -52,33 +55,46 @@ function resolveStatus(
   return { name: s.name, color: s.color ?? null, icon: s.icon ?? null, action: s.action ?? null };
 }
 
-function formatTime12(d: Date): string {
-  let h = d.getHours();
-  const m = d.getMinutes().toString().padStart(2, '0');
-  const ampm = h >= 12 ? 'p.m.' : 'a.m.';
-  h = h % 12 || 12;
-  return `${h}:${m} ${ampm}`;
+function formatTaskTime(d: Date, locale: string, timeFormat: TimeFormatPreference): string {
+  if (timeFormat === '24h') {
+    return new Intl.DateTimeFormat(locale, {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(d);
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(d);
 }
 
-function formatDate(dateStr?: string | null): string {
+function formatDate(
+  dateStr: string | null | undefined,
+  t: (scope: string, options?: Record<string, any>) => string,
+  locale: string,
+  timeFormat: TimeFormatPreference,
+): string {
   if (!dateStr) return '';
   try {
     const d = new Date(dateStr);
     const now = new Date();
-    const time = formatTime12(d);
+    const time = formatTaskTime(d, locale, timeFormat);
 
-    if (d.toDateString() === now.toDateString()) return `Today ${time}`;
+    if (d.toDateString() === now.toDateString()) return `${t('common.today')} ${time}`;
 
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
-    if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`;
+    if (d.toDateString() === yesterday.toDateString()) return `${t('common.yesterday')} ${time}`;
 
     const diffDays = Math.floor((now.getTime() - d.getTime()) / 86400000);
     if (diffDays < 7) {
-      const weekday = d.toLocaleDateString(undefined, { weekday: 'short' });
+      const weekday = d.toLocaleDateString(locale, { weekday: 'short' });
       return `${weekday} ${time}`;
     }
-    const label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const label = d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
     return `${label} ${time}`;
   } catch {
     return dateStr ?? '';
@@ -89,6 +105,10 @@ function normalizeStatusAction(action?: string | null): string | null {
   if (typeof action !== 'string') return null;
   const normalized = action.trim().toUpperCase();
   return normalized || null;
+}
+
+function normalizeCardDensity(value: unknown): CardDensity | null {
+  return value === 'normal' || value === 'detailed' ? value : null;
 }
 
 function readStringValue(value: unknown): string | null {
@@ -145,6 +165,8 @@ function mapTaskToItem(
   templateFormMap: Map<AnyId, { formId: AnyId; formName: string }>,
   userFlagMap: Map<AnyId, string>,
   categoryInfoMap: Map<AnyId, { color?: string | null; icon?: string | null }>,
+  commentSummaryMap: Map<string, { count: number; lastText?: string | null }>,
+  formatTaskDate: (dateStr?: string | null) => string,
 ): TaskItem {
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
 
@@ -153,10 +175,12 @@ function mapTaskToItem(
 
   const flagColor = userFlagMap.get(task.id) ?? (task as any).flagColor ?? (task as any).flag_color ?? null;
   const catInfo = task.category_id ? categoryInfoMap.get(task.category_id) : undefined;
+  const taskConvexId = (task as any)._id ? String((task as any)._id) : null;
+  const commentSummary = taskConvexId ? commentSummaryMap.get(taskConvexId) : undefined;
 
   return {
     id: String(task.id),
-    convexId: (task as any)._id ?? undefined,
+    convexId: taskConvexId ?? undefined,
     title: task.name || 'Untitled',
     description: (task as any).description || null,
     spot: task.spot_id ? (spotMap.get(task.spot_id) ?? '') : '',
@@ -174,7 +198,7 @@ function mapTaskToItem(
     categoryIcon: catInfo?.icon ?? null,
     workspaceId: task.workspace_id ?? null,
     assignees: assigneeMap.get(task.id) ?? [],
-    createdAt: formatDate(task.created_at),
+    createdAt: formatTaskDate(task.created_at),
     tags: tagMap.get(task.id) ?? [],
     approval: null,
     sla: null,
@@ -186,6 +210,8 @@ function mapTaskToItem(
     latitude: (task as any).latitude ?? null,
     longitude: (task as any).longitude ?? null,
     requiresSignature: (task as any).requiresSignature === true || (task as any).requires_signature === true,
+    commentCount: commentSummary?.count ?? 0,
+    lastCommentText: commentSummary?.lastText ?? null,
   };
 }
 
@@ -353,6 +379,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   } = useData();
   const { user: authUser } = useAuth();
   const { tenantId } = useTenant();
+  const { t, language, timeFormat } = useLanguage();
+  const convexUser = useQuery(api.users.me, tenantId ? { tenantId } : 'skip');
   const taskSummaryCounts = useQuery(
     api.bulk.taskSummaryCounts,
     tenantId ? { tenantId } : 'skip',
@@ -360,6 +388,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { queue } = useMutationQueue();
   const { isOnline } = useNetwork();
   const [storedTenantId, setStoredTenantId] = useState<string | null>(null);
+  const [cardDensity, setCardDensityState] = useState<CardDensity>('normal');
+  const compactCards = false;
+  const taskNoteSummaries = useQuery(
+    api.taskResources.noteSummariesByTenant,
+    tenantId && cardDensity === 'detailed' ? { tenantId } : 'skip',
+  );
+  const updateMeMutation = useOfflineMutation(api.users.updateMe, 'users.updateMe');
+  const formatTaskDate = useCallback(
+    (dateStr?: string | null) => formatDate(dateStr, t, language, timeFormat),
+    [language, t, timeFormat],
+  );
 
   useEffect(() => {
     AsyncStorage.getItem('wh_auth_subdomain')
@@ -422,8 +461,36 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   }, [workingTaskIds]);
 
-  const [cardDensity, setCardDensity] = useState<CardDensity>('normal');
-  const compactCards = cardDensity === 'compact';
+  useEffect(() => {
+    AsyncStorage.getItem(CARD_DENSITY_STORAGE_KEY)
+      .then((raw) => {
+        const storedDensity = normalizeCardDensity(raw);
+        if (storedDensity) setCardDensityState(storedDensity);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!convexUser) return;
+    const settings = (convexUser as any).settings ?? {};
+    const serverDensity = normalizeCardDensity(settings.cardDensity ?? settings.card_density);
+    if (!serverDensity) return;
+    setCardDensityState(serverDensity);
+    AsyncStorage.setItem(CARD_DENSITY_STORAGE_KEY, serverDensity).catch(() => {});
+  }, [convexUser]);
+
+  const setCardDensity = useCallback((density: CardDensity) => {
+    setCardDensityState(density);
+    AsyncStorage.setItem(CARD_DENSITY_STORAGE_KEY, density).catch(() => {});
+    if (!tenantId) return;
+    updateMeMutation({
+      tenantId,
+      settings: { cardDensity: density },
+    }).catch((err: any) => {
+      console.warn('[TaskContext] Failed to save card density:', err);
+    });
+  }, [tenantId, updateMeMutation]);
+
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
   const [localOverrides, setLocalOverrides] = useState<Map<string, Partial<TaskItem>>>(new Map());
@@ -764,12 +831,144 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.categories]);
 
+  const commentSummaryMap = useMemo(() => {
+    const m = new Map<string, { count: number; lastText?: string | null }>();
+    for (const summary of taskNoteSummaries ?? []) {
+      if (!summary?.taskId) continue;
+      m.set(String(summary.taskId), {
+        count: Number(summary.count ?? 0),
+        lastText: summary.lastText ?? null,
+      });
+    }
+    return m;
+  }, [taskNoteSummaries]);
+
   const mappedActiveTasks = useMemo(() => {
     if (activeTasks.length === 0) return [];
     return activeTasks.map((t) =>
-      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap),
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
     );
-  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap]);
+  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate]);
+
+  const approvalMap = useMemo(() => {
+    const m: Record<string, any> = {};
+    for (const a of approvalsList) {
+      m[String(a._id ?? a.id)] = a;
+      if (a.id != null) m[String(a.id)] = a;
+    }
+    return m;
+  }, [approvalsList]);
+
+  const sharedEnrichmentMap = useMemo(() => {
+    const m = new Map<string, {
+      approvalStatus: 'pending' | 'approved' | 'rejected' | null;
+      shareId: string;
+      shareStatus: 'pending' | 'acknowledged' | null;
+      ackTotal: number;
+      ackDone: number;
+      permission: string | null;
+      approvalId: string | number | null;
+      taskConvexId: string | null;
+    }>();
+    if (!rawSharedToMe) return m;
+
+    for (const share of rawSharedToMe) {
+      if (!share.task) continue;
+      const taskId = share.task.id ?? share.task.pgId ?? share.task._id;
+      if (taskId == null) continue;
+
+      const task = share.task;
+      const taskConvexId = task._id ?? null;
+      const approvalId = task.approvalId ?? task.approval_id ?? null;
+      const approval = approvalId ? approvalMap[String(approvalId)] : undefined;
+
+      const derived = computeApprovalStatusForTask({
+        taskId: String(taskId),
+        taskConvexId: taskConvexId ?? undefined,
+        approvalId,
+        approval,
+        taskApprovalInstances: taskApprovalInstances as any[],
+      });
+
+      m.set(String(taskId), {
+        approvalStatus: derived,
+        shareId: share._id,
+        shareStatus: share.status ?? null,
+        ackTotal: share.ackTotal ?? 0,
+        ackDone: share.ackDone ?? 0,
+        permission: share.permission ?? null,
+        approvalId,
+        taskConvexId,
+      });
+      if (taskConvexId) {
+        m.set(String(taskConvexId), m.get(String(taskId))!);
+      }
+    }
+    return m;
+  }, [rawSharedToMe, approvalMap, taskApprovalInstances]);
+
+  const sharedMappedTasks = useMemo(() => {
+    if (!rawSharedToMe?.length) return EMPTY_TASKS;
+
+    const visibleTaskKeys = new Set<string>();
+    for (const task of mappedActiveTasks) {
+      if (task.id) visibleTaskKeys.add(String(task.id));
+      if (task.convexId) visibleTaskKeys.add(String(task.convexId));
+    }
+
+    const resolveId = (items: any[], id: any) => {
+      if (id == null) return null;
+      const match = items.find((item: any) => String((item as any)._id ?? '') === String(id));
+      return match?.id ?? id;
+    };
+
+    const sharedTasks: TaskItem[] = [];
+    const seen = new Set<string>();
+
+    for (const share of rawSharedToMe) {
+      const rawTask = share.task;
+      if (!rawTask || rawTask.deletedAt) continue;
+
+      const taskId = rawTask.id ?? rawTask.pgId ?? rawTask._id;
+      if (taskId == null || seen.has(String(taskId))) continue;
+      seen.add(String(taskId));
+
+      const convexId = rawTask._id ? String(rawTask._id) : null;
+      if (visibleTaskKeys.has(String(taskId)) || (convexId && visibleTaskKeys.has(convexId))) {
+        continue;
+      }
+
+      const syncedTask: SyncedTask = {
+        ...rawTask,
+        id: taskId,
+        workspace_id: resolveId(data.workspaces, rawTask.workspaceId ?? rawTask.workspace_id),
+        category_id: resolveId(data.categories, rawTask.categoryId ?? rawTask.category_id),
+        status_id: resolveId(data.statuses, rawTask.statusId ?? rawTask.status_id),
+        priority_id: resolveId(data.priorities, rawTask.priorityId ?? rawTask.priority_id),
+        spot_id: resolveId(data.spots, rawTask.spotId ?? rawTask.spot_id),
+        template_id: resolveId(data.templates, rawTask.templateId ?? rawTask.template_id),
+        created_by: resolveId(data.users, rawTask.createdBy ?? rawTask.created_by),
+        created_at: rawTask.created_at ?? (rawTask.createdAt || rawTask._creationTime ? new Date(rawTask.createdAt ?? rawTask._creationTime).toISOString() : null),
+        updated_at: rawTask.updated_at ?? (rawTask.updatedAt ? new Date(rawTask.updatedAt).toISOString() : null),
+        deleted_at: rawTask.deleted_at ?? (rawTask.deletedAt ? new Date(rawTask.deletedAt).toISOString() : null),
+      };
+      const item = mapTaskToItem(syncedTask, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate);
+      const enrichment = sharedEnrichmentMap.get(String(taskId)) ?? (convexId ? sharedEnrichmentMap.get(convexId) : undefined);
+      sharedTasks.push(enrichment ? {
+        ...item,
+        approvalStatus: enrichment.approvalStatus,
+        shareId: enrichment.shareId,
+        shareStatus: enrichment.shareStatus,
+        ackTotal: enrichment.ackTotal,
+        ackDone: enrichment.ackDone,
+        sharePermission: enrichment.permission,
+        approvalId: enrichment.approvalId,
+        taskConvexId: enrichment.taskConvexId,
+      } : item);
+    }
+
+    return sharedTasks;
+  }, [rawSharedToMe, mappedActiveTasks, data.workspaces, data.categories, data.statuses, data.priorities, data.spots, data.templates, data.users, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, sharedEnrichmentMap, formatTaskDate]);
 
   useEffect(() => {
     if (pendingCreatedTasks.length === 0 || mappedActiveTasks.length === 0) return;
@@ -779,13 +978,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [mappedActiveTasks, pendingCreatedTasks.length]);
 
   const allMappedTasks = useMemo(() => {
-    if (mappedActiveTasks.length === 0) return pendingCreatedTasks;
-    if (pendingCreatedTasks.length === 0) return mappedActiveTasks;
+    const baseTasks = sharedMappedTasks.length > 0
+      ? [...mappedActiveTasks, ...sharedMappedTasks]
+      : mappedActiveTasks;
+    if (baseTasks.length === 0) return pendingCreatedTasks;
+    if (pendingCreatedTasks.length === 0) return baseTasks;
 
-    const syncedKeys = new Set(mappedActiveTasks.map((task) => pendingTaskHeuristicKey(task)));
+    const syncedKeys = new Set(baseTasks.map((task) => pendingTaskHeuristicKey(task)));
     const pending = pendingCreatedTasks.filter((task) => !syncedKeys.has(pendingTaskHeuristicKey(task)));
-    return [...mappedActiveTasks, ...pending];
-  }, [mappedActiveTasks, pendingCreatedTasks]);
+    return [...baseTasks, ...pending];
+  }, [mappedActiveTasks, pendingCreatedTasks, sharedMappedTasks]);
 
   const taskIdByConvexId = useMemo(() => {
     const map = new Map<string, string>();
@@ -978,59 +1180,33 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Shared task enrichment: approval status + ack progress
   // ---------------------------------------------------------------------------
 
-  const approvalMap = useMemo(() => {
-    const m: Record<string, any> = {};
-    for (const a of approvalsList) {
-      m[String(a._id ?? a.id)] = a;
-      if (a.id != null) m[String(a.id)] = a;
+  const visibleWorkspaceKeySet = useMemo(() => {
+    const keys = new Set<string>();
+    for (const workspace of data.workspaces) {
+      const candidates = [workspace.id, (workspace as any)._id, (workspace as any).pgId, (workspace as any).pg_id];
+      for (const candidate of candidates) {
+        if (candidate != null && candidate !== '') keys.add(String(candidate));
+      }
     }
-    return m;
-  }, [approvalsList]);
+    return keys;
+  }, [data.workspaces]);
 
-  const sharedEnrichmentMap = useMemo(() => {
-    const m = new Map<string, {
-      approvalStatus: 'pending' | 'approved' | 'rejected' | null;
-      shareId: string;
-      shareStatus: 'pending' | 'acknowledged' | null;
-      ackTotal: number;
-      ackDone: number;
-      permission: string | null;
-      approvalId: string | number | null;
-      taskConvexId: string | null;
-    }>();
-    if (!rawSharedToMe) return m;
+  const isSharedOnlyTask = useCallback((task: TaskItem): boolean => {
+    const taskIds = [task.id, task.taskConvexId, task.convexId].filter((value) => value != null && value !== '');
+    const isShared = taskIds.some((value) => {
+      const numeric = Number(value);
+      return sharedTaskIds.has(value as any) || (Number.isFinite(numeric) && sharedTaskIds.has(numeric as any));
+    });
+    if (!isShared) return false;
 
-    for (const share of rawSharedToMe) {
-      if (!share.task) continue;
-      const taskId = share.task.id ?? share.task.pgId ?? share.task._id;
-      if (taskId == null) continue;
+    const workspaceKey = task.workspaceId == null ? '' : String(task.workspaceId);
+    return workspaceKey === '' || !visibleWorkspaceKeySet.has(workspaceKey);
+  }, [sharedTaskIds, visibleWorkspaceKeySet]);
 
-      const task = share.task;
-      const taskConvexId = task._id ?? null;
-      const approvalId = task.approvalId ?? task.approval_id ?? null;
-      const approval = approvalId ? approvalMap[String(approvalId)] : undefined;
-
-      const derived = computeApprovalStatusForTask({
-        taskId: String(taskId),
-        taskConvexId: taskConvexId ?? undefined,
-        approvalId,
-        approval,
-        taskApprovalInstances: taskApprovalInstances as any[],
-      });
-
-      m.set(String(taskId), {
-        approvalStatus: derived,
-        shareId: share._id,
-        shareStatus: share.status ?? null,
-        ackTotal: share.ackTotal ?? 0,
-        ackDone: share.ackDone ?? 0,
-        permission: share.permission ?? null,
-        approvalId,
-        taskConvexId,
-      });
-    }
-    return m;
-  }, [rawSharedToMe, approvalMap, taskApprovalInstances]);
+  const workspaceVisibleMappedTasks = useMemo(
+    () => allMappedTasks.filter((task) => !isSharedOnlyTask(task)),
+    [allMappedTasks, isSharedOnlyTask],
+  );
 
   // ---------------------------------------------------------------------------
   // Filter + paginate
@@ -1063,7 +1239,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const indexedTaskLists = useMemo(() => {
     if (!canUseIndexedTaskList || shouldUseSqlTaskList) return null;
 
-    const sortedAll = [...allMappedTasks].sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
+    const sortedAll = [...workspaceVisibleMappedTasks].sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
     const byWorkspace = new Map<string, TaskItem[]>();
     const byStatus = new Map<string, TaskItem[]>();
     const byWorkspaceStatus = new Map<string, Map<string, TaskItem[]>>();
@@ -1095,7 +1271,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return { sortedAll, byWorkspace, byStatus, byWorkspaceStatus };
-  }, [allMappedTasks, canUseIndexedTaskList, shouldUseSqlTaskList]);
+  }, [canUseIndexedTaskList, shouldUseSqlTaskList, workspaceVisibleMappedTasks]);
 
   const activeIndexedTasks = useMemo(() => {
     if (!indexedTaskLists) return null;
@@ -1166,7 +1342,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return;
         }
         const mapped = rows.map((task) =>
-          mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap),
+          mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
         );
         setSqlFilteredState({ key: sqlFilterKey, tasks: mapped, total });
       })
@@ -1181,6 +1357,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     allMappedTasks.length,
     assigneeMap,
     categoryInfoMap,
+    commentSummaryMap,
+    formatTaskDate,
     filters.statuses,
     initialStatus,
     priorityMap,
@@ -1204,7 +1382,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     let result: TaskItem[];
     if (selectedWorkspace === 'Everything') {
-      result = allMappedTasks;
+      result = workspaceVisibleMappedTasks;
     } else if (selectedWorkspace === 'Shared') {
       result = allMappedTasks
         .filter((t) => {
@@ -1230,13 +1408,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsIdStr = String(ws.id);
-        result = allMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+        result = workspaceVisibleMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
         if (result.length === 0 && allMappedTasks.length > 0) {
-          const sampleIds = allMappedTasks.slice(0, 5).map((t) => `${t.workspaceId}(${typeof t.workspaceId})`);
-          console.warn(`[TaskContext] Workspace "${selectedWorkspace}" (id=${ws.id}, type=${typeof ws.id}) matched 0/${allMappedTasks.length} tasks. Sample task wsIds: [${sampleIds.join(', ')}]`);
+          const sampleIds = workspaceVisibleMappedTasks.slice(0, 5).map((t) => `${t.workspaceId}(${typeof t.workspaceId})`);
+          console.warn(`[TaskContext] Workspace "${selectedWorkspace}" (id=${ws.id}, type=${typeof ws.id}) matched 0/${workspaceVisibleMappedTasks.length} tasks. Sample task wsIds: [${sampleIds.join(', ')}]`);
         }
       } else {
-        result = allMappedTasks;
+        result = workspaceVisibleMappedTasks;
       }
     }
 
@@ -1274,16 +1452,27 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     result.sort((a, b) => {
+      if (selectedWorkspace === 'Shared') {
+        const score = (task: TaskItem) => {
+          if (task.approvalStatus === 'pending') return 0;
+          if (task.shareStatus === 'pending') return 1;
+          if (task.approvalStatus === 'rejected') return 2;
+          if (task.approvalStatus === 'approved') return 3;
+          return 4;
+        };
+        const scoreDiff = score(a) - score(b);
+        if (scoreDiff !== 0) return scoreDiff;
+      }
       const idA = Number(a.id ?? 0);
       const idB = Number(b.id ?? 0);
       return idB - idA;
     });
 
     return result;
-  }, [activeIndexedTasks, activeSqlFilteredState, allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap]);
+  }, [activeIndexedTasks, activeSqlFilteredState, allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, sharedTaskIds, sharedEnrichmentMap, workspaceVisibleMappedTasks]);
 
   const wsFilteredTasks = useMemo(() => {
-    let result = selectedWorkspace === 'Everything' ? allMappedTasks : EMPTY_TASKS;
+    let result = selectedWorkspace === 'Everything' ? workspaceVisibleMappedTasks : EMPTY_TASKS;
     if (selectedWorkspace === 'Shared') {
       result = allMappedTasks.filter((t) => {
         const numId = Number(t.id);
@@ -1293,9 +1482,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsIdStr = String(ws.id);
-        result = allMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+        result = workspaceVisibleMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
       } else {
-        result = allMappedTasks;
+        result = workspaceVisibleMappedTasks;
       }
     }
 
@@ -1314,7 +1503,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return result;
-  }, [allMappedTasks, data.workspaces, selectedWorkspace, sharedTaskIds, queuedTaskOverrides, localOverrides, shouldShowPendingTaskState]);
+  }, [allMappedTasks, data.workspaces, selectedWorkspace, sharedTaskIds, queuedTaskOverrides, localOverrides, shouldShowPendingTaskState, workspaceVisibleMappedTasks]);
 
   const availableAssignees = useMemo(() => {
     const names = new Set<string>();
@@ -1547,6 +1736,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const completeWorkingTask = useCallback((taskId: string) => {
     if (!finalStatus) return;
+    const currentTask = allMappedTaskMap.get(String(taskId));
+    if (currentTask && (currentTask.shareId || currentTask.approvalStatus || isSharedOnlyTask(currentTask))) return;
+
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
     const finalStatusAction = readStringValue((finalStatusObj as Record<string, unknown> | undefined)?.action);
@@ -1574,7 +1766,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
       }
     }
-  }, [finalStatus, data.statuses, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap, resolveTenantIdForTask]);
+  }, [finalStatus, data.statuses, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap, resolveTenantIdForTask, isSharedOnlyTask]);
 
   const isTaskWorking = useCallback((taskId: string) => {
     if (!workingTaskIds.includes(taskId)) return false;
@@ -1593,8 +1785,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [finalStatus, completeWorkingTask, addWorkingTask]);
 
   const toggleCompactCards = useCallback(() => {
-    setCardDensity((prev) => prev === 'compact' ? 'normal' : 'compact');
-  }, []);
+    setCardDensity(cardDensity === 'detailed' ? 'normal' : 'detailed');
+  }, [cardDensity, setCardDensity]);
 
   // ---------------------------------------------------------------------------
   // Mutations (Convex)
@@ -1678,7 +1870,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         categoryIcon: (category as any)?.icon ?? null,
         workspaceId: workspace?.id ?? null,
         assignees,
-        createdAt: formatDate(nowIso),
+        createdAt: formatTaskDate(nowIso),
         tags,
         approval: null,
         sla: null,
@@ -1695,7 +1887,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { _id: queueId, pgId: -Date.now() };
     }
     return result as CreatedTaskResult;
-  }, [effectiveTenantId, createTaskOfflineMutation, data.workspaces, data.categories, data.statuses, data.priorities, data.spots, data.templates, data.users, data.tags, templateFormMap, initialStatus, authUser?.id]);
+  }, [effectiveTenantId, createTaskOfflineMutation, data.workspaces, data.categories, data.statuses, data.priorities, data.spots, data.templates, data.users, data.tags, templateFormMap, initialStatus, authUser?.id, formatTaskDate]);
 
   const addTask = (_task: TaskItem) => {
     // Legacy stub - use createTask instead
@@ -1711,6 +1903,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const taskKey = String(taskId);
     const currentTask = allMappedTaskMap.get(taskKey);
     if (currentTask) {
+      if (currentTask.shareId || currentTask.approvalStatus || isSharedOnlyTask(currentTask)) {
+        return false;
+      }
+
       const allowedStatuses = getAllowedStatuses(currentTask);
       const isAllowed = allowedStatuses.some((candidate) => String(candidate.id) === String(status.id));
       if (!isAllowed) {
@@ -1781,7 +1977,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn('[TaskContext] Failed to change status by pgId:', err);
     });
     return true;
-  }, [data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, myTaskIds, setTimedOverride, resolveTenantIdForTask]);
+  }, [data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, isSharedOnlyTask, myTaskIds, setTimedOverride, resolveTenantIdForTask]);
 
   const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
     const taskKey = String(taskId);
@@ -2125,6 +2321,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       removeWorkingTask,
       completeWorkingTask,
       isTaskWorking,
+      setCardDensity,
       filters,
       hasActiveFilters,
       wsFilteredTasks,

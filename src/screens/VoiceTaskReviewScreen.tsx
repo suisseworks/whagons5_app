@@ -34,7 +34,7 @@ import { useOfflineMutation } from '../hooks/useOfflineMutation';
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'VoiceTaskReview'>;
 type ScreenRouteProp = RouteProp<RootStackParamList, 'VoiceTaskReview'>;
 
-type PickerItem = { id: string; name: string };
+type PickerItem = { id: string; name: string; searchText?: string };
 
 type DraftContextItem = { id: string; name: string };
 type DraftWorkspace = DraftContextItem & { allowedCategoryIds: string[]; categoryId?: string; color?: string | null };
@@ -46,7 +46,7 @@ type DraftTemplate = DraftContextItem & {
   defaultUserIds?: string[];
   spotsNotApplicable: boolean;
 };
-type DraftSpot = DraftContextItem & { parentId?: string };
+type DraftSpot = DraftContextItem & { alias?: string; parentId?: string };
 type DraftPriority = DraftContextItem & { color?: string | null; categoryId?: string };
 type DraftUser = DraftContextItem;
 type VoiceDraftContext = {
@@ -102,7 +102,7 @@ const PickerModal: React.FC<PickerModalProps> = ({
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (!query) return items;
-    return items.filter((item) => item.name.toLowerCase().includes(query));
+    return items.filter((item) => `${item.name} ${item.searchText ?? ''}`.toLowerCase().includes(query));
   }, [items, search]);
 
   return (
@@ -430,7 +430,11 @@ export const VoiceTaskReviewScreen: React.FC = () => {
 
   const workspaceItems = context?.workspaces.map((workspace: DraftWorkspace) => ({ id: workspace.id, name: workspace.name })) ?? [];
   const templateItems = availableTemplates.map((template: DraftTemplate) => ({ id: template.id, name: template.name }));
-  const spotItems = context?.spots.map((spot: DraftSpot) => ({ id: spot.id, name: spot.name })) ?? [];
+  const spotItems = context?.spots.map((spot: DraftSpot) => ({
+    id: spot.id,
+    name: spot.name,
+    searchText: typeof spot.alias === 'string' ? spot.alias : undefined,
+  })) ?? [];
   const priorityItems = context?.priorities.map((priority: DraftPriority) => ({ id: priority.id, name: priority.name })) ?? [];
 
   const toggleAssignee = useCallback((userId: string) => {
