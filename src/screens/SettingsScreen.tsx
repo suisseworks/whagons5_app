@@ -10,26 +10,48 @@ import {
   Alert,
   ActivityIndicator,
   InteractionManager,
+  Linking,
   Modal,
+  Platform,
   Pressable,
+  TextInput,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useMutation } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import { RootStackParamList } from '../models/types';
 import { useTheme } from '../context/ThemeContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useAuth } from '../context/AuthContext';
-import { VERSION_DISPLAY } from '../config/version';
+import { APP_VERSION, BUILD_NUMBER, GIT_HASH, VERSION_DISPLAY } from '../config/version';
+import { BUNDLED_RELEASE_NOTES } from '../config/releaseNotes';
 import { useData } from '../context/DataContext';
 import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
+import { sendPasswordReset } from '../firebase/authService';
 
 export const GPS_CAPTURE_STORAGE_KEY = '@whagons/gps_capture_enabled';
+const PRIVACY_POLICY_URL = 'https://whagons.com/en/privacy';
+const TERMS_OF_SERVICE_URL = 'https://whagons.com/en/terms';
+
+type AppReleaseNote = {
+  version?: string;
+  tagName?: string;
+  title?: string;
+  body?: string;
+  bodyByLanguage?: Record<string, string>;
+  buildNumber?: number;
+  gitHash?: string;
+  githubUrl?: string;
+};
+
+const bundledReleaseNotes: AppReleaseNote = BUNDLED_RELEASE_NOTES;
 
 /** Avoid Fabric crash on Android: reset() from Alert onPress races dialog teardown ("child already has a parent"). */
 function runAfterAlertNavigationWork(fn: () => void) {
@@ -49,12 +71,19 @@ export const SettingsScreen: React.FC = () => {
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
   const { pendingCount, failedCount } = useMutationQueue();
-  const { language, setLanguage, t } = useLanguage();
+  const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
+  const submitBugReport = useMutation((api as any).bugReports.submit);
+  const releaseNotesBody = bundledReleaseNotes.bodyByLanguage?.[language] || bundledReleaseNotes.body;
   const [isSwitching, setIsSwitching] = useState(false);
+  const [switchTenantModalVisible, setSwitchTenantModalVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
-
-  const [biometricEnabled, setBiometricEnabled] = useState(false);
-  const [autoBackup, setAutoBackup] = useState(true);
+  const [bugReportModalVisible, setBugReportModalVisible] = useState(false);
+  const [bugReportText, setBugReportText] = useState('');
+  const [bugReportSubmitting, setBugReportSubmitting] = useState(false);
+  const [passwordResetModalVisible, setPasswordResetModalVisible] = useState(false);
+  const [passwordResetSubmitting, setPasswordResetSubmitting] = useState(false);
+  const [appDetailsModalVisible, setAppDetailsModalVisible] = useState(false);
+  const [releaseNotesModalVisible, setReleaseNotesModalVisible] = useState(false);
   const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(true);
 
   useEffect(() => {
@@ -79,6 +108,77 @@ export const SettingsScreen: React.FC = () => {
 
   const showLanguageDialog = () => {
     setLanguageModalVisible(true);
+  };
+
+  const openExternalUrl = (url: string) => {
+    Linking.openURL(url).catch(() => {
+      Alert.alert(t('common.error'), t('settings.openLinkFailed'));
+    });
+  };
+
+  const handleSubmitBugReport = async () => {
+    const message = bugReportText.trim();
+
+    if (!message) {
+      Alert.alert(t('settings.bugReportRequiredTitle'), t('settings.bugReportRequiredMessage'));
+      return;
+    }
+
+    if (!subdomain) {
+      Alert.alert(t('common.error'), t('settings.bugReportNoTenant'));
+      return;
+    }
+
+    setBugReportSubmitting(true);
+    try {
+      await submitBugReport({
+        tenantId: subdomain,
+        message,
+        source: 'settings',
+        appVersion: APP_VERSION,
+        buildNumber: BUILD_NUMBER,
+        gitHash: GIT_HASH,
+        platform: Platform.OS,
+        metadata: {
+          appVersionDisplay: VERSION_DISPLAY,
+        },
+      });
+      setBugReportText('');
+      setBugReportModalVisible(false);
+      Alert.alert(t('settings.bugReportSentTitle'), t('settings.bugReportSentMessage'));
+    } catch (err: any) {
+      Alert.alert(t('common.error'), err?.message || t('settings.bugReportFailed'));
+    } finally {
+      setBugReportSubmitting(false);
+    }
+  };
+
+  const handleShowReleaseNotes = () => {
+    setReleaseNotesModalVisible(true);
+  };
+
+  const handleChangePassword = () => {
+    if (!user?.email) {
+      Alert.alert(t('common.error'), t('settings.passwordResetNoEmail'));
+      return;
+    }
+
+    setPasswordResetModalVisible(true);
+  };
+
+  const handleSendPasswordReset = async () => {
+    if (!user?.email) return;
+
+    setPasswordResetSubmitting(true);
+    try {
+      await sendPasswordReset(user.email);
+      setPasswordResetModalVisible(false);
+      Alert.alert(t('settings.passwordResetSentTitle'), t('settings.passwordResetSentMessage'));
+    } catch (err: any) {
+      Alert.alert(t('common.error'), err?.message || t('settings.passwordResetFailed'));
+    } finally {
+      setPasswordResetSubmitting(false);
+    }
   };
 
   const languageOptions: { label: string; code: SupportedLanguage; description: string }[] = [
@@ -115,35 +215,28 @@ export const SettingsScreen: React.FC = () => {
     );
   };
 
+  const performSwitchTenant = async () => {
+    setIsSwitching(true);
+    try {
+      const { tenants, firebaseIdToken } = await switchTenant();
+      setSwitchTenantModalVisible(false);
+      runAfterAlertNavigationWork(() => {
+        navigation.dispatch(
+          CommonActions.reset({
+            index: 0,
+            routes: [{ name: 'TenantSelect', params: { tenants, firebaseIdToken } }],
+          }),
+        );
+        setIsSwitching(false);
+      });
+    } catch (err: any) {
+      Alert.alert(t('common.error'), err?.message || t('settings.switchTenantError'));
+      setIsSwitching(false);
+    }
+  };
+
   const handleSwitchTenant = () => {
-    Alert.alert(
-      t('settings.switchTenantAlertTitle'),
-      t('settings.switchTenantAlertMessage'),
-      [
-        { text: t('common.cancel'), style: 'cancel' },
-        {
-          text: t('settings.switchTenantButton'),
-          onPress: async () => {
-            setIsSwitching(true);
-            try {
-              const { tenants, firebaseIdToken } = await switchTenant();
-              runAfterAlertNavigationWork(() => {
-                navigation.dispatch(
-                  CommonActions.reset({
-                    index: 0,
-                    routes: [{ name: 'TenantSelect', params: { tenants, firebaseIdToken } }],
-                  }),
-                );
-                setIsSwitching(false);
-              });
-            } catch (err: any) {
-              Alert.alert(t('common.error'), err?.message || t('settings.switchTenantError'));
-              setIsSwitching(false);
-            }
-          },
-        },
-      ],
-    );
+    setSwitchTenantModalVisible(true);
   };
 
   const showLogoutDialog = () => {
@@ -259,7 +352,7 @@ export const SettingsScreen: React.FC = () => {
         {/* Account Section */}
         <SectionHeader title={t('settings.sectionAccount')} />
         <View style={cardStyle}>
-          <TouchableOpacity style={styles.profileTile} onPress={() => showComingSoon('Profile editing')}>
+          <TouchableOpacity style={styles.profileTile} onPress={() => navigation.navigate('Profile')}>
             {user?.photo_url ? (
               <Image
                 source={{ uri: getOptimizedImageUrl(user.photo_url as string, { width: 56, height: 56, mode: 'fill' }) || (user.photo_url as string) }}
@@ -285,16 +378,6 @@ export const SettingsScreen: React.FC = () => {
             icon="email"
             title={t('settings.email')}
             subtitle={user?.email || t('common.unknown')}
-            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Email settings')}
-          />
-          <View style={styles.divider} />
-          <ListTile
-            icon="phone"
-            title={t('settings.phone')}
-            subtitle={t('common.unknown')}
-            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Phone settings')}
           />
         </View>
 
@@ -345,15 +428,6 @@ export const SettingsScreen: React.FC = () => {
             subtitle={t('settings.pushNotificationsSubtitle')}
             value={preferences.pushEnabled}
             onValueChange={(val) => updatePreferences({ pushEnabled: val })}
-            enabled={preferences.enabled}
-          />
-          <View style={styles.divider} />
-          <SwitchTile
-            icon="email"
-            title={t('settings.emailNotifications')}
-            subtitle={t('settings.emailNotificationsSubtitle')}
-            value={preferences.emailEnabled}
-            onValueChange={(val) => updatePreferences({ emailEnabled: val })}
             enabled={preferences.enabled}
           />
           <View style={styles.divider} />
@@ -414,61 +488,45 @@ export const SettingsScreen: React.FC = () => {
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
             onPress={showLanguageDialog}
           />
+          <View style={styles.divider} />
+          <SwitchTile
+            icon="schedule"
+            title={t('settings.use24HourTime')}
+            subtitle={timeFormat === '24h' ? t('settings.timeFormat24Hour') : t('settings.timeFormat12Hour')}
+            value={timeFormat === '24h'}
+            onValueChange={(value) => setTimeFormat(value ? '24h' : '12h')}
+          />
         </View>
 
         {/* Privacy & Security Section */}
         <SectionHeader title={t('settings.sectionPrivacySecurity')} />
         <View style={cardStyle}>
-          <SwitchTile
-            icon="fingerprint"
-            title={t('settings.biometricLogin')}
-            subtitle={t('settings.biometricLoginSubtitle')}
-            value={biometricEnabled}
-            onValueChange={setBiometricEnabled}
-          />
-          <View style={styles.divider} />
           <ListTile
             icon="lock"
             title={t('settings.changePassword')}
             subtitle={t('settings.changePasswordSubtitle')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Password change')}
+            onPress={handleChangePassword}
           />
           <View style={styles.divider} />
           <ListTile
             icon="shield"
             title={t('settings.privacyPolicy')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Privacy policy')}
+            onPress={() => openExternalUrl(PRIVACY_POLICY_URL)}
           />
           <View style={styles.divider} />
           <ListTile
             icon="description"
             title={t('settings.termsOfService')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Terms of service')}
+            onPress={() => openExternalUrl(TERMS_OF_SERVICE_URL)}
           />
         </View>
 
         {/* Data & Storage Section */}
         <SectionHeader title={t('settings.sectionDataStorage')} />
         <View style={cardStyle}>
-          <SwitchTile
-            icon="backup"
-            title={t('settings.autoBackup')}
-            subtitle={t('settings.autoBackupSubtitle')}
-            value={autoBackup}
-            onValueChange={setAutoBackup}
-          />
-          <View style={styles.divider} />
-          <ListTile
-            icon="cloud-download"
-            title={t('settings.downloadData')}
-            subtitle={t('settings.downloadDataSubtitle')}
-            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Data export')}
-          />
-          <View style={styles.divider} />
           <ListTile
             icon="sync"
             title={t('settings.offlineQueue')}
@@ -494,31 +552,10 @@ export const SettingsScreen: React.FC = () => {
         <SectionHeader title={t('settings.sectionSupport')} />
         <View style={cardStyle}>
           <ListTile
-            icon="help-outline"
-            title={t('settings.helpCenter')}
-            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Help center')}
-          />
-          <View style={styles.divider} />
-          <ListTile
-            icon="chat-bubble-outline"
-            title={t('settings.contactSupport')}
-            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Contact support')}
-          />
-          <View style={styles.divider} />
-          <ListTile
-            icon="rate-review"
-            title={t('settings.rateApp')}
-            trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Rate app')}
-          />
-          <View style={styles.divider} />
-          <ListTile
             icon="bug-report"
             title={t('settings.reportBug')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Bug report')}
+            onPress={() => setBugReportModalVisible(true)}
           />
         </View>
 
@@ -529,21 +566,15 @@ export const SettingsScreen: React.FC = () => {
             icon="info-outline"
             title={t('settings.appVersion')}
             subtitle={VERSION_DISPLAY}
-            onPress={() => {}}
-          />
-          <View style={styles.divider} />
-          <ListTile
-            icon="update"
-            title={t('settings.checkForUpdates')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Check updates')}
+            onPress={() => setAppDetailsModalVisible(true)}
           />
           <View style={styles.divider} />
           <ListTile
             icon="article"
-            title={t('settings.whatsNew')}
+            title={t('settings.releaseNotes')}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Release notes')}
+            onPress={handleShowReleaseNotes}
           />
         </View>
 
@@ -607,7 +638,7 @@ export const SettingsScreen: React.FC = () => {
                     <Text style={[styles.languageOptionDescription, { color: colors.textSecondary }]}>{option.description}</Text>
                   </View>
                   {selected && (
-                    <View style={[styles.languageCheck, { backgroundColor: primaryColor }]}> 
+                    <View style={[styles.languageCheck, { backgroundColor: primaryColor }]}>
                       <MaterialIcons name="check" size={16} color="#FFFFFF" />
                     </View>
                   )}
@@ -627,6 +658,273 @@ export const SettingsScreen: React.FC = () => {
               onPress={() => setLanguageModalVisible(false)}
             >
               <Text style={[styles.languageCancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={switchTenantModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => !isSwitching && setSwitchTenantModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => !isSwitching && setSwitchTenantModalVisible(false)} />
+          <View
+            style={[
+              styles.languageSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <View style={[styles.passwordResetIcon, { backgroundColor: `${primaryColor}18` }]}>
+              <MaterialIcons name="swap-horiz" size={26} color={primaryColor} />
+            </View>
+            <Text style={[styles.languageTitle, styles.centeredModalTitle, { color: colors.text }]}>{t('settings.switchTenantAlertTitle')}</Text>
+            <Text style={[styles.passwordResetMessage, { color: colors.textSecondary }]}>{t('settings.switchTenantAlertMessage')}</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[
+                  styles.modalSecondaryButton,
+                  {
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+                  },
+                ]}
+                disabled={isSwitching}
+                onPress={() => setSwitchTenantModalVisible(false)}
+              >
+                <Text style={[styles.modalSecondaryButtonText, { color: colors.text }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalPrimaryButton, { backgroundColor: primaryColor }, isSwitching && styles.modalButtonDisabled]}
+                disabled={isSwitching}
+                onPress={performSwitchTenant}
+              >
+                {isSwitching ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalPrimaryButtonText}>{t('settings.switchTenantButton')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={bugReportModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setBugReportModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => !bugReportSubmitting && setBugReportModalVisible(false)} />
+          <View
+            style={[
+              styles.languageSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <Text style={[styles.languageTitle, { color: colors.text }]}>{t('settings.reportBug')}</Text>
+            <Text style={[styles.languageSubtitle, { color: colors.textSecondary }]}>{t('settings.bugReportPrompt')}</Text>
+            <TextInput
+              style={[
+                styles.bugReportInput,
+                {
+                  color: colors.text,
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.04)' : '#F8F5EF',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+                },
+              ]}
+              value={bugReportText}
+              onChangeText={setBugReportText}
+              placeholder={t('settings.bugReportPlaceholder')}
+              placeholderTextColor={colors.textSecondary}
+              multiline
+              maxLength={4000}
+              textAlignVertical="top"
+              editable={!bugReportSubmitting}
+            />
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[
+                  styles.modalSecondaryButton,
+                  {
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+                  },
+                ]}
+                disabled={bugReportSubmitting}
+                onPress={() => setBugReportModalVisible(false)}
+              >
+                <Text style={[styles.modalSecondaryButtonText, { color: colors.text }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalPrimaryButton, { backgroundColor: primaryColor }, bugReportSubmitting && styles.modalButtonDisabled]}
+                disabled={bugReportSubmitting}
+                onPress={handleSubmitBugReport}
+              >
+                {bugReportSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalPrimaryButtonText}>{t('settings.submitBugReport')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={passwordResetModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => !passwordResetSubmitting && setPasswordResetModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => !passwordResetSubmitting && setPasswordResetModalVisible(false)} />
+          <View
+            style={[
+              styles.languageSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <View style={[styles.passwordResetIcon, { backgroundColor: `${primaryColor}18` }]}>
+              <MaterialIcons name="lock-reset" size={26} color={primaryColor} />
+            </View>
+            <Text style={[styles.languageTitle, styles.centeredModalTitle, { color: colors.text }]}>{t('settings.changePassword')}</Text>
+            <Text style={[styles.passwordResetMessage, { color: colors.textSecondary }]}>
+              {t('settings.passwordResetConfirmMessage', { email: user?.email || '' })}
+            </Text>
+            <View
+              style={[
+                styles.passwordResetEmailPill,
+                {
+                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#F8F5EF',
+                  borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.07)',
+                },
+              ]}
+            >
+              <MaterialIcons name="mail-outline" size={18} color={colors.textSecondary} />
+              <Text style={[styles.passwordResetEmailText, { color: colors.text }]} numberOfLines={1}>{user?.email}</Text>
+            </View>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[
+                  styles.modalSecondaryButton,
+                  {
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+                  },
+                ]}
+                disabled={passwordResetSubmitting}
+                onPress={() => setPasswordResetModalVisible(false)}
+              >
+                <Text style={[styles.modalSecondaryButtonText, { color: colors.text }]}>{t('common.cancel')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalPrimaryButton, { backgroundColor: primaryColor }, passwordResetSubmitting && styles.modalButtonDisabled]}
+                disabled={passwordResetSubmitting}
+                onPress={handleSendPasswordReset}
+              >
+                {passwordResetSubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalPrimaryButtonText}>{t('settings.sendResetEmail')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={appDetailsModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setAppDetailsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => setAppDetailsModalVisible(false)} />
+          <View
+            style={[
+              styles.releaseNotesSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <Text style={[styles.languageTitle, { color: colors.text }]}>{t('settings.appDetails')}</Text>
+            <View style={styles.appDetailsList}>
+              <View style={styles.appDetailsRow}>
+                <Text style={[styles.appDetailsLabel, { color: colors.textSecondary }]}>{t('settings.appVersion')}</Text>
+                <Text style={[styles.appDetailsValue, { color: colors.text }]}>{APP_VERSION}</Text>
+              </View>
+              <View style={styles.appDetailsRow}>
+                <Text style={[styles.appDetailsLabel, { color: colors.textSecondary }]}>{t('settings.buildNumber')}</Text>
+                <Text style={[styles.appDetailsValue, { color: colors.text }]}>{BUILD_NUMBER}</Text>
+              </View>
+              <View style={styles.appDetailsRow}>
+                <Text style={[styles.appDetailsLabel, { color: colors.textSecondary }]}>{t('settings.gitHash')}</Text>
+                <Text style={[styles.appDetailsValue, { color: colors.text }]}>{GIT_HASH}</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[styles.languageCancel, { backgroundColor: primaryColor, borderColor: primaryColor }]}
+              activeOpacity={0.85}
+              onPress={() => setAppDetailsModalVisible(false)}
+            >
+              <Text style={[styles.languageCancelText, { color: '#FFFFFF' }]}>{t('common.close')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={releaseNotesModalVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setReleaseNotesModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => setReleaseNotesModalVisible(false)} />
+          <View
+            style={[
+              styles.releaseNotesSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <Text style={[styles.languageTitle, { color: colors.text }]}>{bundledReleaseNotes.title || bundledReleaseNotes.tagName || t('settings.releaseNotes')}</Text>
+            <ScrollView style={styles.releaseNotesBody}>
+              <Text style={[styles.releaseNotesText, { color: colors.textSecondary }]}>{releaseNotesBody?.trim() || t('settings.releaseNotesEmpty')}</Text>
+            </ScrollView>
+            <TouchableOpacity
+              style={[styles.languageCancel, { backgroundColor: primaryColor, borderColor: primaryColor }]}
+              activeOpacity={0.85}
+              onPress={() => setReleaseNotesModalVisible(false)}
+            >
+              <Text style={[styles.languageCancelText, { color: '#FFFFFF' }]}>{t('common.close')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -773,6 +1071,9 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.lg,
     fontFamily: fontFamilies.displaySemibold,
   },
+  centeredModalTitle: {
+    textAlign: 'center',
+  },
   languageSubtitle: {
     marginTop: 4,
     marginBottom: 16,
@@ -818,6 +1119,125 @@ const styles = StyleSheet.create({
   },
   languageCancelText: {
     fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  bugReportInput: {
+    minHeight: 150,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    height: 50,
+    borderWidth: 1,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalSecondaryButtonText: {
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  modalPrimaryButton: {
+    flex: 1,
+    height: 50,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalPrimaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  modalButtonDisabled: {
+    opacity: 0.65,
+  },
+  passwordResetIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'center',
+    marginBottom: 14,
+  },
+  passwordResetMessage: {
+    marginTop: 8,
+    fontSize: fontSizes.sm,
+    lineHeight: 20,
+    fontFamily: fontFamilies.bodyRegular,
+    textAlign: 'center',
+  },
+  passwordResetEmailPill: {
+    minHeight: 44,
+    marginTop: 16,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  passwordResetEmailText: {
+    flex: 1,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  releaseNotesSheet: {
+    maxHeight: '82%',
+    borderTopLeftRadius: radius.xl,
+    borderTopRightRadius: radius.xl,
+    borderWidth: 1,
+    borderBottomWidth: 0,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 32,
+    ...shadows.lifted,
+  },
+  releaseNotesLoading: {
+    minHeight: 180,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  releaseNotesBody: {
+    maxHeight: 420,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  releaseNotesText: {
+    fontSize: fontSizes.sm,
+    lineHeight: 21,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  appDetailsList: {
+    marginTop: 14,
+    marginBottom: 14,
+    gap: 12,
+  },
+  appDetailsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  appDetailsLabel: {
+    flex: 1,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  appDetailsValue: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodySemibold,
   },
 });

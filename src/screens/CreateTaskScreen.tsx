@@ -46,6 +46,14 @@ interface SelectedEntity {
   color?: string | null;
 }
 
+type SelectorItem = {
+  _id: string;
+  name: string;
+  color?: string | null;
+  subtitle?: string;
+  searchText?: string;
+};
+
 interface AttachmentItem {
   id: string; // local unique id
   fileName: string;
@@ -65,9 +73,9 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25 MB
 interface SelectorModalProps {
   visible: boolean;
   title: string;
-  items: { _id: string; name: string; color?: string | null; subtitle?: string }[];
+  items: SelectorItem[];
   selectedId?: string | null;
-  onSelect: (item: { _id: string; name: string; color?: string | null }) => void;
+  onSelect: (item: SelectorItem) => void;
   onClose: () => void;
   searchable?: boolean;
   multiSelect?: boolean;
@@ -88,7 +96,7 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
   const filtered = useMemo(() => {
     if (!search.trim()) return items;
     const q = search.toLowerCase();
-    return items.filter((i) => i.name.toLowerCase().includes(q));
+    return items.filter((i) => `${i.name} ${i.searchText ?? ''} ${i.subtitle ?? ''}`.toLowerCase().includes(q));
   }, [items, search]);
 
   if (!visible) return null;
@@ -441,6 +449,12 @@ export const CreateTaskScreen: React.FC = () => {
     }));
   }, [data.workspaces]);
 
+  useEffect(() => {
+    if (currentWorkspace || chosenWorkspaceId || workspaceItems.length !== 1) return;
+    setChosenWorkspaceId(workspaceItems[0]._id);
+    setWorkspaceModalVisible(false);
+  }, [currentWorkspace, chosenWorkspaceId, workspaceItems]);
+
   const assigneePickerUsers = useMemo<UserPickerItem[]>(() => {
     return data.users.reduce<UserPickerItem[]>((acc, rawUser: any) => {
       const resolvedId = rawUser?._id ?? rawUser?.id;
@@ -475,7 +489,11 @@ export const CreateTaskScreen: React.FC = () => {
   }, [assigneePickerUsers]);
 
   const spotItems = useMemo(() => {
-    return data.spots.map((s: any) => ({ _id: s._id, name: s.name }));
+    return data.spots.map((s: any) => ({
+      _id: s._id,
+      name: s.name,
+      searchText: typeof s.alias === 'string' ? s.alias : undefined,
+    }));
   }, [data.spots]);
 
   const tagItems = useMemo(() => {

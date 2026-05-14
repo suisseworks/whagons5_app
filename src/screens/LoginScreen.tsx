@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
+import * as AppleAuthentication from 'expo-apple-authentication';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
@@ -49,7 +50,7 @@ const GoogleLogo = () => (
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const { width } = useWindowDimensions();
-  const { signInWithGoogle, signInWithEmail, token, pendingTenants, hasNoTenants } = useAuth();
+  const { signInWithGoogle, signInWithApple, signInWithEmail, token, pendingTenants, hasNoTenants } = useAuth();
   const { t } = useLanguage();
 
   const [email, setEmail] = useState('');
@@ -57,6 +58,8 @@ export const LoginScreen: React.FC = () => {
   const [isObscured, setIsObscured] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const [isAppleLoading, setIsAppleLoading] = useState(false);
+  const [isAppleAvailable, setIsAppleAvailable] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
 
   // Animations
@@ -94,8 +97,25 @@ export const LoginScreen: React.FC = () => {
     return () => { showSub.remove(); hideSub.remove(); };
   }, []);
 
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+
+    let cancelled = false;
+    AppleAuthentication.isAvailableAsync()
+      .then((available) => {
+        if (!cancelled) setIsAppleAvailable(available);
+      })
+      .catch(() => {
+        if (!cancelled) setIsAppleAvailable(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const isLargeScreen = width > 800;
-  const anyLoading = isLoading || isGoogleLoading;
+  const anyLoading = isLoading || isGoogleLoading || isAppleLoading;
   const lastLoginDebugRef = useRef('');
 
   // Watch for auth state changes and navigate accordingly
@@ -108,6 +128,7 @@ export const LoginScreen: React.FC = () => {
       hasNavigated: hasNavigated.current,
       isLoading,
       isGoogleLoading,
+      isAppleLoading,
     });
     if (snapshot !== lastLoginDebugRef.current) {
       lastLoginDebugRef.current = snapshot;
@@ -158,6 +179,31 @@ export const LoginScreen: React.FC = () => {
       }
     } finally {
       setIsGoogleLoading(false);
+    }
+  };
+
+  const handleAppleSignIn = async () => {
+    console.log('[LoginScreen] Apple button pressed');
+    setIsAppleLoading(true);
+    try {
+      await signInWithApple();
+      // Navigation handled by effect above when auth resolves
+    } catch (err: any) {
+      console.error('[LoginScreen] Apple sign-in failed:', err);
+      const msg = err?.message || t('login.appleSignInFailed');
+      const code = String(err?.code || '');
+      if (
+        code.includes('ERR_REQUEST_CANCELED') ||
+        msg.includes('CANCELED') ||
+        msg.includes('cancelled') ||
+        msg.includes('canceled')
+      ) {
+        // User cancelled
+      } else {
+        Alert.alert(t('login.signInFailedTitle'), msg);
+      }
+    } finally {
+      setIsAppleLoading(false);
     }
   };
 
@@ -295,6 +341,24 @@ export const LoginScreen: React.FC = () => {
           </View>
         )}
       </TouchableOpacity>
+
+      {Platform.OS === 'ios' && isAppleAvailable && (
+        <View style={[styles.appleButtonWrapper, anyLoading && styles.loginButtonDisabled]} pointerEvents={anyLoading ? 'none' : 'auto'}>
+          {isAppleLoading ? (
+            <View style={styles.appleLoadingButton}>
+              <ActivityIndicator color="#FFFFFF" />
+            </View>
+          ) : (
+            <AppleAuthentication.AppleAuthenticationButton
+              buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+              buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+              cornerRadius={radius.md}
+              style={styles.appleButton}
+              onPress={handleAppleSignIn}
+            />
+          )}
+        </View>
+      )}
     </Animated.View>
   );
 
@@ -515,6 +579,20 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
     color: '#1E2321',
+  },
+  appleButtonWrapper: {
+    marginTop: 12,
+  },
+  appleButton: {
+    width: '100%',
+    height: 52,
+  },
+  appleLoadingButton: {
+    height: 52,
+    borderRadius: radius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000000',
   },
 
   // ---- Footer ----

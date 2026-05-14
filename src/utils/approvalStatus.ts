@@ -4,6 +4,10 @@ function normStatus(s: any): string {
   return (s ?? '').toString().toLowerCase().trim();
 }
 
+function field(row: any, snake: string, camel: string): any {
+  return row?.[snake] ?? row?.[camel];
+}
+
 export function computeApprovalStatusForTask(opts: {
   taskId: number | string;
   taskConvexId?: string;
@@ -16,15 +20,16 @@ export function computeApprovalStatusForTask(opts: {
 
   const instances = (taskApprovalInstances || []).filter(
     (i: any) => {
-      if (i?.task_id == null) return false;
-      const instTaskId = String(i.task_id);
+      const rawTaskId = field(i, 'task_id', 'taskId');
+      if (rawTaskId == null) return false;
+      const instTaskId = String(rawTaskId);
       return instTaskId === String(taskId) || (taskConvexId && instTaskId === taskConvexId);
     }
   );
 
   if (instances.length === 0) return 'pending';
 
-  const required = instances.filter((i: any) => i?.is_required !== false);
+  const required = instances.filter((i: any) => field(i, 'is_required', 'isRequired') !== false);
   const requiredSet = required.length > 0 ? required : instances;
 
   const hasReject = requiredSet.some((i: any) => normStatus(i?.status) === 'rejected');
@@ -88,15 +93,17 @@ export function buildApproverDetails(
   if (approvalId && taskApprovalInstances.length > 0) {
     const instances = taskApprovalInstances
       .filter((inst: any) => {
-        if (inst.task_id == null) return false;
-        const instTaskId = String(inst.task_id);
+        const rawTaskId = field(inst, 'task_id', 'taskId');
+        if (rawTaskId == null) return false;
+        const instTaskId = String(rawTaskId);
         return instTaskId === String(taskId) || instTaskId === String(taskConvexId);
       })
-      .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
+      .sort((a: any, b: any) => (field(a, 'order_index', 'orderIndex') ?? 0) - (field(b, 'order_index', 'orderIndex') ?? 0));
 
     const groupedBySource = new Map<string, any[]>();
     for (const inst of instances) {
-      const key = inst.source_approver_id ? String(inst.source_approver_id) : `direct-${inst.id}`;
+      const sourceApproverId = field(inst, 'source_approver_id', 'sourceApproverId');
+      const key = sourceApproverId ? String(sourceApproverId) : `direct-${inst.id}`;
       if (!groupedBySource.has(key)) groupedBySource.set(key, []);
       groupedBySource.get(key)!.push(inst);
     }
@@ -105,27 +112,28 @@ export function buildApproverDetails(
     for (const [sourceKey, group] of groupedBySource) {
       const sourceApprover = sourceKey.startsWith('direct-') ? null
         : (Array.isArray(approvalApprovers) ? approvalApprovers.find((ap: any) => String(ap.id) === sourceKey) : null);
-      const isTeamBased = sourceApprover?.approver_type === 'team';
-      const isRoleBased = sourceApprover?.approver_type === 'role';
+      const approverType = field(sourceApprover, 'approver_type', 'approverType');
+      const isTeamBased = approverType === 'team';
+      const isRoleBased = approverType === 'role';
 
       if (isTeamBased) {
-        const teamId = sourceApprover.approver_id ?? sourceApprover.approverId;
+        const teamId = field(sourceApprover, 'approver_id', 'approverId');
         const teamName = teamMap?.[String(teamId)]?.name || teamMap?.[Number(teamId)]?.name || 'Team';
         const approvedCount = group.filter((i: any) => (i.status || '').toLowerCase() === 'approved').length;
         const rejectedCount = group.filter((i: any) => (i.status || '').toLowerCase() === 'rejected').length;
         const hasReject = rejectedCount > 0;
         const allApproved = approvedCount === group.length;
         const aggregateStatus = hasReject ? 'rejected' : allApproved ? 'approved' : 'pending';
-        const memberUserIds = group.map((i: any) => i.approver_user_id).filter(Boolean);
+        const memberUserIds = group.map((i: any) => field(i, 'approver_user_id', 'approverUserId')).filter(Boolean);
         approverDetails.push({
           id: sourceKey,
           name: teamName,
           status: aggregateStatus,
           statusColor: aggregateStatus === 'approved' ? '#16a34a' : aggregateStatus === 'rejected' ? '#dc2626' : '#2563eb',
-          isRequired: group.some((i: any) => i.is_required !== false),
+          isRequired: group.some((i: any) => field(i, 'is_required', 'isRequired') !== false),
           step: ++stepIdx,
-          respondedAt: group.find((i: any) => i.responded_at)?.responded_at || null,
-          comment: group.find((i: any) => i.response_comment)?.response_comment || null,
+          respondedAt: group.map((i: any) => field(i, 'responded_at', 'respondedAt')).find(Boolean) || null,
+          comment: group.map((i: any) => field(i, 'response_comment', 'responseComment')).find(Boolean) || null,
           approverUserId: null,
           approverRoleId: null,
           approverTeamId: teamId,
@@ -135,13 +143,14 @@ export function buildApproverDetails(
         });
       } else {
         for (const inst of group) {
-          const roleId = isRoleBased ? (sourceApprover?.approver_id ?? sourceApprover?.approverId) : null;
-          const userRecord = inst.approver_user_id != null
-            ? ((userMap?.[Number(inst.approver_user_id)]) || (userMap?.[String(inst.approver_user_id)]) || null)
+          const roleId = isRoleBased ? field(sourceApprover, 'approver_id', 'approverId') : null;
+          const approverUserId = field(inst, 'approver_user_id', 'approverUserId');
+          const userRecord = approverUserId != null
+            ? ((userMap?.[Number(approverUserId)]) || (userMap?.[String(approverUserId)]) || null)
             : null;
           let displayName: string;
           if (userRecord) {
-            displayName = userRecord.name || userRecord.email || `User #${inst.approver_user_id}`;
+            displayName = userRecord.name || userRecord.email || `User #${approverUserId}`;
           } else if (isRoleBased && roleId) {
             displayName = roleMap[roleId]?.name || roleMap[String(roleId)]?.name || `Role #${roleId}`;
           } else {
@@ -155,11 +164,11 @@ export function buildApproverDetails(
             statusColor: normalizedStatus === 'approved' ? '#16a34a'
               : normalizedStatus === 'rejected' ? '#dc2626'
               : normalizedStatus === 'skipped' ? '#d97706' : '#2563eb',
-            isRequired: inst.is_required !== false,
+            isRequired: field(inst, 'is_required', 'isRequired') !== false,
             step: ++stepIdx,
-            respondedAt: inst.responded_at,
-            comment: inst.response_comment,
-            approverUserId: inst.approver_user_id != null ? inst.approver_user_id : null,
+            respondedAt: field(inst, 'responded_at', 'respondedAt'),
+            comment: field(inst, 'response_comment', 'responseComment'),
+            approverUserId: approverUserId != null ? approverUserId : null,
             approverRoleId: roleId,
             signatureStorageId: inst.signatureStorageId || inst.signature_storage_id || null,
           });
@@ -170,12 +179,12 @@ export function buildApproverDetails(
 
   if (approverDetails.length === 0 && approvalId && Array.isArray(approvalApprovers)) {
     const configuredApprovers = approvalApprovers
-      .filter((ap: any) => ap.approval_id != null && String(ap.approval_id) === String(approvalId))
-      .sort((a: any, b: any) => (a.order_index ?? 0) - (b.order_index ?? 0));
+      .filter((ap: any) => field(ap, 'approval_id', 'approvalId') != null && String(field(ap, 'approval_id', 'approvalId')) === String(approvalId))
+      .sort((a: any, b: any) => (field(a, 'order_index', 'orderIndex') ?? 0) - (field(b, 'order_index', 'orderIndex') ?? 0));
     if (configuredApprovers.length > 0) {
       approverDetails = configuredApprovers.map((config: any, idx: number) => {
-        const approverType = config.approver_type ?? config.approverType;
-        const approverId = config.approver_id ?? config.approverId;
+        const approverType = field(config, 'approver_type', 'approverType');
+        const approverId = field(config, 'approver_id', 'approverId');
         const userRecord = approverType === 'user'
           ? ((userMap?.[Number(approverId)]) || (userMap?.[String(approverId)]) || null)
           : null;
@@ -194,7 +203,7 @@ export function buildApproverDetails(
           status: 'not started',
           statusColor: '#9ca3af',
           isRequired: config.required !== false,
-          step: (config.order_index ?? idx) + 1,
+          step: (field(config, 'order_index', 'orderIndex') ?? idx) + 1,
           respondedAt: null,
           comment: null,
           approverUserId: approverType === 'user' && approverId ? approverId : null,

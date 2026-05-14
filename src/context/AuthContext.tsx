@@ -25,6 +25,7 @@ import { getIdToken as getFirebaseIdToken } from '@react-native-firebase/auth';
 import { api } from '../../../convex/_generated/api';
 import {
   signInWithGoogle as fbSignInWithGoogle,
+  signInWithApple as fbSignInWithApple,
   signInWithEmail as fbSignInWithEmail,
   firebaseSignOut,
   getCurrentUser,
@@ -72,6 +73,7 @@ export class TenantChoiceRequired extends Error {
 
 interface AuthContextType extends AuthState {
   signInWithGoogle: () => Promise<void>;
+  signInWithApple: () => Promise<void>;
   signInWithEmail: (params: { email: string; password: string }) => Promise<void>;
   selectTenant: (tenant: string, firebaseIdToken?: string) => Promise<void>;
   switchTenant: () => Promise<{ tenants: string[]; firebaseIdToken: string }>;
@@ -278,6 +280,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       id: (convexUser as any).pgId ?? (convexUser as any)._id ?? 0,
       name: (convexUser as any).name ?? '',
       email: (convexUser as any).email ?? '',
+      apodo: (convexUser as any).apodo ?? '',
+      showApodo: Boolean((convexUser as any).showApodo),
       photo_url: (convexUser as any).urlPicture ?? getCurrentUser()?.photoURL ?? null,
       tenant_domain_prefix: tenantId,
     };
@@ -365,6 +369,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setTenantResolved(false);
     await fbSignInWithGoogle();
     console.log('[AUTH] Google sign-in returned from Firebase');
+    // ConvexProviderWithAuth picks up the Firebase user automatically
+  }, []);
+
+  // ------------------------------------------------------------------
+  // Apple Sign-In
+  // ------------------------------------------------------------------
+  const signInWithApple = useCallback(async () => {
+    console.log('[AUTH] Apple sign-in requested');
+    loggingOutRef.current = false;
+    setIsLoggingOut(false);
+    setPendingTenants(null);
+    setHasNoTenants(false);
+    setTenantResolved(false);
+    await fbSignInWithApple();
+    console.log('[AUTH] Apple sign-in returned from Firebase');
     // ConvexProviderWithAuth picks up the Firebase user automatically
   }, []);
 
@@ -490,13 +509,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const contextValue = useMemo(() => ({
     ...state,
     signInWithGoogle,
+    signInWithApple,
     signInWithEmail,
     selectTenant,
     switchTenant,
     logout,
     pendingTenants: isLoggingOut ? null : pendingTenants,
     hasNoTenants: !isLoggingOut && hasNoTenants,
-  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithEmail, selectTenant, switchTenant, logout, isLoggingOut, pendingTenants, hasNoTenants]);
+  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithApple, signInWithEmail, selectTenant, switchTenant, logout, isLoggingOut, pendingTenants, hasNoTenants]);
 
   return (
     <AuthContext.Provider value={contextValue}>

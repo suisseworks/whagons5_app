@@ -5,6 +5,7 @@
  *
  * Mirrors the web client's pages/authentication/auth.ts:
  *   - signInWithGoogle()   -> Google native sign-in -> Firebase credential
+ *   - signInWithApple()    -> Apple native sign-in -> Firebase credential
  *   - signInWithEmail()    -> Firebase email/password
  *   - signUpWithEmail()    -> Firebase create account + verification email
  *   - signOut()            -> Firebase sign-out
@@ -21,12 +22,16 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   sendEmailVerification,
+  sendPasswordResetEmail,
   onAuthStateChanged as fbOnAuthStateChanged,
+  AppleAuthProvider,
   GoogleAuthProvider,
   signOut as firebaseAuthSignOut,
 } from '@react-native-firebase/auth';
 import { getApp } from '@react-native-firebase/app';
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
 
 // ---------------------------------------------------------------------------
@@ -39,11 +44,17 @@ GoogleSignin.configure({
 
 // Modular auth instance
 const auth = getAuth(getApp());
+const NONCE_CHARSET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._';
 
 function maskEmail(email: string): string {
   const [local, domain] = email.split('@');
   if (!domain) return '<invalid-email>';
   return `${local.slice(0, 2)}***@${domain}`;
+}
+
+function generateNonce(length = 32): string {
+  const bytes = Crypto.getRandomBytes(length);
+  return Array.from(bytes, (byte) => NONCE_CHARSET[byte % NONCE_CHARSET.length]).join('');
 }
 
 // ---------------------------------------------------------------------------
@@ -71,6 +82,46 @@ export async function signInWithGoogle(): Promise<FirebaseAuthTypes.UserCredenti
 
   // Sign in to Firebase with the Google credential (modular API)
   return signInWithCredential(auth, googleCredential);
+}
+
+// ---------------------------------------------------------------------------
+// Apple Sign-In
+// ---------------------------------------------------------------------------
+
+/**
+ * Sign in with Apple using the native iOS flow.
+ * Returns the Firebase UserCredential.
+ */
+export async function signInWithApple(): Promise<FirebaseAuthTypes.UserCredential> {
+  const isAvailable = await AppleAuthentication.isAvailableAsync();
+  if (!isAvailable) {
+    throw new Error('Apple Sign-In is not available on this device');
+  }
+
+  const rawNonce = generateNonce();
+  const hashedNonce = await Crypto.digestStringAsync(
+    Crypto.CryptoDigestAlgorithm.SHA256,
+    rawNonce,
+  );
+
+  const appleCredential = await AppleAuthentication.signInAsync({
+    requestedScopes: [
+      AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+      AppleAuthentication.AppleAuthenticationScope.EMAIL,
+    ],
+    nonce: hashedNonce,
+  });
+
+  if (!appleCredential.identityToken) {
+    throw new Error('Apple Sign-In failed: no identityToken returned');
+  }
+
+  const firebaseCredential = AppleAuthProvider.credential(
+    appleCredential.identityToken,
+    rawNonce,
+  );
+
+  return signInWithCredential(auth, firebaseCredential);
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +166,10 @@ export async function signUpWithEmail(
   const userCredential = await createUserWithEmailAndPassword(auth, email, password);
   await sendEmailVerification(userCredential.user);
   return userCredential;
+}
+
+export async function sendPasswordReset(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth, email);
 }
 
 // ---------------------------------------------------------------------------

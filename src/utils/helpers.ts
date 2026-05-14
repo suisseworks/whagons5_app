@@ -194,6 +194,7 @@ type NotificationNavigationInput = {
   title?: string;
   message?: string;
   data?: Record<string, any>;
+  target_url?: string;
   taskId?: string;
   task_id?: string;
   taskPgId?: string | number;
@@ -210,7 +211,8 @@ type NotificationNavigationInput = {
 
 export type NotificationNavigationTarget =
   | { screen: 'TaskDetail'; params: { task: TaskItem } }
-  | { screen: 'Main'; params: { tab: number; conversationId?: string | number } }
+  | { screen: 'SharedTaskDetail'; params: { task: TaskItem } }
+  | { screen: 'Main'; params: { tab: number; conversationId?: string | number; workspace?: 'Shared' | 'Everything' } }
   | { screen: 'BoardDetail'; params: { boardId: string | number } };
 
 const TASK_NOTIFICATION_TYPES = new Set([
@@ -223,6 +225,9 @@ const TASK_NOTIFICATION_TYPES = new Set([
   'task_created_unassigned',
   'task_unassigned',
   'reported_task_seen',
+  'approval_requested',
+  'approval_approved',
+  'approval_rejected',
   'status_changed',
   'status_change',
   'assignment',
@@ -262,6 +267,9 @@ export function resolveNotificationNavigation(
   const type = input.type || input.notification_kind || data.type || data.notification_kind;
   const title = input.title || data.title || '';
   const message = input.message || data.message || '';
+  const targetUrl = input.target_url || data.target_url || '';
+  const targetsSharedTask = typeof targetUrl === 'string' && /(?:^|\/)shared(?:-with-me)?(?:\?|$|\/)/.test(targetUrl);
+  const targetsApproval = type === 'approval' || (typeof type === 'string' && type.startsWith('approval_'));
 
   const taskIds = [
     data.taskId,
@@ -280,7 +288,16 @@ export function resolveNotificationNavigation(
 
   for (const taskId of taskIds) {
     const task = findTaskByNotificationId(tasks, taskId);
-    if (task) return { screen: 'TaskDetail', params: { task } };
+    if (task) {
+      if (targetsSharedTask || targetsApproval || type === 'task_shared' || task.shareId || task.approvalStatus) {
+        return { screen: 'SharedTaskDetail', params: { task } };
+      }
+      return { screen: 'TaskDetail', params: { task } };
+    }
+  }
+
+  if (targetsSharedTask || targetsApproval || type === 'task_shared') {
+    return { screen: 'Main', params: { tab: 0, workspace: 'Shared' } };
   }
 
   const looksLikeTaskNotification = TASK_NOTIFICATION_TYPES.has(type ?? '')
@@ -300,7 +317,12 @@ export function resolveNotificationNavigation(
 
     for (const taskName of taskNameCandidates) {
       const task = findTaskByTitle(tasks, taskName);
-      if (task) return { screen: 'TaskDetail', params: { task } };
+      if (task) {
+        if (targetsSharedTask || targetsApproval || type === 'task_shared' || task.shareId || task.approvalStatus) {
+          return { screen: 'SharedTaskDetail', params: { task } };
+        }
+        return { screen: 'TaskDetail', params: { task } };
+      }
     }
   }
 

@@ -20,6 +20,14 @@ import {
 } from 'react-native';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
+const RN_TIGHT_SPRING = {
+  stiffness: 900,
+  damping: 86,
+  mass: 0.72,
+  overshootClamping: true,
+  restDisplacementThreshold: 0.5,
+  restSpeedThreshold: 0.5,
+};
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
@@ -103,47 +111,47 @@ interface SwipeableTaskItemProps {
   isDarkMode: boolean;
   primaryColor: string;
   swipeStatusLabel: string;
-  swipeAssignLabel: string;
+  canChangeStatus: boolean;
   onPress: (task: TaskItem) => void;
-  onSwipeLeft: (task: TaskItem) => void;
   onSwipeRight: (task: TaskItem) => void;
 }
 
 const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
-  ({ item, cardDensity, isDarkMode, primaryColor, swipeStatusLabel, swipeAssignLabel, onPress, onSwipeLeft, onSwipeRight }) => {
+  ({ item, cardDensity, isDarkMode, primaryColor, swipeStatusLabel, canChangeStatus, onPress, onSwipeRight }) => {
     const translateX = useRef(new Animated.Value(0)).current;
+    const pressScale = useRef(new Animated.Value(1)).current;
+
+    const resetSwipe = useCallback(() => {
+      Animated.spring(translateX, {
+        toValue: 0,
+        useNativeDriver: true,
+        ...RN_TIGHT_SPRING,
+      }).start();
+    }, [translateX]);
 
     const panResponder = useMemo(
       () =>
         PanResponder.create({
           onMoveShouldSetPanResponder: (_, gestureState) => {
-            return Math.abs(gestureState.dx) > 20;
+            if (!canChangeStatus) return false;
+            return gestureState.dx > 8 && gestureState.dx > Math.abs(gestureState.dy) * 1.15;
           },
           onPanResponderMove: (_, gestureState) => {
-            translateX.setValue(gestureState.dx);
+            translateX.setValue(Math.max(0, gestureState.dx));
           },
           onPanResponderRelease: (_, gestureState) => {
-            if (gestureState.dx > 100) {
-              Animated.spring(translateX, {
-                toValue: 0,
-                useNativeDriver: true,
-              }).start();
-              onSwipeRight(item);
-            } else if (gestureState.dx < -100) {
-              Animated.spring(translateX, {
-                toValue: 0,
-                useNativeDriver: true,
-              }).start();
-              onSwipeLeft(item);
+            const didSwipeRight = gestureState.dx > 80 || (gestureState.vx > 0.45 && gestureState.dx > 32);
+
+            if (didSwipeRight) {
+              resetSwipe();
+              if (canChangeStatus) onSwipeRight(item);
             } else {
-              Animated.spring(translateX, {
-                toValue: 0,
-                useNativeDriver: true,
-              }).start();
+              resetSwipe();
             }
           },
+          onPanResponderTerminate: resetSwipe,
         }),
-      [item, translateX, onSwipeLeft, onSwipeRight],
+      [item, translateX, canChangeStatus, onSwipeRight, resetSwipe],
     );
 
     const handlePress = useCallback(() => onPress(item), [item, onPress]);
@@ -151,29 +159,21 @@ const SwipeableTaskItem = React.memo<SwipeableTaskItemProps>(
     return (
       <View style={styles.taskItemContainer}>
         {/* Swipe backgrounds */}
-        <View
-          style={[
-            styles.swipeBackground,
-            styles.swipeBackgroundRight,
-            isDarkMode && { backgroundColor: 'rgba(156, 163, 175, 0.15)' },
-          ]}
-        >
-          <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
-          <Text style={[styles.swipeText, { color: primaryColor }]}>{swipeStatusLabel}</Text>
-        </View>
-        <View
-          style={[
-            styles.swipeBackground,
-            styles.swipeBackgroundLeft,
-            isDarkMode && { backgroundColor: 'rgba(33, 150, 243, 0.15)' },
-          ]}
-        >
-          <Text style={[styles.swipeText, { color: '#2196F3' }]}>{swipeAssignLabel}</Text>
-          <MaterialIcons name="person-add" size={24} color="#2196F3" />
-        </View>
-
+        {canChangeStatus ? (
+          <Animated.View
+            style={[
+              styles.swipeBackground,
+              styles.swipeBackgroundRight,
+              isDarkMode && { backgroundColor: 'rgba(156, 163, 175, 0.15)' },
+              { transform: [{ scale: pressScale }] },
+            ]}
+          >
+            <MaterialIcons name="swap-horiz" size={24} color={primaryColor} />
+            <Text style={[styles.swipeText, { color: primaryColor }]}>{swipeStatusLabel}</Text>
+          </Animated.View>
+        ) : null}
         <Animated.View {...panResponder.panHandlers} style={{ transform: [{ translateX }] }}>
-          <TaskCard task={item} density={cardDensity} onPress={handlePress} />
+          <TaskCard task={item} density={cardDensity} onPress={handlePress} pressScaleValue={pressScale} />
         </Animated.View>
       </View>
     );
@@ -357,12 +357,85 @@ export const MainScreen: React.FC = () => {
   // Status chip selection is now driven by filters.statuses from context
   // so it stays in sync with the filter sheet
   const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
+  const tasksTabTranslateX = useRef(new Animated.Value(0)).current;
+  const tasksTabDragStartX = useRef(0);
+  const statusChipTouchActiveRef = useRef(false);
+
+  const animateTasksTabTo = useCallback((tab: 'everything' | 'workspaces', velocity = 0) => {
+    Animated.spring(tasksTabTranslateX, {
+      toValue: tab === 'workspaces' ? -SCREEN_WIDTH : 0,
+      velocity,
+      useNativeDriver: false,
+      ...RN_TIGHT_SPRING,
+    }).start();
+  }, [tasksTabTranslateX]);
+
   const handleDrawerWorkspaceSelect = useCallback((workspaceName: string) => {
     setSelectedNav(0);
     setSelectedWorkspace(workspaceName);
     setTasksTab(workspaceName === 'Everything' ? 'everything' : 'workspace');
   }, [setSelectedWorkspace]);
   const selectedNavKey = navItems[selectedNav]?.key ?? 'tasks';
+
+  useEffect(() => {
+    if (selectedNavKey === 'tasks' && tasksTab !== 'workspace') {
+      animateTasksTabTo(tasksTab);
+    }
+  }, [animateTasksTabTo, selectedNavKey, tasksTab]);
+
+  const finishTasksTabSwipe = useCallback((dx: number, vx: number) => {
+    if (selectedNavKey !== 'tasks' || tasksTab === 'workspace') return;
+
+    const velocityThreshold = 0.28;
+    const distanceThreshold = SCREEN_WIDTH * 0.16;
+    const currentX = tasksTabDragStartX.current + dx;
+    let nextTab = tasksTab;
+
+    if (tasksTab === 'everything' && (vx < -velocityThreshold || dx < -distanceThreshold)) {
+      nextTab = 'workspaces';
+    } else if (tasksTab === 'workspaces' && (vx > velocityThreshold || dx > distanceThreshold)) {
+      nextTab = 'everything';
+    } else {
+      nextTab = currentX < -SCREEN_WIDTH / 2 ? 'workspaces' : 'everything';
+    }
+
+    if (nextTab === 'everything') {
+      setSelectedWorkspace('Everything');
+    }
+    animateTasksTabTo(nextTab, vx * SCREEN_WIDTH);
+    if (nextTab !== tasksTab) {
+      setTasksTab(nextTab);
+    }
+  }, [animateTasksTabTo, selectedNavKey, setSelectedWorkspace, tasksTab]);
+
+  const tasksTabPanResponder = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        if (selectedNavKey !== 'tasks' || tasksTab === 'workspace') return false;
+        if (statusChipTouchActiveRef.current) return false;
+        const isHorizontal = Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.15;
+        if (!isHorizontal) return false;
+        return (tasksTab === 'everything' && gestureState.dx < 0) || (tasksTab === 'workspaces' && gestureState.dx > 0);
+      },
+      onPanResponderGrant: () => {
+        const startX = tasksTab === 'workspaces' ? -SCREEN_WIDTH : 0;
+        tasksTabTranslateX.stopAnimation();
+        tasksTabDragStartX.current = startX;
+        tasksTabTranslateX.setValue(startX);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const nextX = Math.min(0, Math.max(-SCREEN_WIDTH, tasksTabDragStartX.current + gestureState.dx));
+        tasksTabTranslateX.setValue(nextX);
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        finishTasksTabSwipe(gestureState.dx, gestureState.vx);
+      },
+      onPanResponderTerminate: (_, gestureState) => {
+        finishTasksTabSwipe(gestureState.dx, gestureState.vx);
+      },
+    }),
+    [finishTasksTabSwipe, selectedNavKey, tasksTab, tasksTabTranslateX],
+  );
 
   // Handle navigation params from notification taps (e.g., switch to Colab tab + open conversation)
   useEffect(() => {
@@ -373,11 +446,16 @@ export const MainScreen: React.FC = () => {
     if (params?.conversationId != null) {
       setInitialConversationId(params.conversationId);
     }
-    // Clear params after consuming them so they don't replay on re-render
-    if (params?.tab != null || params?.conversationId != null) {
-      navigation.setParams({ tab: undefined, conversationId: undefined } as any);
+    if (params?.workspace === 'Shared' || params?.workspace === 'Everything') {
+      setSelectedNav(0);
+      setSelectedWorkspace(params.workspace);
+      setTasksTab(params.workspace === 'Shared' ? 'workspace' : 'everything');
     }
-  }, [route.params]);
+    // Clear params after consuming them so they don't replay on re-render
+    if (params?.tab != null || params?.conversationId != null || params?.workspace != null) {
+      navigation.setParams({ tab: undefined, conversationId: undefined, workspace: undefined } as any);
+    }
+  }, [navigation, route.params, setSelectedWorkspace]);
 
   useEffect(() => {
     if (!lastTapPayload) return;
@@ -385,6 +463,11 @@ export const MainScreen: React.FC = () => {
     const target = resolveNotificationNavigation(lastTapPayload as any, unfilteredTasks);
     if (target?.screen === 'TaskDetail') {
       navigation.navigate('TaskDetail', target.params);
+      clearTapPayload();
+      return;
+    }
+    if (target?.screen === 'SharedTaskDetail') {
+      navigation.navigate('SharedTaskDetail', target.params);
       clearTapPayload();
       return;
     }
@@ -641,14 +724,6 @@ export const MainScreen: React.FC = () => {
     });
   }, [workingTasks, selectedWorkspace, data.workspaces, data.tasks]);
 
-  const handleSwipeLeft = useCallback(
-    (task: TaskItem) => {
-      setAssigneePickerTask(task);
-      setAssigneePickerVisible(true);
-    },
-    [],
-  );
-
   const handleAssigneeSelect = useCallback(
     (userId: string) => {
       const userName = assigneeNameById.get(userId) ?? userId;
@@ -667,10 +742,11 @@ export const MainScreen: React.FC = () => {
 
   const handleSwipeRight = useCallback(
     (task: TaskItem) => {
+      if (selectedWorkspace === 'Shared' || task.shareId || task.approvalStatus) return;
       setStatusPickerTask(task);
       setStatusPickerVisible(true);
     },
-    [],
+    [selectedWorkspace],
   );
 
   const handleStatusSelect = useCallback(
@@ -685,7 +761,10 @@ export const MainScreen: React.FC = () => {
   );
 
   const swipeStatusLabel = t('main.swipeStatus');
-  const swipeAssignLabel = t('main.swipeAssign');
+  const canChangeStatusFromList = useCallback(
+    (task: TaskItem) => selectedWorkspace !== 'Shared' && !task.shareId && !task.approvalStatus,
+    [selectedWorkspace],
+  );
   const renderTaskItem = useCallback(
     ({ item }: { item: TaskItem }) => (
       <SwipeableTaskItem
@@ -694,13 +773,12 @@ export const MainScreen: React.FC = () => {
         isDarkMode={isDarkMode}
         primaryColor={primaryColor}
         swipeStatusLabel={swipeStatusLabel}
-        swipeAssignLabel={swipeAssignLabel}
+        canChangeStatus={canChangeStatusFromList(item)}
         onPress={handleTaskPress}
-        onSwipeLeft={handleSwipeLeft}
         onSwipeRight={handleSwipeRight}
       />
     ),
-    [cardDensity, isDarkMode, primaryColor, swipeStatusLabel, swipeAssignLabel, handleTaskPress, handleSwipeLeft, handleSwipeRight],
+    [cardDensity, isDarkMode, primaryColor, swipeStatusLabel, canChangeStatusFromList, handleTaskPress, handleSwipeRight],
   );
 
   const handleChipPress = useCallback((statusKey: string) => {
@@ -735,6 +813,21 @@ export const MainScreen: React.FC = () => {
             showsHorizontalScrollIndicator={false}
             style={styles.chipStrip}
             contentContainerStyle={styles.chipStripContent}
+            onTouchStart={() => {
+              statusChipTouchActiveRef.current = true;
+            }}
+            onTouchEnd={() => {
+              statusChipTouchActiveRef.current = false;
+            }}
+            onTouchCancel={() => {
+              statusChipTouchActiveRef.current = false;
+            }}
+            onScrollEndDrag={() => {
+              statusChipTouchActiveRef.current = false;
+            }}
+            onMomentumScrollEnd={() => {
+              statusChipTouchActiveRef.current = false;
+            }}
           >
             {statusChips.map((chip) => {
               const isActive = chip.statusKey === ''
@@ -1092,45 +1185,61 @@ export const MainScreen: React.FC = () => {
     );
   };
 
+  const renderTaskList = () => (
+    <View style={{ flex: 1 }}>
+      {/* Status chips + sync pill pinned above the list */}
+      {renderListHeader()}
+      <FlatList
+        data={displayedTasks}
+        renderItem={renderTaskItem}
+        keyExtractor={keyExtractor}
+        extraData={cardDensity}
+        contentContainerStyle={[
+          styles.listContent,
+          displayedTasks.length === 0 && styles.listContentEmpty,
+        ]}
+        ListEmptyComponent={renderTasksEmpty}
+        ItemSeparatorComponent={ItemSeparator}
+        windowSize={7}
+        maxToRenderPerBatch={10}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={true}
+        onEndReached={loadMoreTasks}
+        onEndReachedThreshold={0.5}
+        refreshControl={
+          <RefreshControl
+            refreshing={isSyncing}
+            onRefresh={onRefresh}
+            tintColor={primaryColor}
+            colors={[primaryColor]}
+          />
+        }
+      />
+    </View>
+  );
+
+  const renderTasksPager = () => (
+    <View style={styles.tasksPager} {...tasksTabPanResponder.panHandlers}>
+      <Animated.View
+        style={[
+          styles.tasksPagerTrack,
+          { transform: [{ translateX: tasksTabTranslateX }] },
+        ]}
+      >
+        <View style={styles.tasksPagerPage}>{renderTaskList()}</View>
+        <View style={styles.tasksPagerPage}>{renderWorkspacesList()}</View>
+      </Animated.View>
+    </View>
+  );
+
   const renderContent = () => {
     if (selectedNavKey === 'tasks') {
       // Workspaces list tab
-      if (tasksTab === 'workspaces') {
-        return renderWorkspacesList();
+      if (tasksTab !== 'workspace') {
+        return renderTasksPager();
       }
       // Everything tab or specific workspace — shows task list
-      return (
-        <View style={{ flex: 1 }}>
-          {/* Status chips + sync pill pinned above the list */}
-          {renderListHeader()}
-          <FlatList
-            data={displayedTasks}
-            renderItem={renderTaskItem}
-            keyExtractor={keyExtractor}
-            extraData={cardDensity}
-            contentContainerStyle={[
-              styles.listContent,
-              displayedTasks.length === 0 && styles.listContentEmpty,
-            ]}
-            ListEmptyComponent={renderTasksEmpty}
-            ItemSeparatorComponent={ItemSeparator}
-            windowSize={7}
-            maxToRenderPerBatch={10}
-            updateCellsBatchingPeriod={50}
-            removeClippedSubviews={true}
-            onEndReached={loadMoreTasks}
-            onEndReachedThreshold={0.5}
-            refreshControl={
-              <RefreshControl
-                refreshing={isSyncing}
-                onRefresh={onRefresh}
-                tintColor={primaryColor}
-                colors={[primaryColor]}
-              />
-            }
-          />
-        </View>
-      );
+      return renderTaskList();
     }
 
     if (selectedNavKey === 'colab') {
@@ -1654,6 +1763,19 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyBold,
   },
   content: {
+    flex: 1,
+  },
+  tasksPager: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  tasksPagerTrack: {
+    flex: 1,
+    flexDirection: 'row',
+    width: SCREEN_WIDTH * 2,
+  },
+  tasksPagerPage: {
+    width: SCREEN_WIDTH,
     flex: 1,
   },
   searchBarContainer: {

@@ -7,12 +7,16 @@ import i18n from '../locales/i18n';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 
 const STORAGE_KEY = '@whagons/language';
+const TIME_FORMAT_STORAGE_KEY = '@whagons/time_format';
 
 export type SupportedLanguage = 'en' | 'es';
+export type TimeFormatPreference = '12h' | '24h';
 
 interface LanguageContextType {
   language: SupportedLanguage;
+  timeFormat: TimeFormatPreference;
   setLanguage: (lang: SupportedLanguage) => void;
+  setTimeFormat: (format: TimeFormatPreference) => void;
   t: (scope: string, options?: Record<string, any>) => string;
 }
 
@@ -20,6 +24,7 @@ const LanguageContext = createContext<LanguageContextType | undefined>(undefined
 
 export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [language, setLanguageState] = useState<SupportedLanguage>(i18n.locale as SupportedLanguage);
+  const [timeFormat, setTimeFormatState] = useState<TimeFormatPreference>('12h');
   const { tenantId } = useTenant();
   const convexUser = useQuery(api.users.me, tenantId ? { tenantId } : 'skip');
   const updateMe = useOfflineMutation(api.users.updateMe, 'users.updateMe');
@@ -44,10 +49,15 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, [convexUser, tenantId, updateMe]);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY).then((stored) => {
-      if (stored === 'en' || stored === 'es') {
-        i18n.locale = stored;
-        setLanguageState(stored);
+    AsyncStorage.multiGet([STORAGE_KEY, TIME_FORMAT_STORAGE_KEY]).then((entries) => {
+      const storedLanguage = entries[0][1];
+      const storedTimeFormat = entries[1][1];
+      if (storedLanguage === 'en' || storedLanguage === 'es') {
+        i18n.locale = storedLanguage;
+        setLanguageState(storedLanguage);
+      }
+      if (storedTimeFormat === '12h' || storedTimeFormat === '24h') {
+        setTimeFormatState(storedTimeFormat);
       }
     }).catch(() => {});
   }, []);
@@ -109,12 +119,18 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
     void persistLanguagePreference(normalizedLanguage);
   }, [convexUser, normalizeLanguage, persistLanguagePreference, tenantId]);
 
+  const setTimeFormat = useCallback((format: TimeFormatPreference) => {
+    const normalizedFormat = format === '24h' ? '24h' : '12h';
+    setTimeFormatState(normalizedFormat);
+    AsyncStorage.setItem(TIME_FORMAT_STORAGE_KEY, normalizedFormat).catch(() => {});
+  }, []);
+
   const t = useCallback((scope: string, options?: Record<string, any>) => {
     return i18n.t(scope, options);
   }, [language]);
 
   return (
-    <LanguageContext.Provider value={{ language, setLanguage, t }}>
+    <LanguageContext.Provider value={{ language, timeFormat, setLanguage, setTimeFormat, t }}>
       {children}
     </LanguageContext.Provider>
   );

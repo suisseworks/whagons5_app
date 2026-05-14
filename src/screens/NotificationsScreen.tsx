@@ -146,6 +146,10 @@ export const NotificationsScreen: React.FC = () => {
       navigation.navigate('TaskDetail', target.params);
       return;
     }
+    if (target?.screen === 'SharedTaskDetail') {
+      navigation.navigate('SharedTaskDetail', target.params);
+      return;
+    }
     if (target?.screen === 'BoardDetail') {
       navigation.navigate('BoardDetail', target.params);
       return;

@@ -32,29 +32,6 @@ const FLAG_HEX: Record<string, string> = {
 
 const MAX_VISIBLE_TAGS = 3;
 
-/** Parse markdown checklist from description and return counts + non-checklist text */
-function parseChecklist(desc: string): { checked: number; total: number; plainText: string } | null {
-  const lines = desc.split(/\n|(?=- \[)/);
-  let checked = 0;
-  let total = 0;
-  const plain: string[] = [];
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (/^-\s*\[x\]/i.test(line)) {
-      total++;
-      checked++;
-    } else if (/^-\s*\[ ?\]/.test(line)) {
-      total++;
-    } else if (line) {
-      plain.push(line);
-    }
-  }
-  if (total === 0) return null;
-  return { checked, total, plainText: plain.join(' ').trim() };
-}
-
-
-
 /** Continuously rotating spinner for "in-progress" status badges */
 const SpinnerIcon: React.FC<{ color: string; size?: number }> = React.memo(({ color, size = 12 }) => {
   const spin = useRef(new Animated.Value(0)).current;
@@ -95,10 +72,11 @@ interface TaskCardProps {
   compact?: boolean;
   density?: CardDensity;
   onPress: () => void;
+  pressScaleValue?: Animated.Value;
 }
 
-export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, density, onPress }) => {
-  const effectiveDensity: CardDensity = density ?? (compact ? 'compact' : 'normal');
+export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, onPress, pressScaleValue }) => {
+  const effectiveDensity: CardDensity = density ?? 'normal';
 
   const { colors, isDarkMode } = useTheme();
   const { t } = useLanguage();
@@ -114,8 +92,11 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
   const working = Boolean(task.id && isTaskWorking(task.id));
   const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
   const hasSeen = isCreator && task.firstViewedAt != null;
+  const commentCount = task.commentCount ?? 0;
+  const lastCommentText = task.lastCommentText?.trim() ?? '';
 
-  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const internalScaleAnim = useRef(new Animated.Value(1)).current;
+  const scaleAnim = pressScaleValue ?? internalScaleAnim;
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const pulseRef = useRef<Animated.CompositeAnimation | null>(null);
 
@@ -229,35 +210,6 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
         )}
       </View>
 
-      {/* Description preview (only in detailed mode) */}
-      {effectiveDensity === 'detailed' && !!task.description && (() => {
-        const cl = parseChecklist(task.description!);
-        if (cl) {
-          return (
-            <View style={styles.checklistRow}>
-              <MaterialCommunityIcons
-                name={cl.checked === cl.total ? 'checkbox-marked-outline' : 'checkbox-blank-outline'}
-                size={14}
-                color={cl.checked === cl.total ? '#22C55E' : tertiaryText}
-              />
-              <Text style={[styles.checklistProgress, { color: cl.checked === cl.total ? '#22C55E' : tertiaryText }]}>
-                {cl.checked}/{cl.total}
-              </Text>
-              {cl.plainText ? (
-                <Text style={[styles.descriptionPreview, { color: tertiaryText, marginTop: 0, marginLeft: 4, flex: 1 }]} numberOfLines={1}>
-                  {cl.plainText}
-                </Text>
-              ) : null}
-            </View>
-          );
-        }
-        return (
-          <Text style={[styles.descriptionPreview, { color: tertiaryText }]} numberOfLines={2}>
-            {task.description}
-          </Text>
-        );
-      })()}
-
       {/* Row 2: Status badge + Location + Approval pill */}
       <View style={styles.metaRow}>
         <CustomChip
@@ -325,6 +277,20 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, compact, de
           />
         )}
       </View>
+
+      {effectiveDensity === 'detailed' && (
+        <View style={styles.commentPreviewRow}>
+          <MaterialCommunityIcons name="comment-outline" size={14} color={tertiaryText} />
+          <Text style={[styles.commentCountText, { color: tertiaryText }]}>
+            {commentCount}
+          </Text>
+          {!!lastCommentText && (
+            <Text style={[styles.lastCommentText, { color: colors.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
+              {lastCommentText}
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* Row 3: Timestamp + Avatars */}
       <View style={styles.bottomRow}>
@@ -424,23 +390,23 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
     flexShrink: 0,
   },
-  descriptionPreview: {
-    fontSize: 12,
-    fontFamily: fontFamilies.bodyRegular,
-    lineHeight: 17,
-    marginTop: 4,
-    marginLeft: 36,
-  },
-  checklistRow: {
+  commentPreviewRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: 5,
     marginLeft: 36,
     gap: 4,
   },
-  checklistProgress: {
+  commentCountText: {
     fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
+    flexShrink: 0,
+  },
+  lastCommentText: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
   },
   metaRow: {
     flexDirection: 'row',

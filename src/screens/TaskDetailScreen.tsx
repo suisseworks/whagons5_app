@@ -15,11 +15,11 @@ import {
   PanResponderGestureState,
   Dimensions,
   useWindowDimensions,
-  KeyboardAvoidingView,
   Platform,
   Linking,
   Share,
 } from 'react-native';
+import { KeyboardAvoidingView, KeyboardStickyView } from 'react-native-keyboard-controller';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -102,8 +102,16 @@ import { Toast, ToastRef } from '../components/Toast';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { ProgressiveImage } from '../components/ProgressiveImage';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
-import { VoiceMemoActionButton, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
+import { VoiceMemoActionButton, VoiceMemoBubble, VoiceMemoDraftPreview, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 import * as DB from '../store/database';
+
+const TIGHT_TAB_SPRING = {
+  damping: 90,
+  stiffness: 1600,
+  overshootClamping: true,
+  restDisplacementThreshold: 0.5,
+  restSpeedThreshold: 0.5,
+};
 
 /** Parse markdown checklist items from a description string */
 function parseChecklistItems(desc: string): { label: string; checked: boolean }[] | null {
@@ -235,8 +243,10 @@ const NoteAttachmentView: React.FC<{
   attachment: NoteAttachmentData;
   colors: any;
   isDarkMode: boolean;
+  isMe: boolean;
   onImagePress?: (uri: string) => void;
-}> = ({ attachment, colors, isDarkMode, onImagePress }) => {
+  primaryColor: string;
+}> = ({ attachment, colors, isDarkMode, isMe, onImagePress, primaryColor }) => {
   const { tenantId } = useTenant();
   const rawUrl = useQuery(
     api.files.getFileUrl,
@@ -247,6 +257,7 @@ const NoteAttachmentView: React.FC<{
   const url = rawUrl ? fixConvexStorageUrl(rawUrl) : null;
   const isImage = attachment.fileType.startsWith('image/');
   const isVideo = attachment.fileType.startsWith('video/');
+  const isAudio = attachment.fileType.startsWith('audio/') || /\.(m4a|mp3|aac|wav|caf|ogg|oga|webm)$/i.test(attachment.fileName) || attachment.fileName.toLowerCase().includes('voice memo');
 
   const handleFilePress = useCallback(() => {
     if (!url) return;
@@ -257,11 +268,26 @@ const NoteAttachmentView: React.FC<{
     }
   }, [url, isImage, onImagePress]);
 
-  // Loading state for images and videos
-  if ((isImage || isVideo) && !url) {
+  // Loading state for inline media
+  if ((isImage || isVideo || isAudio) && !url) {
     return (
       <View style={[noteAttachStyles.filePlaceholder, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}>
         <ActivityIndicator size="small" color={colors.textSecondary} />
+      </View>
+    );
+  }
+
+  if (isAudio && url) {
+    return (
+      <View style={noteAttachStyles.audioWrap}>
+        <VoiceMemoBubble
+          uri={url}
+          outgoing={isMe}
+          primaryColor={primaryColor}
+          incomingBackgroundColor={isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF'}
+          incomingTextColor={colors.textSecondary}
+          timeLabel=""
+        />
       </View>
     );
   }
@@ -324,6 +350,9 @@ const NoteAttachmentView: React.FC<{
 };
 
 const noteAttachStyles = StyleSheet.create({
+  audioWrap: {
+    marginTop: 6,
+  },
   image: {
     width: '100%',
     height: 180,
@@ -887,6 +916,14 @@ export const TaskDetailScreen: React.FC = () => {
 
   const { pickAndUpload, takePhotoAndUpload, uploadFile, uploading: uploadingAttachment, attachmentPickerProps } = useConvexUpload();
   const [pendingAttachments, setPendingAttachments] = useState<ConvexAttachment[]>([]);
+  const pendingVoiceAttachments = useMemo(
+    () => pendingAttachments.filter((attachment) => attachment.fileType.startsWith('audio/')),
+    [pendingAttachments],
+  );
+  const pendingFileAttachments = useMemo(
+    () => pendingAttachments.filter((attachment) => !attachment.fileType.startsWith('audio/')),
+    [pendingAttachments],
+  );
   const handleVoiceMemoRecorded = useCallback((attachment: ConvexAttachment) => {
     setPendingAttachments((prev) => [...prev, attachment]);
   }, []);
@@ -1157,7 +1194,11 @@ export const TaskDetailScreen: React.FC = () => {
   }, []);
 
   const applyStatusChange = useCallback((status: StatusOption) => {
-    changeTaskStatus(task.id || '', status);
+    const didChange = changeTaskStatus(task.id || '', status);
+    if (!didChange) {
+      setStatusPickerVisible(false);
+      return;
+    }
     setCurrentStatus(status.name);
     setCurrentStatusColor(status.color);
     setCurrentStatusId(status.id);
@@ -1410,7 +1451,7 @@ export const TaskDetailScreen: React.FC = () => {
   }, []);
 
   // Tab swipe – smooth spring animation (matches ColabScreen)
-  const tabs: TabKey[] = hasForm ? ['details', 'form', 'comments'] : ['details', 'comments'];
+  const tabs: TabKey[] = hasForm ? ['details', 'comments', 'form'] : ['details', 'comments'];
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const tabTranslateX = useSharedValue(0);
   const dragStartX = useRef(0);
@@ -1418,8 +1459,7 @@ export const TaskDetailScreen: React.FC = () => {
   useEffect(() => {
     const idx = tabs.indexOf(activeTab);
     tabTranslateX.value = withSpring(-idx * screenWidth, {
-      damping: 100,
-      stiffness: 800,
+      ...TIGHT_TAB_SPRING,
     });
   }, [activeTab, screenWidth, tabs.length]);
 
@@ -1427,11 +1467,35 @@ export const TaskDetailScreen: React.FC = () => {
     transform: [{ translateX: tabTranslateX.value }],
   }));
 
+  const finishTabSwipe = useCallback((dx: number, vx: number) => {
+    const currentX = dragStartX.current + dx;
+    const velocityThreshold = 0.28;
+    const distanceThreshold = screenWidth * 0.16;
+    const idx = tabs.indexOf(activeTab);
+    let newIdx = idx;
+
+    if ((vx < -velocityThreshold || dx < -distanceThreshold) && idx < tabs.length - 1) {
+      newIdx = idx + 1;
+    } else if ((vx > velocityThreshold || dx > distanceThreshold) && idx > 0) {
+      newIdx = idx - 1;
+    } else {
+      newIdx = Math.round(-currentX / screenWidth);
+      newIdx = Math.max(0, Math.min(tabs.length - 1, newIdx));
+    }
+
+    const target = -newIdx * screenWidth;
+    tabTranslateX.value = withSpring(target, { ...TIGHT_TAB_SPRING, velocity: vx * screenWidth });
+
+    if (tabs[newIdx] !== activeTab) {
+      setActiveTab(tabs[newIdx]);
+    }
+  }, [activeTab, screenWidth, tabTranslateX, tabs]);
+
   const tabPanResponder = useMemo(
     () =>
       PanResponder.create({
         onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
-          Math.abs(gs.dx) > 15 && Math.abs(gs.dy) < 20,
+          Math.abs(gs.dx) > 8 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.15,
         onPanResponderGrant: () => {
           const idx = tabs.indexOf(activeTab);
           dragStartX.current = -idx * screenWidth;
@@ -1443,30 +1507,13 @@ export const TaskDetailScreen: React.FC = () => {
           tabTranslateX.value = newX;
         },
         onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
-          const currentX = dragStartX.current + gs.dx;
-          const velocityThreshold = 0.5;
-          const idx = tabs.indexOf(activeTab);
-          let newIdx = idx;
-
-          if (gs.vx < -velocityThreshold && idx < tabs.length - 1) {
-            newIdx = idx + 1;
-          } else if (gs.vx > velocityThreshold && idx > 0) {
-            newIdx = idx - 1;
-          } else {
-            // Snap to nearest tab
-            newIdx = Math.round(-currentX / screenWidth);
-            newIdx = Math.max(0, Math.min(tabs.length - 1, newIdx));
-          }
-
-          const target = -newIdx * screenWidth;
-          tabTranslateX.value = withSpring(target, { damping: 100, stiffness: 800 });
-
-          if (tabs[newIdx] !== activeTab) {
-            setActiveTab(tabs[newIdx]);
-          }
+          finishTabSwipe(gs.dx, gs.vx);
+        },
+        onPanResponderTerminate: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          finishTabSwipe(gs.dx, gs.vx);
         },
       }),
-    [activeTab, tabs, screenWidth],
+    [activeTab, finishTabSwipe, screenWidth, tabs, tabTranslateX],
   );
 
   const createTaskFormMutation = useMutation(api.forms.submitTaskForm);
@@ -2223,7 +2270,9 @@ export const TaskDetailScreen: React.FC = () => {
                             attachment={att}
                             colors={colors}
                             isDarkMode={isDarkMode}
+                            isMe={isMe}
                             onImagePress={setImageViewerUri}
+                            primaryColor={primaryColor}
                           />
                         ))}
                       </View>
@@ -2236,93 +2285,119 @@ export const TaskDetailScreen: React.FC = () => {
         </ScrollView>
       )}
 
-      {pendingAttachments.length > 0 && (
+      {pendingFileAttachments.length > 0 && (
         <View style={[styles.attachmentPreview, { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder }]}> 
-          {pendingAttachments.map((a, i) => (
-            <View key={i} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7', borderColor: cardBorder }]}>
+          {pendingFileAttachments.map((a) => (
+            <View key={a.storageId} style={[styles.attachmentChip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7', borderColor: cardBorder }]}>
               <MaterialIcons
-                name={a.fileType.startsWith('image/') ? 'image' : a.fileType.startsWith('audio/') ? 'mic' : 'attach-file'}
+                name={a.fileType.startsWith('image/') ? 'image' : 'attach-file'}
                 size={14}
                 color={colors.textSecondary}
               />
               <Text style={[styles.attachmentChipText, { color: colors.text }]} numberOfLines={1}>
                 {a.fileName}
               </Text>
-              <TouchableOpacity onPress={() => setPendingAttachments(prev => prev.filter((_, j) => j !== i))}>
+              <TouchableOpacity onPress={() => setPendingAttachments(prev => prev.filter((attachment) => attachment.storageId !== a.storageId))}>
                 <MaterialIcons name="close" size={14} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
           ))}
         </View>
       )}
-      <View
-        style={[
-          styles.commentInputContainer,
-          { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
-        ]}
-      >
-        {voiceMemoRecorder.isActive ? (
-          <VoiceMemoRecordingBar
-            recorder={voiceMemoRecorder}
-            primaryColor={primaryColor}
-            textColor={colors.text}
-            mutedColor={colors.textSecondary}
-            surfaceColor={isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7'}
-          />
-        ) : (
+      <KeyboardStickyView enabled={Platform.OS === 'android'} offset={{ opened: insets.bottom }}>
+        <View style={{ backgroundColor: colors.surface }}>
           <View
             style={[
-              styles.commentComposerShell,
-              {
-                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7',
-                borderColor: cardBorder,
-              },
+              styles.commentInputContainer,
+              { backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: cardBorder },
             ]}
           >
-            <TextInput
-              style={[
-                styles.commentInput,
-                {
-                  color: colors.text,
-                },
-              ]}
-              placeholder={t('taskDetail.addCommentPlaceholder')}
-              placeholderTextColor={colors.textSecondary}
-              value={commentText}
-              onChangeText={setCommentText}
-              onSubmitEditing={handleAddComment}
-              editable={!sendingComment}
+            {voiceMemoRecorder.isActive ? (
+              <VoiceMemoRecordingBar
+                recorder={voiceMemoRecorder}
+                primaryColor={primaryColor}
+                textColor={colors.text}
+                mutedColor={colors.textSecondary}
+                surfaceColor={isDarkMode ? '#343438' : '#F3F2EF'}
+              />
+            ) : (
+              <View
+                style={[
+                  styles.commentComposerShell,
+                  {
+                    backgroundColor: isDarkMode ? '#343438' : '#F3F2EF',
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0, 0, 0, 0.06)',
+                  },
+                ]}
+              >
+                <View style={styles.inputDraftColumn}>
+                  <VoiceMemoDraftPreview
+                    attachments={pendingVoiceAttachments}
+                    onRemove={(index) => {
+                      const attachment = pendingVoiceAttachments[index];
+                      if (!attachment) return;
+                      setPendingAttachments((prev) => prev.filter((item) => item.storageId !== attachment.storageId));
+                    }}
+                    recorder={voiceMemoRecorder}
+                    primaryColor={primaryColor}
+                    textColor={colors.text}
+                    mutedColor={colors.textSecondary}
+                  />
+                  <TextInput
+                    style={[
+                      styles.commentInput,
+                      Platform.OS === 'android' && styles.commentInputAndroid,
+                      {
+                        color: colors.text,
+                      },
+                    ]}
+                    placeholder={t('taskDetail.addCommentPlaceholder')}
+                    placeholderTextColor={colors.textSecondary}
+                    value={commentText}
+                    onChangeText={setCommentText}
+                    onSubmitEditing={handleAddComment}
+                    returnKeyType="send"
+                    editable={!sendingComment}
+                    multiline
+                    blurOnSubmit={false}
+                    underlineColorAndroid="transparent"
+                  />
+                </View>
+                {pendingAttachments.length === 0 && (
+                  <TouchableOpacity
+                    style={[
+                      styles.attachButton,
+                      {
+                        backgroundColor: 'transparent',
+                        borderColor: 'transparent',
+                      },
+                    ]}
+                    onPress={handleAttach}
+                    disabled={uploadingAttachment}
+                  >
+                    {uploadingAttachment ? (
+                      <ActivityIndicator size="small" color={primaryColor} />
+                    ) : (
+                      <MaterialIcons name="attach-file" size={20} color={primaryColor} />
+                    )}
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+            <VoiceMemoActionButton
+              recorder={voiceMemoRecorder}
+              hasContent={!!commentText.trim() || pendingAttachments.length > 0}
+              showAddRecording={pendingVoiceAttachments.length > 0}
+              isSending={sendingComment}
+              disabled={sendingComment}
+              primaryColor={primaryColor}
+              inactiveColor={isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}
+              onSend={handleAddComment}
             />
-            <TouchableOpacity
-              style={[
-                styles.attachButton,
-                {
-                  backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#FFFFFF',
-                  borderColor: cardBorder,
-                },
-              ]}
-              onPress={handleAttach}
-              disabled={uploadingAttachment}
-            >
-              {uploadingAttachment ? (
-                <ActivityIndicator size="small" color={primaryColor} />
-              ) : (
-                <MaterialIcons name="attach-file" size={20} color={primaryColor} />
-              )}
-            </TouchableOpacity>
           </View>
-        )}
-        <VoiceMemoActionButton
-          recorder={voiceMemoRecorder}
-          hasContent={!!commentText.trim() || pendingAttachments.length > 0}
-          showAddRecording={pendingAttachments.some((attachment) => attachment.fileType.startsWith('audio/'))}
-          isSending={sendingComment}
-          disabled={sendingComment}
-          primaryColor={primaryColor}
-          inactiveColor={isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}
-          onSend={handleAddComment}
-        />
-      </View>
+          {insets.bottom > 0 && <View style={{ height: insets.bottom }} />}
+        </View>
+      </KeyboardStickyView>
       <AttachmentPickerSheet {...attachmentPickerProps} />
     </View>
   );
@@ -2332,6 +2407,7 @@ export const TaskDetailScreen: React.FC = () => {
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 52 : 0}
       >
         <View style={[styles.header, { backgroundColor: colors.background }]}> 
           <TouchableOpacity
@@ -2357,30 +2433,34 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
 
         <View style={[styles.tabBar, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
-          {(hasForm
-            ? (['details', 'form', 'comments'] as TabKey[])
-            : (['details', 'comments'] as TabKey[])
-          ).map(tab => (
+          {tabs.map(tab => (
             <TouchableOpacity
               key={tab}
               style={[styles.tab, activeTab === tab && { borderBottomColor: primaryColor }]}
               onPress={() => setActiveTab(tab)}
             >
-              <Text
-                style={[
-                  styles.tabText,
-                  { color: isDarkMode ? 'rgba(255,255,255,0.45)' : '#73726C' },
-                  activeTab === tab && { color: primaryColor },
-                ]}
-              >
-                {tab === 'form'
-                  ? t('taskDetail.tabForm')
-                  : tab === 'comments' && displayNotes.length > 0
-                    ? t('taskDetail.tabCommentsWithCount', { count: displayNotes.length })
+              <View style={styles.tabLabelRow}>
+                <Text
+                  style={[
+                    styles.tabText,
+                    { color: isDarkMode ? 'rgba(255,255,255,0.45)' : '#73726C' },
+                    activeTab === tab && { color: primaryColor },
+                  ]}
+                >
+                  {tab === 'form'
+                    ? t('taskDetail.tabForm')
                     : tab === 'comments'
                       ? t('taskDetail.tabComments')
                       : t('taskDetail.tabDetails')}
-              </Text>
+                </Text>
+                {tab === 'comments' && displayNotes.length > 0 && (
+                  <View style={[styles.tabCountBadge, { backgroundColor: activeTab === tab ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.14)' : '#E5E5EA') }]}>
+                    <Text style={[styles.tabCountBadgeText, { color: activeTab === tab ? '#FFFFFF' : colors.textSecondary }]}>
+                      {displayNotes.length > 99 ? '99+' : displayNotes.length}
+                    </Text>
+                  </View>
+                )}
+              </View>
             </TouchableOpacity>
           ))}
         </View>
@@ -2392,14 +2472,14 @@ export const TaskDetailScreen: React.FC = () => {
           <View style={{ width: screenWidth, flex: 1 }}>
             {renderDetailsTab()}
           </View>
+          <View style={{ width: screenWidth, flex: 1 }}>
+            {renderCommentsTab()}
+          </View>
           {hasForm && (
             <View style={{ width: screenWidth, flex: 1 }}>
               {renderFormTab()}
             </View>
           )}
-          <View style={{ width: screenWidth, flex: 1 }}>
-            {renderCommentsTab()}
-          </View>
         </Animated.View>
 
         {activeTab === 'details' && (getAllowedStatuses(currentTask).length > 0 || (requiresTaskSignature && !hasTaskSignature && hasValidConvexId)) && (
@@ -2915,6 +2995,25 @@ const styles = StyleSheet.create({
   tabText: {
     fontSize: 13,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  tabLabelRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 6,
+    justifyContent: 'center',
+  },
+  tabCountBadge: {
+    alignItems: 'center',
+    borderRadius: 8,
+    height: 16,
+    justifyContent: 'center',
+    minWidth: 16,
+    paddingHorizontal: 4,
+  },
+  tabCountBadgeText: {
+    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 9,
+    includeFontPadding: false,
   },
   tabContent: {
     flex: 1,
@@ -3541,17 +3640,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     padding: 16,
+    borderTopWidth: 1,
   },
   commentComposerShell: {
     flex: 1,
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
     borderRadius: radius.lg,
     borderWidth: 1,
     paddingLeft: 4,
     paddingRight: 6,
     paddingVertical: 4,
     ...shadows.subtle,
+  },
+  inputDraftColumn: {
+    flex: 1,
   },
   commentInput: {
     flex: 1,
@@ -3560,6 +3663,14 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     fontSize: fontSizes.sm,
     fontFamily: fontFamilies.bodyMedium,
+    maxHeight: 100,
+  },
+  commentInputAndroid: {
+    paddingTop: 0,
+    paddingBottom: 0,
+    marginVertical: 0,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   attachButton: {
     width: 38,
@@ -3568,7 +3679,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 2,
   },
   attachmentPreview: {
     flexDirection: 'row',
