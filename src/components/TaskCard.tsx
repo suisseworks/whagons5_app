@@ -56,8 +56,15 @@ function classifyStatus(name: string): StatusType {
   const s = name.toLowerCase();
   if (s.includes('progress') || s.includes('progreso')) return 'working';
   if (s.includes('revis') || s.includes('review') || s.includes('pending') || s.includes('pendiente') || s.includes('espera') || s.includes('hacer')) return 'pending';
-  if (s.includes('complete') || s.includes('completado') || s.includes('done') || s.includes('finalizado') || s.includes('terminado') || s.includes('aprobado') || s.includes('approved')) return 'done';
+  if (s.includes('complete') || s.includes('completado') || s.includes('done') || s.includes('finalizado') || s.includes('terminado')) return 'done';
   return 'default';
+}
+
+function classifyStatusAction(action: string | null): StatusType | null {
+  if (action === 'FINISHED' || action === 'DONE') return 'done';
+  if (action === 'WORKING' || action === 'IN_PROGRESS') return 'working';
+  if (action === 'PAUSED') return 'pending';
+  return null;
 }
 
 const STATUS_ICONS: Record<Exclude<StatusType, 'working'>, string> = {
@@ -86,14 +93,14 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const tertiaryText = isDarkMode ? 'rgba(255, 255, 255, 0.45)' : '#9CA3AF';
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
   const statusAction = task.statusAction?.trim().toUpperCase() ?? null;
-  const statusType = statusAction === 'FINISHED' || statusAction === 'DONE'
-    ? 'done'
-    : classifyStatus(task.status);
+  const statusType = classifyStatusAction(statusAction) ?? classifyStatus(task.status);
   const working = Boolean(task.id && isTaskWorking(task.id));
   const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
   const hasSeen = isCreator && task.firstViewedAt != null;
   const commentCount = task.commentCount ?? 0;
   const lastCommentText = task.lastCommentText?.trim() ?? '';
+  const commentAccent = isDarkMode ? '#34D399' : '#16A34A';
+  const commentBadgeBg = isDarkMode ? 'rgba(52, 211, 153, 0.14)' : 'rgba(22, 163, 74, 0.12)';
 
   const internalScaleAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = pressScaleValue ?? internalScaleAnim;
@@ -136,7 +143,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
     }).start();
   }, [scaleAnim]);
 
-  const isDone = statusAction === 'FINISHED' || statusAction === 'DONE' || statusType === 'done';
+  const isDone = statusType === 'done';
   const stColor = statusColor(task.status, task.statusColor);
 
   const workingOverlayOpacity = working
@@ -240,9 +247,9 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
           </View>
         )}
         {(task.ackTotal ?? 0) > 0 && (
-          <View style={[styles.ackBadge, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}>
-            <MaterialCommunityIcons name="eye-check" size={11} color={task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText} />
-            <Text style={[styles.ackBadgeText, { color: task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText }]}>
+          <View style={[styles.ackBadge, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}> 
+            <MaterialCommunityIcons name="eye-check" size={11} color={task.shareStatus === 'acknowledged' || task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText} />
+            <Text style={[styles.ackBadgeText, { color: task.shareStatus === 'acknowledged' || task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText }]}> 
               {task.ackDone}/{task.ackTotal}
             </Text>
           </View>
@@ -280,12 +287,14 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
 
       {effectiveDensity === 'detailed' && (
         <View style={styles.commentPreviewRow}>
-          <MaterialCommunityIcons name="comment-outline" size={14} color={tertiaryText} />
-          <Text style={[styles.commentCountText, { color: tertiaryText }]}>
-            {commentCount}
-          </Text>
+          <View style={[styles.commentBadge, { backgroundColor: commentBadgeBg }]}>
+            <MaterialCommunityIcons name="comment-outline" size={13} color={commentAccent} />
+            <Text style={[styles.commentCountText, { color: commentAccent }]}>
+              {commentCount}
+            </Text>
+          </View>
           {!!lastCommentText && (
-            <Text style={[styles.lastCommentText, { color: colors.textSecondary }]} numberOfLines={1} ellipsizeMode="tail">
+            <Text style={[styles.lastCommentText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
               {lastCommentText}
             </Text>
           )}
@@ -397,16 +406,25 @@ const styles = StyleSheet.create({
     marginLeft: 36,
     gap: 4,
   },
+  commentBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
   commentCountText: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontFamily: fontFamilies.bodySemibold,
     flexShrink: 0,
   },
   lastCommentText: {
     flex: 1,
     minWidth: 0,
-    fontSize: 12,
-    fontFamily: fontFamilies.bodyMedium,
+    fontSize: 12.5,
+    fontFamily: fontFamilies.bodySemibold,
   },
   metaRow: {
     flexDirection: 'row',

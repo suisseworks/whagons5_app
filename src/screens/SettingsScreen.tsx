@@ -17,6 +17,7 @@ import {
   TextInput,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Markdown from 'react-native-markdown-display';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, CommonActions } from '@react-navigation/native';
@@ -54,6 +55,26 @@ type AppReleaseNote = {
 
 const bundledReleaseNotes: AppReleaseNote = BUNDLED_RELEASE_NOTES;
 
+function getReleaseNotesBodyForLanguage(releaseNote: AppReleaseNote, language: string): string | undefined {
+  const bodyByLanguage = releaseNote.bodyByLanguage;
+  if (!bodyByLanguage) return releaseNote.body;
+
+  const normalizedLanguage = language.toLowerCase();
+  const baseLanguage = normalizedLanguage.split(/[-_]/)[0];
+  const localizedBody =
+    bodyByLanguage[language] ||
+    bodyByLanguage[normalizedLanguage] ||
+    bodyByLanguage[baseLanguage] ||
+    Object.entries(bodyByLanguage).find(([key, body]) => {
+      if (!body?.trim()) return false;
+      const normalizedKey = key.toLowerCase();
+      return normalizedKey === normalizedLanguage || normalizedKey.split(/[-_]/)[0] === baseLanguage;
+    })?.[1] ||
+    bodyByLanguage.en;
+
+  return localizedBody?.trim() ? localizedBody : releaseNote.body;
+}
+
 /** Avoid Fabric crash on Android: reset() from Alert onPress races dialog teardown ("child already has a parent"). */
 function runAfterAlertNavigationWork(fn: () => void) {
   InteractionManager.runAfterInteractions(() => {
@@ -74,7 +95,8 @@ export const SettingsScreen: React.FC = () => {
   const { pendingCount, failedCount } = useMutationQueue();
   const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
   const submitBugReport = useMutation((api as any).bugReports.submit);
-  const releaseNotesBody = bundledReleaseNotes.bodyByLanguage?.[language] || bundledReleaseNotes.body;
+  const releaseNotesBody = getReleaseNotesBodyForLanguage(bundledReleaseNotes, language);
+  const releaseNotesMarkdown = releaseNotesBody?.trim() || t('settings.releaseNotesEmpty');
   const currentThemeLabel = themeMetadata.find((theme) => theme.id === themeName)?.name || t('settings.theme');
   const [isSwitching, setIsSwitching] = useState(false);
   const [switchTenantModalVisible, setSwitchTenantModalVisible] = useState(false);
@@ -915,7 +937,94 @@ export const SettingsScreen: React.FC = () => {
             <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
             <Text style={[styles.languageTitle, { color: colors.text }]}>{bundledReleaseNotes.title || bundledReleaseNotes.tagName || t('settings.releaseNotes')}</Text>
             <ScrollView style={styles.releaseNotesBody}>
-              <Text style={[styles.releaseNotesText, { color: colors.textSecondary }]}>{releaseNotesBody?.trim() || t('settings.releaseNotesEmpty')}</Text>
+              <Markdown
+                onLinkPress={(url) => {
+                  openExternalUrl(url);
+                  return false;
+                }}
+                style={{
+                  body: {
+                    color: colors.textSecondary,
+                    fontSize: fontSizes.sm,
+                    lineHeight: 21,
+                    fontFamily: fontFamilies.bodyRegular,
+                  },
+                  heading1: {
+                    color: colors.text,
+                    fontSize: fontSizes.lg,
+                    lineHeight: 26,
+                    fontFamily: fontFamilies.displaySemibold,
+                    marginTop: 4,
+                    marginBottom: 10,
+                  },
+                  heading2: {
+                    color: colors.text,
+                    fontSize: fontSizes.md,
+                    lineHeight: 24,
+                    fontFamily: fontFamilies.bodySemibold,
+                    marginTop: 14,
+                    marginBottom: 8,
+                  },
+                  heading3: {
+                    color: colors.text,
+                    fontSize: fontSizes.sm,
+                    lineHeight: 21,
+                    fontFamily: fontFamilies.bodySemibold,
+                    marginTop: 12,
+                    marginBottom: 6,
+                  },
+                  paragraph: {
+                    marginTop: 0,
+                    marginBottom: 8,
+                  },
+                  bullet_list: {
+                    marginBottom: 8,
+                  },
+                  ordered_list: {
+                    marginBottom: 8,
+                  },
+                  list_item: {
+                    marginBottom: 5,
+                  },
+                  bullet_list_icon: {
+                    color: colors.textSecondary,
+                  },
+                  ordered_list_icon: {
+                    color: colors.textSecondary,
+                  },
+                  strong: {
+                    color: colors.text,
+                    fontFamily: fontFamilies.bodySemibold,
+                  },
+                  code_inline: {
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(30,35,33,0.08)',
+                    color: colors.text,
+                    borderRadius: 4,
+                    paddingHorizontal: 4,
+                    paddingVertical: 1,
+                    fontFamily: fontFamilies.bodyMedium,
+                  },
+                  code_block: {
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(30,35,33,0.06)',
+                    color: colors.text,
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(30,35,33,0.10)',
+                    borderRadius: radius.md,
+                    fontFamily: fontFamilies.bodyRegular,
+                  },
+                  fence: {
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(30,35,33,0.06)',
+                    color: colors.text,
+                    borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(30,35,33,0.10)',
+                    borderRadius: radius.md,
+                    fontFamily: fontFamilies.bodyRegular,
+                  },
+                  link: {
+                    color: primaryColor,
+                  },
+                }}
+              >
+                {releaseNotesMarkdown}
+              </Markdown>
             </ScrollView>
             <TouchableOpacity
               style={[styles.languageCancel, { backgroundColor: primaryColor, borderColor: primaryColor }]}
