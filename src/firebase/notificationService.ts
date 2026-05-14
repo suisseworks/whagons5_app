@@ -10,7 +10,16 @@
  */
 
 import { Platform, PermissionsAndroid } from 'react-native';
-import { getInitialNotification as getMessagingInitialNotification, getMessaging, getToken, onMessage, onTokenRefresh, requestPermission as requestMessagingPermission } from '@react-native-firebase/messaging';
+import {
+  getInitialNotification as getMessagingInitialNotification,
+  getMessaging,
+  getToken,
+  isDeviceRegisteredForRemoteMessages,
+  onMessage,
+  onTokenRefresh,
+  registerDeviceForRemoteMessages,
+  requestPermission as requestMessagingPermission,
+} from '@react-native-firebase/messaging';
 import notifee, {
   AndroidImportance,
   AndroidStyle,
@@ -56,6 +65,14 @@ const TASK_NOTIFICATION_TYPES = new Set([
   'status_changed',
   'status_change',
 ]);
+
+async function ensureRegisteredForRemoteMessages(messaging: ReturnType<typeof getMessaging>): Promise<void> {
+  if (Platform.OS !== 'ios') return;
+  if (isDeviceRegisteredForRemoteMessages(messaging)) return;
+
+  await registerDeviceForRemoteMessages(messaging);
+  console.log('[Notifications] Registered device for remote messages');
+}
 
 function resolveNotificationChannelId(
   notificationType?: string,
@@ -173,6 +190,9 @@ export async function requestNotificationPermission(): Promise<boolean> {
 
     // authStatus is 1 (AUTHORIZED) or 2 (PROVISIONAL) on success
     const granted = authStatus === 1 || authStatus === 2;
+    if (granted) {
+      await ensureRegisteredForRemoteMessages(messaging);
+    }
     console.log('[Notifications] FCM permission:', granted ? 'granted' : 'denied');
     return granted;
   } catch (err) {
@@ -192,6 +212,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
 export async function getFCMToken(): Promise<string | null> {
   try {
     const messaging = getMessaging(getApp());
+    await ensureRegisteredForRemoteMessages(messaging);
     const token = await getToken(messaging);
     console.log('[Notifications] FCM token (first 20):', token?.substring(0, 20) + '...');
     return token;

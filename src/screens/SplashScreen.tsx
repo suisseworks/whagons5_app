@@ -116,7 +116,7 @@ export const SplashScreen: React.FC = () => {
             ]}
           >
             <Image
-              source={require('../../assets/whagons-check.png')}
+              source={require('../../assets/splash-icon.png')}
               style={styles.logoImage}
             />
           </Animated.View>
@@ -171,11 +171,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   logoContainer: {
-    marginBottom: 20,
+    width: 132,
+    height: 132,
+    marginBottom: 22,
+    borderRadius: 38,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 18 },
   },
   logoImage: {
-    width: 72,
-    height: 72,
+    width: 104,
+    height: 104,
     resizeMode: 'contain',
   },
   title: {

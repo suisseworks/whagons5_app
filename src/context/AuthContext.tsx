@@ -241,16 +241,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [claimCurrentUserByEmail, isAuthenticated, isLoggingOut, myTenants, tenantId, tenantResolved]);
 
   useEffect(() => {
-    if (isAuthenticated && isLoggingOut) {
-      loggingOutRef.current = false;
-      setIsLoggingOut(false);
-    }
-
-    if (isAuthenticated && loggingOutRef.current) {
-      loggingOutRef.current = false;
-      setIsLoggingOut(false);
-    }
-
     if (!isAuthenticated && loggingOutRef.current) {
       loggingOutRef.current = false;
       setIsLoggingOut(false);
@@ -447,10 +437,6 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER),
       DB.clearMutationQueue(tenantToLogout ?? undefined),
     ]);
-    if (!getCurrentUser()) {
-      loggingOutRef.current = false;
-      setIsLoggingOut(false);
-    }
   }, [tenantId, unregisterCurrentPushToken]);
 
   // ------------------------------------------------------------------

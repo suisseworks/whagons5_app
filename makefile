@@ -1,5 +1,5 @@
 .PHONY: help android-run android-apk-debug android-apk-release android-apk-dev-backend android-clean \
-       ios-run ios-prebuild ios-build-sim ios-clean ios-screenshots \
+       ios-run ios-prebuild ios-build-sim ios-archive ios-clean ios-screenshots \
        release release-prod release-notes-preview version
 
 # Detect OS for sed compatibility
@@ -17,6 +17,8 @@ OPENROUTER_MODEL ?= moonshotai/kimi-k2.5
 IOS_WORKSPACE ?= ios/Whagons.xcworkspace
 IOS_SCHEME ?= Whagons
 IOS_DERIVED_DATA ?= ios/build
+IOS_ARCHIVE_PATH ?= ios/build/archives/Whagons.xcarchive
+IOS_CONFIGURATION ?= Release
 
 # ===========================================================================
 #  Help
@@ -39,6 +41,7 @@ help:
 	@echo "  make ios-run               Run app on iOS via Expo (dev)"
 	@echo "  make ios-prebuild          Generate native iOS project"
 	@echo "  make ios-build-sim         Build iOS simulator app"
+	@echo "  make ios-archive           Archive iOS app for App Store upload"
 	@echo "  make ios-screenshots       Capture App Store iOS screenshots at 1284x2778"
 	@echo "  make ios-clean             Clean iOS derived data"
 
@@ -77,6 +80,16 @@ ios-build-sim:
 		-sdk iphonesimulator \
 		-derivedDataPath "$(IOS_DERIVED_DATA)" \
 		build
+
+ios-archive:
+	xcodebuild \
+		-workspace "$(IOS_WORKSPACE)" \
+		-scheme "$(IOS_SCHEME)" \
+		-configuration "$(IOS_CONFIGURATION)" \
+		-destination "generic/platform=iOS" \
+		-archivePath "$(IOS_ARCHIVE_PATH)" \
+		-derivedDataPath "$(IOS_DERIVED_DATA)" \
+		archive
 
 ios-clean:
 	rm -rf "$(IOS_DERIVED_DATA)"
