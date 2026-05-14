@@ -54,6 +54,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const [rejectVisible, setRejectVisible] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
+  const [optimisticAcknowledgedShareIds, setOptimisticAcknowledgedShareIds] = useState<Set<string>>(() => new Set());
   const toastRef = useRef<ToastRef>(null);
 
   const decideMutation = useOfflineMutation(api.approvals.decideByTask, 'approvals.decideByTask');
@@ -165,22 +166,14 @@ export const SharedTaskDetailScreen: React.FC = () => {
 
   const requireSignature = !!(approval?.require_signature ?? approval?.requireSignature);
 
-  // Ack progress from shares query
-  const ackData = useMemo(() => {
-    if (!taskShares) return { total: task.ackTotal ?? 0, done: task.ackDone ?? 0, shares: [] as any[] };
-    const withStatus = taskShares.filter((s: any) => s.status != null && !s.revokedAt);
-    const done = withStatus.filter((s: any) => s.status === 'acknowledged').length;
-    return { total: withStatus.length, done, shares: withStatus };
-  }, [taskShares, task.ackTotal, task.ackDone]);
-
-  // Can current user acknowledge?
-  const myPendingShareId = useMemo(() => {
-    if (!taskShares || !authUser) return null;
+  const currentUserAccess = useMemo(() => {
     const currentUserIds = new Set<string>();
-    if (authUser.id) currentUserIds.add(String(authUser.id));
-    const userDoc = data.users.find((u: any) =>
+    if (authUser?.id) currentUserIds.add(String(authUser.id));
+
+    const userDoc = authUser ? data.users.find((u: any) =>
       String(u.id) === String(authUser.id) || String(u._id) === String(authUser.id)
-    );
+    ) : null;
+
     if (userDoc) {
       if ((userDoc as any)._id) currentUserIds.add(String((userDoc as any)._id));
       if (userDoc.id) currentUserIds.add(String(userDoc.id));
@@ -195,15 +188,75 @@ export const SharedTaskDetailScreen: React.FC = () => {
       }
     }
 
+    return { currentUserIds, currentUserTeamIds };
+  }, [authUser, data.users, userTeams]);
+
+  // Ack progress from shares query
+  const ackData = useMemo(() => {
+    if (!taskShares) return { total: task.ackTotal ?? 0, done: task.ackDone ?? 0, shares: [] as any[] };
+    const withStatus = taskShares.filter((s: any) => s.status != null && !s.revokedAt);
+    let total = 0;
+    let done = 0;
+
+    const shares = withStatus.map((share: any) => {
+      const shareId = String(share._id);
+      const optimisticAcked = optimisticAcknowledgedShareIds.has(shareId);
+      const rawRecipients = Array.isArray(share.ackRecipients) ? share.ackRecipients : [];
+      const recipients = rawRecipients.map((recipient: any) => {
+        const isCurrentUser = currentUserAccess.currentUserIds.has(String(recipient.userId));
+        return optimisticAcked && isCurrentUser
+          ? { ...recipient, acknowledged: true, acknowledgedAt: recipient.acknowledgedAt ?? Date.now() }
+          : recipient;
+      });
+
+      const shareTotal = share.ackTotal ?? recipients.length ?? 0;
+      const serverDone = share.ackDone ?? recipients.filter((recipient: any) => recipient.acknowledged).length ?? 0;
+      const alreadyCountedCurrentUser = rawRecipients.some((recipient: any) => (
+        currentUserAccess.currentUserIds.has(String(recipient.userId)) && recipient.acknowledged
+      ));
+      const shareDone = Math.min(
+        shareTotal,
+        serverDone + (optimisticAcked && !alreadyCountedCurrentUser ? 1 : 0),
+      );
+
+      total += shareTotal;
+      done += shareDone;
+      const currentUserAcknowledged = recipients.some((recipient: any) => (
+        currentUserAccess.currentUserIds.has(String(recipient.userId)) && recipient.acknowledged
+      ));
+
+      return {
+        ...share,
+        ackTotal: shareTotal,
+        ackDone: shareDone,
+        ackRecipients: recipients,
+        currentUserAcknowledged,
+        status: shareTotal > 0 && shareDone >= shareTotal ? 'acknowledged' : share.status,
+      };
+    });
+
+    return { total, done, shares };
+  }, [taskShares, task.ackTotal, task.ackDone, optimisticAcknowledgedShareIds, currentUserAccess]);
+
+  // Can current user acknowledge?
+  const myPendingShareId = useMemo(() => {
+    if (!taskShares || !authUser) return null;
     for (const share of taskShares) {
-      if (share.status !== 'pending' || share.revokedAt) continue;
+      if (share.status == null || share.revokedAt) continue;
+      const shareId = String(share._id);
+      if (optimisticAcknowledgedShareIds.has(shareId)) continue;
+
+      const recipients = Array.isArray(share.ackRecipients) ? share.ackRecipients : [];
+      const currentRecipient = recipients.find((recipient: any) => currentUserAccess.currentUserIds.has(String(recipient.userId)));
+      if (currentRecipient?.acknowledged) continue;
+
       const sharedToUser = share.sharedToUserId ?? share.shared_to_user_id;
       const sharedToTeam = share.sharedToTeamId ?? share.shared_to_team_id;
-      if (sharedToUser && currentUserIds.has(String(sharedToUser))) return share._id;
-      if (sharedToTeam && currentUserTeamIds.has(String(sharedToTeam))) return share._id;
+      if (sharedToUser && currentUserAccess.currentUserIds.has(String(sharedToUser))) return share._id;
+      if (sharedToTeam && currentUserAccess.currentUserTeamIds.has(String(sharedToTeam))) return share._id;
     }
     return null;
-  }, [taskShares, authUser, data.users, userTeams]);
+  }, [taskShares, authUser, optimisticAcknowledgedShareIds, currentUserAccess]);
 
   const handleApprove = useCallback(() => {
     if (requireSignature) {
@@ -251,12 +304,22 @@ export const SharedTaskDetailScreen: React.FC = () => {
     setAcknowledging(true);
     try {
       await acknowledgeMutation({ tenantId, shareId: myPendingShareId as Id<'taskShares'> });
+      setOptimisticAcknowledgedShareIds((prev) => {
+        const next = new Set(prev);
+        next.add(String(myPendingShareId));
+        return next;
+      });
+      toastRef.current?.show({
+        type: 'success',
+        title: t('sharedTask.acknowledgedSuccessfully'),
+        body: t('sharedTask.acknowledgmentSaved'),
+      });
     } catch (err: any) {
       Alert.alert(t('common.error'), t('sharedTask.failedToAcknowledge'));
     } finally {
       setAcknowledging(false);
     }
-  }, [tenantId, myPendingShareId, acknowledgeMutation]);
+  }, [tenantId, myPendingShareId, acknowledgeMutation, t]);
 
   const tertiaryText = isDarkMode ? 'rgba(255,255,255,0.45)' : '#9CA3AF';
   const borderColor = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
@@ -363,18 +426,33 @@ export const SharedTaskDetailScreen: React.FC = () => {
                 ? (userMap[String(share.sharedToUserId)]?.name || t('sharedTask.fallbackUser'))
                 : null;
               const label = teamName || userName || t('sharedTask.fallbackUnknown');
-              const isAcked = share.status === 'acknowledged';
+              const recipients = Array.isArray(share.ackRecipients) ? share.ackRecipients : [];
+              const allRecipientsAcked = (share.ackTotal ?? 0) > 0 && share.ackDone >= share.ackTotal;
+              const currentUserAcked = !!share.currentUserAcknowledged;
+              const showGreenCheck = allRecipientsAcked || currentUserAcked;
               return (
-                <View key={share._id} style={styles.ackRow}>
-                  <MaterialCommunityIcons
-                    name={isAcked ? 'check-circle' : 'clock-outline'}
-                    size={18}
-                    color={isAcked ? '#16A34A' : '#EA580C'}
-                  />
-                  <Text style={[styles.ackLabel, { color: colors.text }]}>{label}</Text>
-                  <Text style={[styles.ackStatus, { color: isAcked ? '#16A34A' : tertiaryText }]}>
-                    {isAcked ? t('sharedTask.ackStatusAcknowledged') : t('sharedTask.ackStatusPending')}
-                  </Text>
+                <View key={share._id} style={styles.ackGroup}>
+                  <View style={styles.ackRow}>
+                    <MaterialCommunityIcons
+                      name={showGreenCheck ? 'check-circle' : 'clock-outline'}
+                      size={18}
+                      color={showGreenCheck ? '#16A34A' : '#EA580C'}
+                    />
+                    <Text style={[styles.ackLabel, { color: colors.text }]}>{label}</Text>
+                    <Text style={[styles.ackStatus, { color: showGreenCheck ? '#16A34A' : tertiaryText }]}> 
+                      {share.ackDone ?? 0}/{share.ackTotal ?? recipients.length}
+                    </Text>
+                  </View>
+                  {recipients.map((recipient: any) => (
+                    <View key={String(recipient.userId)} style={styles.ackRecipientRow}>
+                      <Text style={[styles.ackRecipientName, { color: colors.text }]} numberOfLines={1}>
+                        {recipient.userName || t('sharedTask.fallbackUser')}
+                      </Text>
+                      <Text style={[styles.ackRecipientStatus, { color: recipient.acknowledged ? '#16A34A' : tertiaryText }]}>
+                        {recipient.acknowledged ? t('sharedTask.ackStatusAcknowledged') : t('sharedTask.ackStatusPending')}
+                      </Text>
+                    </View>
+                  ))}
                 </View>
               );
             })}

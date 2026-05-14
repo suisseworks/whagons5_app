@@ -62,6 +62,11 @@ const TASK_NOTIFICATION_TYPES = new Set([
   'task_unassigned',
   'task_updated',
   'reported_task_seen',
+  'approval',
+  'approval_requested',
+  'approval_approved',
+  'approval_rejected',
+  'approval_decision',
   'status_changed',
   'status_change',
 ]);

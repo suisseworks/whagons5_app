@@ -125,6 +125,10 @@ export function getNotificationMeta(type?: string): { icon: string; color: strin
     case 'sla':
       return { icon: 'warning', color: '#FF9800' };
     case 'approval':
+    case 'approval_requested':
+    case 'approval_approved':
+    case 'approval_rejected':
+    case 'approval_decision':
       return { icon: 'check-circle', color: '#4CAF50' };
     case 'message':
     case 'chat':
