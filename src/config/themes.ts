@@ -39,12 +39,12 @@ export const getLightTheme = (themeName: ThemeName): ThemeColors => {
       };
     default: // default theme
       return {
-        primary: '#4F46E5',
-        secondary: '#0F766E',
-        background: '#F8FAFC',
+        primary: '#1A56DB',
+        secondary: '#2F6F6D',
+        background: '#FAFAFA',
         surface: '#FFFFFF',
         text: '#111827',
-        textSecondary: '#64748B',
+        textSecondary: '#6B7280',
       };
   }
 };
@@ -80,12 +80,12 @@ export const getDarkTheme = (themeName: ThemeName): ThemeColors => {
       };
     default: // default theme
       return {
-        primary: '#818CF8',
-        secondary: '#2DD4BF',
-        background: '#0F172A',
-        surface: '#1E293B',
-        text: '#F8FAFC',
-        textSecondary: '#CBD5E1',
+        primary: '#5B8DEF',
+        secondary: '#3F8F8C',
+        background: '#1A1A1A',
+        surface: '#242424',
+        text: '#F5F5F5',
+        textSecondary: '#9CA3AF',
       };
   }
 };
@@ -99,7 +99,7 @@ export const getPrimaryColor = (themeName: ThemeName): string => {
     case 'forest':
       return '#059669';
     default:
-      return '#4F46E5';
+      return '#1A56DB';
   }
 };
 
@@ -108,7 +108,7 @@ export const themeMetadata = [
   {
     id: 'default' as ThemeName,
     name: 'Default',
-    description: 'Clean indigo workspace',
+    description: 'Clean modern blue',
     icon: 'palette',
   },
   {
