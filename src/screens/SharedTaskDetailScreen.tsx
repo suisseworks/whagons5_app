@@ -690,6 +690,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
   },
+  ackGroup: {
+    paddingVertical: 4,
+  },
   ackRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -704,6 +707,23 @@ const styles = StyleSheet.create({
   ackStatus: {
     fontSize: 12,
     fontFamily: fontFamilies.bodyRegular,
+  },
+  ackRecipientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingLeft: 26,
+    paddingVertical: 3,
+  },
+  ackRecipientName: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  ackRecipientStatus: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
   },
   ackButton: {
     flexDirection: 'row',
