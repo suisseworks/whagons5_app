@@ -101,6 +101,28 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const lastCommentText = task.lastCommentText?.trim() ?? '';
   const commentAccent = isDarkMode ? '#34D399' : '#16A34A';
   const commentBadgeBg = isDarkMode ? 'rgba(52, 211, 153, 0.14)' : 'rgba(22, 163, 74, 0.12)';
+  const approvalState = task.approvalStatus === 'pending'
+    ? {
+        label: t('component.taskCard.approvalPending'),
+        icon: 'clock-outline' as const,
+        color: '#EA580C',
+        backgroundColor: '#FFF7ED',
+      }
+    : task.approvalStatus === 'approved'
+      ? {
+          label: t('component.taskCard.approvalApproved'),
+          icon: 'check-circle-outline' as const,
+          color: '#16A34A',
+          backgroundColor: '#F0FDF4',
+        }
+      : task.approvalStatus === 'rejected'
+        ? {
+            label: t('component.taskCard.approvalRejected'),
+            icon: 'close-circle-outline' as const,
+            color: '#DC2626',
+            backgroundColor: '#FEF2F2',
+          }
+        : null;
 
   const internalScaleAnim = useRef(new Animated.Value(1)).current;
   const scaleAnim = pressScaleValue ?? internalScaleAnim;
@@ -219,32 +241,21 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
 
       {/* Row 2: Status badge + Location + Approval pill */}
       <View style={styles.metaRow}>
-        <CustomChip
-          label={task.status}
-          color={stColor}
-          icon={
-            working
-              ? <SpinnerIcon color="#FFFFFF" size={12} />
-              : <MaterialCommunityIcons name={(STATUS_ICONS[statusType as Exclude<StatusType, 'working'>] ?? STATUS_ICONS.default) as any} size={12} color="#FFFFFF" />
-          }
-        />
-        {task.approvalStatus === 'pending' && (
-          <View style={[styles.approvalPill, { backgroundColor: '#FFF7ED' }]}>
-            <MaterialCommunityIcons name="clock-outline" size={11} color="#EA580C" />
-            <Text style={[styles.approvalPillText, { color: '#EA580C' }]}>{t('component.taskCard.approvalPending')}</Text>
+        {approvalState ? (
+          <View style={[styles.approvalPill, { backgroundColor: approvalState.backgroundColor }]}> 
+            <MaterialCommunityIcons name={approvalState.icon} size={11} color={approvalState.color} />
+            <Text style={[styles.approvalPillText, { color: approvalState.color }]}>{approvalState.label}</Text>
           </View>
-        )}
-        {task.approvalStatus === 'approved' && (
-          <View style={[styles.approvalPill, { backgroundColor: '#F0FDF4' }]}>
-            <MaterialCommunityIcons name="check-circle-outline" size={11} color="#16A34A" />
-            <Text style={[styles.approvalPillText, { color: '#16A34A' }]}>{t('component.taskCard.approvalApproved')}</Text>
-          </View>
-        )}
-        {task.approvalStatus === 'rejected' && (
-          <View style={[styles.approvalPill, { backgroundColor: '#FEF2F2' }]}>
-            <MaterialCommunityIcons name="close-circle-outline" size={11} color="#DC2626" />
-            <Text style={[styles.approvalPillText, { color: '#DC2626' }]}>{t('component.taskCard.approvalRejected')}</Text>
-          </View>
+        ) : (
+          <CustomChip
+            label={task.status}
+            color={stColor}
+            icon={
+              working
+                ? <SpinnerIcon color="#FFFFFF" size={12} />
+                : <MaterialCommunityIcons name={(STATUS_ICONS[statusType as Exclude<StatusType, 'working'>] ?? STATUS_ICONS.default) as any} size={12} color="#FFFFFF" />
+            }
+          />
         )}
         {(task.ackTotal ?? 0) > 0 && (
           <View style={[styles.ackBadge, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}> 
