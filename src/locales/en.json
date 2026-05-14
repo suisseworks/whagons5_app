@@ -327,7 +327,7 @@
     "failedToAcknowledge": "Failed to acknowledge",
     "statusApproved": "Approved",
     "statusRejected": "Rejected",
-    "statusPendingApproval": "Pending Approval",
+    "statusPendingApproval": "Waiting for approval",
     "metaLabelStatus": "Status",
     "metaLabelPriority": "Priority",
     "metaLabelLocation": "Location",
@@ -714,7 +714,7 @@
       "rejectButton": "Reject"
     },
     "taskCard": {
-      "approvalPending": "Pending",
+      "approvalPending": "Waiting for approval",
       "approvalApproved": "Approved",
       "approvalRejected": "Rejected",
       "commentCount": "%{count} comment",

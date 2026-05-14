@@ -327,6 +327,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const statusPillColor = derived === 'approved' ? '#16A34A' : derived === 'rejected' ? '#DC2626' : '#EA580C';
   const statusPillBg = derived === 'approved' ? '#F0FDF4' : derived === 'rejected' ? '#FEF2F2' : '#FFF7ED';
   const statusPillLabel = derived === 'approved' ? t('sharedTask.statusApproved') : derived === 'rejected' ? t('sharedTask.statusRejected') : t('sharedTask.statusPendingApproval');
+  const showTaskStatusMeta = !approvalPending && derived !== 'rejected';
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
@@ -365,9 +366,11 @@ export const SharedTaskDetailScreen: React.FC = () => {
         )}
 
         {/* Metadata Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}> 
           <View style={styles.metaGrid}>
-            <MetaItem label={t('sharedTask.metaLabelStatus')} value={task.status} color={task.statusColor} isDark={isDarkMode} textColor={colors.text} />
+            {showTaskStatusMeta ? (
+              <MetaItem label={t('sharedTask.metaLabelStatus')} value={task.status} color={task.statusColor} isDark={isDarkMode} textColor={colors.text} />
+            ) : null}
             <MetaItem label={t('sharedTask.metaLabelPriority')} value={task.priority} isDark={isDarkMode} textColor={colors.text} />
             {task.spot ? <MetaItem label={t('sharedTask.metaLabelLocation')} value={task.spot} isDark={isDarkMode} textColor={colors.text} /> : null}
             {task.createdAt ? <MetaItem label={t('sharedTask.metaLabelCreated')} value={task.createdAt} isDark={isDarkMode} textColor={colors.text} /> : null}
