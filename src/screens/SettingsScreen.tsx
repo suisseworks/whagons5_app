@@ -294,7 +294,7 @@ export const SettingsScreen: React.FC = () => {
     </TouchableOpacity>
   );
 
-  const SwitchTile = ({
+  const renderSwitchTile = ({
     icon,
     title,
     subtitle,
@@ -412,64 +412,64 @@ export const SettingsScreen: React.FC = () => {
         {/* Notifications Section */}
         <SectionHeader title={t('settings.sectionNotifications')} />
         <View style={cardStyle}>
-          <SwitchTile
-            icon="notifications"
-            title={t('settings.enableNotifications')}
-            subtitle={hasPermission ? t('settings.receiveAllNotifications') : t('settings.permissionNotGranted')}
-            value={preferences.enabled}
-            onValueChange={(val) => updatePreferences({ enabled: val })}
-          />
+          {renderSwitchTile({
+            icon: 'notifications',
+            title: t('settings.enableNotifications'),
+            subtitle: hasPermission ? t('settings.receiveAllNotifications') : t('settings.permissionNotGranted'),
+            value: preferences.enabled,
+            onValueChange: (val) => updatePreferences({ enabled: val }),
+          })}
           <View style={styles.divider} />
-          <SwitchTile
-            icon="notifications-active"
-            title={t('settings.pushNotifications')}
-            subtitle={t('settings.pushNotificationsSubtitle')}
-            value={preferences.pushEnabled}
-            onValueChange={(val) => updatePreferences({ pushEnabled: val })}
-            enabled={preferences.enabled}
-          />
+          {renderSwitchTile({
+            icon: 'notifications-active',
+            title: t('settings.pushNotifications'),
+            subtitle: t('settings.pushNotificationsSubtitle'),
+            value: preferences.pushEnabled,
+            onValueChange: (val) => updatePreferences({ pushEnabled: val }),
+            enabled: preferences.enabled,
+          })}
           <View style={styles.divider} />
-          <SwitchTile
-            icon="volume-up"
-            title={t('settings.sound')}
-            subtitle={t('settings.soundSubtitle')}
-            value={preferences.soundEnabled}
-            onValueChange={(val) => updatePreferences({ soundEnabled: val })}
-            enabled={preferences.enabled}
-          />
+          {renderSwitchTile({
+            icon: 'volume-up',
+            title: t('settings.sound'),
+            subtitle: t('settings.soundSubtitle'),
+            value: preferences.soundEnabled,
+            onValueChange: (val) => updatePreferences({ soundEnabled: val }),
+            enabled: preferences.enabled,
+          })}
           <View style={styles.divider} />
-          <SwitchTile
-            icon="vibration"
-            title={t('settings.vibration')}
-            subtitle={t('settings.vibrationSubtitle')}
-            value={preferences.vibrationEnabled}
-            onValueChange={(val) => updatePreferences({ vibrationEnabled: val })}
-            enabled={preferences.enabled}
-          />
+          {renderSwitchTile({
+            icon: 'vibration',
+            title: t('settings.vibration'),
+            subtitle: t('settings.vibrationSubtitle'),
+            value: preferences.vibrationEnabled,
+            onValueChange: (val) => updatePreferences({ vibrationEnabled: val }),
+            enabled: preferences.enabled,
+          })}
         </View>
 
         {/* Task Creation Section */}
         <SectionHeader title={t('settings.sectionTaskCreation')} />
         <View style={cardStyle}>
-          <SwitchTile
-            icon="gps-fixed"
-            title={t('settings.captureGpsLocation')}
-            subtitle={t('settings.captureGpsLocationSubtitle')}
-            value={gpsCaptureEnabled}
-            onValueChange={handleGpsToggle}
-          />
+          {renderSwitchTile({
+            icon: 'gps-fixed',
+            title: t('settings.captureGpsLocation'),
+            subtitle: t('settings.captureGpsLocationSubtitle'),
+            value: gpsCaptureEnabled,
+            onValueChange: handleGpsToggle,
+          })}
         </View>
 
         {/* Appearance Section */}
         <SectionHeader title={t('settings.sectionAppearance')} />
         <View style={cardStyle}>
-          <SwitchTile
-            icon={isDarkMode ? 'dark-mode' : 'light-mode'}
-            title={t('settings.darkMode')}
-            subtitle={t('settings.darkModeSubtitle')}
-            value={isDarkMode}
-            onValueChange={toggleDarkMode}
-          />
+          {renderSwitchTile({
+            icon: isDarkMode ? 'dark-mode' : 'light-mode',
+            title: t('settings.darkMode'),
+            subtitle: t('settings.darkModeSubtitle'),
+            value: isDarkMode,
+            onValueChange: toggleDarkMode,
+          })}
           <View style={styles.divider} />
           <ListTile
             icon="palette"
@@ -487,13 +487,13 @@ export const SettingsScreen: React.FC = () => {
             onPress={showLanguageDialog}
           />
           <View style={styles.divider} />
-          <SwitchTile
-            icon="schedule"
-            title={t('settings.use24HourTime')}
-            subtitle={timeFormat === '24h' ? t('settings.timeFormat24Hour') : t('settings.timeFormat12Hour')}
-            value={timeFormat === '24h'}
-            onValueChange={(value) => setTimeFormat(value ? '24h' : '12h')}
-          />
+          {renderSwitchTile({
+            icon: 'schedule',
+            title: t('settings.use24HourTime'),
+            subtitle: timeFormat === '24h' ? t('settings.timeFormat24Hour') : t('settings.timeFormat12Hour'),
+            value: timeFormat === '24h',
+            onValueChange: (value) => setTimeFormat(value ? '24h' : '12h'),
+          })}
         </View>
 
         {/* Privacy & Security Section */}
