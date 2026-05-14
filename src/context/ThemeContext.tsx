@@ -2,10 +2,15 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { useColorScheme } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ThemeName, ThemeColors } from '../models/types';
-import { getLightTheme, getDarkTheme, getPrimaryColor } from '../config/themes';
+import { AppThemes, getLightTheme, getDarkTheme } from '../config/themes';
 
 const STORAGE_KEY_SHOW_KPI = '@whagons/show_kpi_cards';
 const STORAGE_KEY_DARK_MODE = '@whagons/dark_mode';
+const STORAGE_KEY_THEME_NAME = '@whagons/theme_name';
+
+const isThemeName = (value: string | null): value is ThemeName => (
+  value !== null && Object.values(AppThemes).includes(value as ThemeName)
+);
 
 interface ThemeContextType {
   themeName: ThemeName;
@@ -31,17 +36,24 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const isDarkMode = darkModeOverride !== null ? darkModeOverride : systemColorScheme === 'dark';
 
   const colors = isDarkMode ? getDarkTheme(themeName) : getLightTheme(themeName);
-  const primaryColor = getPrimaryColor(themeName);
+  const primaryColor = colors.primary;
 
   // Load persisted preferences on mount
   useEffect(() => {
-    AsyncStorage.multiGet([STORAGE_KEY_SHOW_KPI, STORAGE_KEY_DARK_MODE]).then((entries) => {
+    AsyncStorage.multiGet([STORAGE_KEY_SHOW_KPI, STORAGE_KEY_DARK_MODE, STORAGE_KEY_THEME_NAME]).then((entries) => {
       const kpiVal = entries[0][1];
       const darkVal = entries[1][1];
+      const themeVal = entries[2][1];
       if (kpiVal !== null) setShowKpiCardsState(kpiVal === 'true');
       if (darkVal !== null) setDarkModeOverride(darkVal === 'true');
+      if (isThemeName(themeVal)) setThemeName(themeVal);
     }).catch(() => {});
   }, []);
+
+  const setSelectedThemeName = (theme: ThemeName) => {
+    setThemeName(theme);
+    AsyncStorage.setItem(STORAGE_KEY_THEME_NAME, theme).catch(() => {});
+  };
 
   const toggleDarkMode = () => {
     const next = !isDarkMode;
@@ -62,7 +74,7 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         colors,
         primaryColor,
         showKpiCards,
-        setThemeName,
+        setThemeName: setSelectedThemeName,
         toggleDarkMode,
         setShowKpiCards,
       }}

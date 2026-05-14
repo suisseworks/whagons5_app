@@ -1,6 +1,6 @@
 import { ThemeName, ThemeColors } from '../models/types';
 
-// Theme configurations matching Flutter app
+// Theme configurations inspired by the web app presets, simplified for React Native.
 export const AppThemes = {
   default: 'default' as ThemeName,
   ocean: 'ocean' as ThemeName,
@@ -12,39 +12,39 @@ export const getLightTheme = (themeName: ThemeName): ThemeColors => {
   switch (themeName) {
     case 'ocean':
       return {
-        primary: '#2196F3',
-        secondary: '#03A9F4',
-        background: '#E3F2FD',
+        primary: '#2563EB',
+        secondary: '#F97316',
+        background: '#F8FAFF',
         surface: '#FFFFFF',
-        text: '#000000DE',
-        textSecondary: '#00000099',
+        text: '#0F172A',
+        textSecondary: '#64748B',
       };
     case 'sunset':
       return {
-        primary: '#FF6B35',
-        secondary: '#9C27B0',
-        background: '#FFF3E0',
+        primary: '#DC2626',
+        secondary: '#F97316',
+        background: '#FEF7F7',
         surface: '#FFFFFF',
-        text: '#000000DE',
-        textSecondary: '#00000099',
+        text: '#1C0A0A',
+        textSecondary: '#7F1D1D',
       };
     case 'forest':
       return {
-        primary: '#4CAF50',
-        secondary: '#8D6E63',
-        background: '#E8F5E9',
+        primary: '#059669',
+        secondary: '#047857',
+        background: '#F7FDF9',
         surface: '#FFFFFF',
-        text: '#000000DE',
-        textSecondary: '#00000099',
+        text: '#0F2419',
+        textSecondary: '#3F5F4E',
       };
     default: // default theme
       return {
-        primary: '#1A56DB',
-        secondary: '#2F6F6D',
-        background: '#FAFAFA',
+        primary: '#4F46E5',
+        secondary: '#0F766E',
+        background: '#F8FAFC',
         surface: '#FFFFFF',
         text: '#111827',
-        textSecondary: '#6B7280',
+        textSecondary: '#64748B',
       };
   }
 };
@@ -53,39 +53,39 @@ export const getDarkTheme = (themeName: ThemeName): ThemeColors => {
   switch (themeName) {
     case 'ocean':
       return {
-        primary: '#2196F3',
-        secondary: '#03A9F4',
-        background: '#0D1B2A',
-        surface: '#1B263B',
-        text: '#FFFFFF',
-        textSecondary: '#FFFFFFB3',
+        primary: '#60A5FA',
+        secondary: '#FB923C',
+        background: '#0C1524',
+        surface: '#132033',
+        text: '#F1F5F9',
+        textSecondary: '#CBD5E1',
       };
     case 'sunset':
       return {
-        primary: '#FF6B35',
-        secondary: '#9C27B0',
-        background: '#1A1423',
-        surface: '#2D1B3D',
-        text: '#FFFFFF',
-        textSecondary: '#FFFFFFB3',
+        primary: '#F87171',
+        secondary: '#FB923C',
+        background: '#1A0A0A',
+        surface: '#2C1414',
+        text: '#FEF2F2',
+        textSecondary: '#FECACA',
       };
     case 'forest':
       return {
-        primary: '#4CAF50',
-        secondary: '#8D6E63',
-        background: '#1B2A1B',
-        surface: '#2C3E2C',
-        text: '#FFFFFF',
-        textSecondary: '#FFFFFFB3',
+        primary: '#34D399',
+        secondary: '#10B981',
+        background: '#0A1F14',
+        surface: '#1A2E24',
+        text: '#ECFDF5',
+        textSecondary: '#A7F3D0',
       };
     default: // default theme
       return {
-        primary: '#5B8DEF',
-        secondary: '#3F8F8C',
-        background: '#1A1A1A',
-        surface: '#242424',
-        text: '#F5F5F5',
-        textSecondary: '#9CA3AF',
+        primary: '#818CF8',
+        secondary: '#2DD4BF',
+        background: '#0F172A',
+        surface: '#1E293B',
+        text: '#F8FAFC',
+        textSecondary: '#CBD5E1',
       };
   }
 };
@@ -93,13 +93,13 @@ export const getDarkTheme = (themeName: ThemeName): ThemeColors => {
 export const getPrimaryColor = (themeName: ThemeName): string => {
   switch (themeName) {
     case 'ocean':
-      return '#2196F3';
+      return '#2563EB';
     case 'sunset':
-      return '#FF6B35';
+      return '#DC2626';
     case 'forest':
-      return '#4CAF50';
+      return '#059669';
     default:
-      return '#1A56DB';
+      return '#4F46E5';
   }
 };
 
@@ -108,25 +108,25 @@ export const themeMetadata = [
   {
     id: 'default' as ThemeName,
     name: 'Default',
-    description: 'Clean modern blue',
+    description: 'Clean indigo workspace',
     icon: 'palette',
   },
   {
     id: 'ocean' as ThemeName,
-    name: 'Ocean',
-    description: 'Cool blue waves',
+    name: 'Ocean Breeze',
+    description: 'Blue with coral highlights',
     icon: 'water',
   },
   {
     id: 'sunset' as ThemeName,
-    name: 'Sunset',
-    description: 'Warm orange and purple',
+    name: 'Sunset Blaze',
+    description: 'Warm red and orange',
     icon: 'weather-sunset',
   },
   {
     id: 'forest' as ThemeName,
-    name: 'Forest',
-    description: 'Natural green tones',
+    name: 'Emerald Forest',
+    description: 'Rich green surfaces',
     icon: 'tree',
   },
 ];

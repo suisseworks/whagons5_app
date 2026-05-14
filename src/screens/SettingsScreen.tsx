@@ -33,6 +33,7 @@ import { useData } from '../context/DataContext';
 import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
+import { themeMetadata } from '../config/themes';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { sendPasswordReset } from '../firebase/authService';
 
@@ -66,7 +67,7 @@ type SettingsNavProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>
 
 export const SettingsScreen: React.FC = () => {
   const navigation = useNavigation<SettingsNavProp>();
-  const { colors, primaryColor, isDarkMode, toggleDarkMode } = useTheme();
+  const { colors, primaryColor, isDarkMode, toggleDarkMode, themeName } = useTheme();
   const { preferences, updatePreferences, hasPermission } = useNotifications();
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
@@ -74,6 +75,7 @@ export const SettingsScreen: React.FC = () => {
   const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
   const submitBugReport = useMutation((api as any).bugReports.submit);
   const releaseNotesBody = bundledReleaseNotes.bodyByLanguage?.[language] || bundledReleaseNotes.body;
+  const currentThemeLabel = themeMetadata.find((theme) => theme.id === themeName)?.name || t('settings.theme');
   const [isSwitching, setIsSwitching] = useState(false);
   const [switchTenantModalVisible, setSwitchTenantModalVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
@@ -101,10 +103,6 @@ export const SettingsScreen: React.FC = () => {
     styles.card,
     { backgroundColor: colors.surface, borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.08)' : '#E6E1D7' },
   ];
-
-  const showComingSoon = (feature: string) => {
-    Alert.alert(t('common.comingSoonTitle'), t('common.comingSoonMessage', { feature }));
-  };
 
   const showLanguageDialog = () => {
     setLanguageModalVisible(true);
@@ -476,9 +474,9 @@ export const SettingsScreen: React.FC = () => {
           <ListTile
             icon="palette"
             title={t('settings.theme')}
-            subtitle={t('settings.themeSubtitle')}
+            subtitle={currentThemeLabel}
             trailing={<MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />}
-            onPress={() => showComingSoon('Theme customization')}
+            onPress={() => navigation.navigate('Themes')}
           />
           <View style={styles.divider} />
           <ListTile
