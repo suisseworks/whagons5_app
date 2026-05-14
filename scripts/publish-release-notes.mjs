@@ -11,7 +11,7 @@ if (!convexUrl) {
 }
 
 if (!secret) {
-  throw new Error('RELEASE_NOTES_SECRET is required to publish release notes.');
+  throw new Error('RELEASE_NOTES_SECRET is required to publish release notes. Set it locally and in the Convex deployment env.');
 }
 
 if (!notesFile) {

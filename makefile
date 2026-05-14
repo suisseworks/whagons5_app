@@ -170,6 +170,9 @@ release-notes-preview:
 release:
 	@set -e && \
 	set -a && . ./.env.production && set +a && export EXPO_NO_DOTENV=1 && \
+	if [ -z "$${OPENROUTER_API_KEY:-}" ]; then echo "Error: OPENROUTER_API_KEY is required in .env.production."; exit 1; fi && \
+	if [ -z "$${RELEASE_NOTES_SECRET:-}" ]; then echo "Error: RELEASE_NOTES_SECRET is required in .env.production and must match the Convex deployment env."; exit 1; fi && \
+	if [ -z "$${EXPO_PUBLIC_CONVEX_URL:-}" ] && [ -z "$${CONVEX_URL:-}" ]; then echo "Error: EXPO_PUBLIC_CONVEX_URL or CONVEX_URL is required in .env.production."; exit 1; fi && \
 	\
 	echo "=== Step 1: Determine version ===" && \
 	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
@@ -242,6 +245,9 @@ release:
 release-prod:
 	@set -e && \
 	set -a && . ./.env.production && set +a && export EXPO_NO_DOTENV=1 && \
+	if [ -z "$${OPENROUTER_API_KEY:-}" ]; then echo "Error: OPENROUTER_API_KEY is required in .env.production."; exit 1; fi && \
+	if [ -z "$${RELEASE_NOTES_SECRET:-}" ]; then echo "Error: RELEASE_NOTES_SECRET is required in .env.production and must match the Convex deployment env."; exit 1; fi && \
+	if [ -z "$${EXPO_PUBLIC_CONVEX_URL:-}" ] && [ -z "$${CONVEX_URL:-}" ]; then echo "Error: EXPO_PUBLIC_CONVEX_URL or CONVEX_URL is required in .env.production."; exit 1; fi && \
 	\
 	echo "=== Step 1: Determine version ===" && \
 	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
