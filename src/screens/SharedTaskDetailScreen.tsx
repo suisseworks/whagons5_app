@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -54,6 +54,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const [rejectVisible, setRejectVisible] = useState(false);
   const [deciding, setDeciding] = useState(false);
   const [acknowledging, setAcknowledging] = useState(false);
+  const [optimisticApprovalStatus, setOptimisticApprovalStatus] = useState<'approved' | 'rejected' | null>(null);
   const [optimisticAcknowledgedShareIds, setOptimisticAcknowledgedShareIds] = useState<Set<string>>(() => new Set());
   const toastRef = useRef<ToastRef>(null);
 
@@ -87,9 +88,27 @@ export const SharedTaskDetailScreen: React.FC = () => {
   // Approval logic
   const approvalId = task.approvalId;
   const approval = approvalId ? approvalMap[String(approvalId)] : null;
+  const taskStatusResolved = useMemo(() => {
+    const action = String((task as any).statusAction ?? '').toUpperCase();
+    const statusName = String(task.status ?? '').toLowerCase();
+    return action === 'FINISHED'
+      || action === 'DONE'
+      || action === 'COMPLETED'
+      || statusName.includes('approved')
+      || statusName.includes('aprobado')
+      || statusName.includes('completed')
+      || statusName.includes('completado')
+      || statusName.includes('done');
+  }, [task]);
+
+  useEffect(() => {
+    setOptimisticApprovalStatus(null);
+  }, [task.id, taskConvexId]);
 
   const derived = useMemo(() => {
+    if (optimisticApprovalStatus) return optimisticApprovalStatus;
     if (!approvalId) return task.approvalStatus ?? null;
+    if (taskStatusResolved) return null;
     return computeApprovalStatusForTask({
       taskId: String(task.id),
       taskConvexId: taskConvexId ?? undefined,
@@ -97,7 +116,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
       approval,
       taskApprovalInstances: taskApprovalInstances as any[],
     });
-  }, [approvalId, task.id, taskConvexId, approval, taskApprovalInstances, task.approvalStatus]);
+  }, [optimisticApprovalStatus, approvalId, task.id, taskConvexId, approval, taskApprovalInstances, task.approvalStatus, taskStatusResolved]);
 
   const approvalPending = derived === 'pending';
   const hasApproval = derived != null;
@@ -118,7 +137,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
 
   // canAct: can the current user approve/reject?
   const canAct = useMemo(() => {
-    if (!approvalPending || !authUser) return false;
+    if (taskStatusResolved || !approvalPending || !authUser) return false;
     const currentUserIds = new Set<string>();
     if (authUser.id) currentUserIds.add(String(authUser.id));
 
@@ -131,17 +150,6 @@ export const SharedTaskDetailScreen: React.FC = () => {
       if (userDoc.id) currentUserIds.add(String(userDoc.id));
     }
 
-    const currentUserRoleIds: any[] = (authUser as any).global_roles ?? (authUser as any).globalRoles ?? [];
-
-    const currentUserTeamIds = new Set<string>();
-    for (const ut of userTeams) {
-      const utUserId = String((ut as any).userId ?? (ut as any).user_id ?? '');
-      if (currentUserIds.has(utUserId)) {
-        const tid = (ut as any).teamId ?? (ut as any).team_id;
-        if (tid) currentUserTeamIds.add(String(tid));
-      }
-    }
-
     const hasDirectPendingInstance = (taskApprovalInstances as any[]).some((instance: any) => {
       const instanceTaskId = instance.taskId ?? instance.task_id;
       if (instanceTaskId == null) return false;
@@ -151,18 +159,8 @@ export const SharedTaskDetailScreen: React.FC = () => {
       const pendingLike = !instance.status || instance.status === 'pending' || instance.status === 'not started';
       return pendingLike && approverUserId != null && currentUserIds.has(String(approverUserId));
     });
-    if (hasDirectPendingInstance) return true;
-
-    return approverDetails.some((d) => {
-      const pendingLike = !d.status || d.status === 'pending' || d.status === 'not started';
-      if (!pendingLike) return false;
-      if (d.approverUserId != null && currentUserIds.has(String(d.approverUserId))) return true;
-      if (d.approverRoleId && currentUserRoleIds.includes(d.approverRoleId)) return true;
-      if (d.memberUserIds && d.memberUserIds.some((uid) => currentUserIds.has(String(uid)))) return true;
-      if (d.approverTeamId && currentUserTeamIds.has(String(d.approverTeamId))) return true;
-      return false;
-    });
-  }, [approvalPending, authUser, data.users, userTeams, taskApprovalInstances, task.id, taskConvexId, approverDetails]);
+    return hasDirectPendingInstance;
+  }, [taskStatusResolved, approvalPending, authUser, data.users, taskApprovalInstances, task.id, taskConvexId]);
 
   const requireSignature = !!(approval?.require_signature ?? approval?.requireSignature);
 
@@ -278,13 +276,16 @@ export const SharedTaskDetailScreen: React.FC = () => {
     if (!tenantId || !taskConvexId) return;
     setDeciding(true);
     try {
-      await decideMutation({
+      const result = await decideMutation({
         tenantId,
         taskId: taskConvexId as Id<'tasks'>,
         decision,
         ...(responseComment ? { responseComment } : {}),
         ...(signatureStorageId ? { signatureStorageId: signatureStorageId as Id<'_storage'> } : {}),
       });
+      if (!(result as any)?._offlineQueued) {
+        setOptimisticApprovalStatus(decision);
+      }
       toastRef.current?.show({
         type: 'success',
         title: decision === 'approved' ? t('sharedTask.approvedSuccessfully') : t('sharedTask.rejectedSuccessfully'),

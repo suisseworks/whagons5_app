@@ -27,7 +27,7 @@ export function computeApprovalStatusForTask(opts: {
     }
   );
 
-  if (instances.length === 0) return 'pending';
+  if (instances.length === 0) return null;
 
   const required = instances.filter((i: any) => field(i, 'is_required', 'isRequired') !== false);
   const requiredSet = required.length > 0 ? required : instances;
