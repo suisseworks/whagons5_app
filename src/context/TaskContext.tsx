@@ -163,6 +163,7 @@ function mapTaskToItem(
   tagMap: Map<AnyId, string[]>,
   initialStatus: { name: string; color: string | null } | null,
   templateFormMap: Map<AnyId, { formId: AnyId; formName: string }>,
+  formInfoMap: Map<AnyId, { formId: AnyId; formName: string }>,
   userFlagMap: Map<AnyId, string>,
   categoryInfoMap: Map<AnyId, { color?: string | null; icon?: string | null }>,
   commentSummaryMap: Map<string, { count: number; lastText?: string | null; lastVoiceMemo?: TaskCommentVoiceMemo | null; lastUnread?: boolean }>,
@@ -171,7 +172,10 @@ function mapTaskToItem(
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
 
   const templateId = task.template_id;
-  const formInfo = templateId ? templateFormMap.get(templateId) : undefined;
+  const directFormId = (task as any).formId ?? (task as any).form_id ?? null;
+  const directFormInfo = directFormId ? formInfoMap.get(directFormId) ?? { formId: directFormId, formName: 'Form' } : undefined;
+  const templateFormInfo = templateId ? templateFormMap.get(templateId) : undefined;
+  const formInfo = directFormInfo ?? templateFormInfo;
 
   const flagColor = userFlagMap.get(task.id) ?? (task as any).flagColor ?? (task as any).flag_color ?? null;
   const catInfo = task.category_id ? categoryInfoMap.get(task.category_id) : undefined;
@@ -687,19 +691,27 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [data.taskTags, tagNameMap]);
 
-  const templateFormMap = useMemo(() => {
-    const formMap = new Map<AnyId, string>();
-    for (const f of data.forms) formMap.set(f.id, f.name);
+  const formInfoMap = useMemo(() => {
+    const m = new Map<AnyId, { formId: AnyId; formName: string }>();
+    for (const f of data.forms) {
+      const primaryId = (f as any)._id ?? f.id;
+      const formInfo = { formId: primaryId, formName: f.name ?? 'Form' };
+      m.set(f.id, formInfo);
+      if ((f as any)._id) m.set((f as any)._id, formInfo);
+    }
+    return m;
+  }, [data.forms]);
 
+  const templateFormMap = useMemo(() => {
     const m = new Map<AnyId, { formId: AnyId; formName: string }>();
     for (const tpl of data.templates) {
       if (tpl.form_id) {
-        const formName = formMap.get(tpl.form_id) ?? 'Form';
-        m.set(tpl.id, { formId: tpl.form_id, formName });
+        const formInfo = formInfoMap.get(tpl.form_id) ?? { formId: tpl.form_id, formName: 'Form' };
+        m.set(tpl.id, formInfo);
       }
     }
     return m;
-  }, [data.templates, data.forms]);
+  }, [data.templates, formInfoMap]);
 
   const workspaces = useMemo(() => {
     const names = data.workspaces.map((w) => w.name);
@@ -852,9 +864,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const mappedActiveTasks = useMemo(() => {
     if (activeTasks.length === 0) return [];
     return activeTasks.map((t) =>
-      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
+      mapTaskToItem(t, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
     );
-  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate]);
+  }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate]);
 
   const approvalMap = useMemo(() => {
     const m: Record<string, any> = {};
@@ -958,7 +970,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         updated_at: rawTask.updated_at ?? (rawTask.updatedAt ? new Date(rawTask.updatedAt).toISOString() : null),
         deleted_at: rawTask.deleted_at ?? (rawTask.deletedAt ? new Date(rawTask.deletedAt).toISOString() : null),
       };
-      const item = mapTaskToItem(syncedTask, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate);
+      const item = mapTaskToItem(syncedTask, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate);
       const enrichment = sharedEnrichmentMap.get(String(taskId)) ?? (convexId ? sharedEnrichmentMap.get(convexId) : undefined);
       sharedTasks.push(enrichment ? {
         ...item,
@@ -974,7 +986,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return sharedTasks;
-  }, [rawSharedToMe, mappedActiveTasks, data.workspaces, data.categories, data.statuses, data.priorities, data.spots, data.templates, data.users, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, sharedEnrichmentMap, formatTaskDate]);
+  }, [rawSharedToMe, mappedActiveTasks, data.workspaces, data.categories, data.statuses, data.priorities, data.spots, data.templates, data.users, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, sharedEnrichmentMap, formatTaskDate]);
 
   useEffect(() => {
     if (pendingCreatedTasks.length === 0 || mappedActiveTasks.length === 0) return;
@@ -1348,7 +1360,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return;
         }
         const mapped = rows.map((task) =>
-          mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
+          mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
         );
         setSqlFilteredState({ key: sqlFilterKey, tasks: mapped, total });
       })
@@ -1375,6 +1387,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     shouldUseSqlTaskList,
     tagMap,
     templateFormMap,
+    formInfoMap,
     userFlagMap,
     visibleCount,
   ]);
