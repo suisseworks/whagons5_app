@@ -278,6 +278,7 @@ export function VoiceMemoBubble({
   timeLabel,
   delivered,
   durationMs: initialDurationMs = 0,
+  onPlaybackStart,
 }: {
   uri: string;
   outgoing: boolean;
@@ -287,6 +288,7 @@ export function VoiceMemoBubble({
   timeLabel?: string;
   delivered?: boolean;
   durationMs?: number;
+  onPlaybackStart?: () => void;
 }) {
   const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -296,16 +298,34 @@ export function VoiceMemoBubble({
   const isScrubbingRef = useRef(false);
   const pendingSeekMsRef = useRef<number | null>(null);
   const seekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackStartRequestedAtRef = useRef<number | null>(null);
+  const playbackStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const playbackStartNotifiedRef = useRef(false);
   const lastSeekAtRef = useRef(0);
   const [isPlaying, setIsPlaying] = React.useState(false);
   const [positionMs, setPositionMs] = React.useState(0);
   const [durationMs, setDurationMs] = React.useState(initialDurationMs);
   const progress = durationMs > 0 ? Math.min(1, Math.max(0, positionMs / durationMs)) : 0;
 
+  const clearPlaybackStartup = () => {
+    playbackStartRequestedAtRef.current = null;
+    if (playbackStartTimerRef.current) {
+      clearTimeout(playbackStartTimerRef.current);
+      playbackStartTimerRef.current = null;
+    }
+  };
+
+  const notifyPlaybackStarted = () => {
+    if (playbackStartNotifiedRef.current) return;
+    playbackStartNotifiedRef.current = true;
+    onPlaybackStart?.();
+  };
+
   useEffect(() => {
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (seekTimerRef.current) clearTimeout(seekTimerRef.current);
+      if (playbackStartTimerRef.current) clearTimeout(playbackStartTimerRef.current);
       playerRef.current?.pause();
       playerRef.current = null;
     };
@@ -317,14 +337,30 @@ export function VoiceMemoBubble({
       intervalRef.current = setInterval(() => {
         const player = playerRef.current;
         if (!player) return;
-        const nextDurationMs = Math.round((player.duration || 0) * 1000);
+        const currentTime = player.currentTime || 0;
+        const playerDuration = player.duration || 0;
+        const nextDurationMs = Math.round(playerDuration * 1000);
         if (nextDurationMs > 0) setDurationMs(nextDurationMs);
         if (!isScrubbingRef.current) {
-          setPositionMs(Math.round((player.currentTime || 0) * 1000));
+          setPositionMs(Math.round(currentTime * 1000));
         }
-        setIsPlaying(player.playing);
-        if (player.duration > 0 && player.currentTime >= player.duration - 0.05 && !player.playing) {
+
+        const requestedAt = playbackStartRequestedAtRef.current;
+        const isStarting = requestedAt != null;
+        if (player.playing || (isStarting && currentTime > 0.03)) {
+          clearPlaybackStartup();
+          notifyPlaybackStarted();
+          setIsPlaying(true);
+        } else if (isStarting && Date.now() - requestedAt < 1200) {
+          setIsPlaying(true);
+        } else {
+          clearPlaybackStartup();
           setIsPlaying(false);
+        }
+
+        if (playerDuration > 0 && currentTime >= playerDuration - 0.05 && !player.playing && !isStarting) {
+          setIsPlaying(false);
+          playbackStartNotifiedRef.current = false;
           setPositionMs(0);
           player.seekTo(0).catch(() => {});
         }
@@ -332,14 +368,22 @@ export function VoiceMemoBubble({
     }
 
     const player = playerRef.current;
-    if (player.playing) {
+    if (player.playing || playbackStartRequestedAtRef.current != null) {
       player.pause();
+      clearPlaybackStartup();
+      playbackStartNotifiedRef.current = false;
       setIsPlaying(false);
       return;
     }
     if (durationMs > 0 && positionMs >= durationMs - 100) {
       await player.seekTo(0);
     }
+    playbackStartRequestedAtRef.current = Date.now();
+    playbackStartNotifiedRef.current = false;
+    if (playbackStartTimerRef.current) clearTimeout(playbackStartTimerRef.current);
+    playbackStartTimerRef.current = setTimeout(() => {
+      clearPlaybackStartup();
+    }, 1200);
     player.play();
     setIsPlaying(true);
   };

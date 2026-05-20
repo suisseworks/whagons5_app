@@ -185,6 +185,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     let cancelled = false;
 
     const resolveTenant = async () => {
+      const startedAt = Date.now();
       console.log('[AUTH] Tenant auto-select evaluating:', {
         tenantId,
         myTenants: summarizeTenants(myTenants),
@@ -192,11 +193,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       if (tenantId && myTenants.includes(tenantId)) {
         console.log('[AUTH] Existing tenant accepted:', tenantId);
+        const claimStartedAt = Date.now();
         await claimCurrentUserByEmail({ tenantId }).catch((err) => {
           console.warn('[AUTH] Existing tenant email claim failed:', err);
         });
+        console.log('[AUTH] Existing tenant email claim finished:', Date.now() - claimStartedAt, 'ms');
         if (cancelled) return;
         setTenantResolved(true);
+        console.log('[AUTH] Tenant auto-select resolved:', Date.now() - startedAt, 'ms');
         return;
       }
 
@@ -216,20 +220,24 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       } else if (myTenants.length === 1) {
         const t = myTenants[0];
         console.log('[AUTH] Single tenant auto-selected:', t);
+        const claimStartedAt = Date.now();
         await claimCurrentUserByEmail({ tenantId: t }).catch((err) => {
           console.warn('[AUTH] Single tenant email claim failed:', err);
         });
+        console.log('[AUTH] Single tenant email claim finished:', Date.now() - claimStartedAt, 'ms');
         if (cancelled) return;
         setTenantId(t);
         setPendingTenants(null);
         setHasNoTenants(false);
         AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, t);
         setTenantResolved(true);
+        console.log('[AUTH] Tenant auto-select resolved:', Date.now() - startedAt, 'ms');
       } else {
         console.log('[AUTH] Multiple tenants require selection:', summarizeTenants(myTenants));
         setPendingTenants(myTenants);
         setHasNoTenants(false);
         setTenantResolved(true);
+        console.log('[AUTH] Tenant auto-select resolved:', Date.now() - startedAt, 'ms');
       }
     };
 
@@ -444,11 +452,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ------------------------------------------------------------------
   const selectTenant = useCallback(
     async (tenant: string) => {
+      const startedAt = Date.now();
       console.log('[AUTH] Selecting tenant:', tenant);
+      const claimStartedAt = Date.now();
       const claimResult = await claimCurrentUserByEmail({ tenantId: tenant }).catch((err) => {
         console.warn('[AUTH] Tenant email claim failed:', err);
         return null;
       });
+      console.log('[AUTH] Tenant email claim finished:', Date.now() - claimStartedAt, 'ms');
       console.log('[AUTH] Tenant email claim result:', claimResult);
       resumeMutationQueueReplay();
       setTenantId(tenant);
@@ -456,6 +467,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setHasNoTenants(false);
       await AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, tenant);
       setTenantResolved(true);
+      console.log('[AUTH] Tenant selection resolved:', Date.now() - startedAt, 'ms');
     },
     [claimCurrentUserByEmail],
   );

@@ -1,16 +1,21 @@
 import React, { useCallback, useRef, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Animated, Easing, ActivityIndicator, type GestureResponderEvent } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { useQuery } from 'convex/react';
+import { createAudioPlayer } from 'expo-audio';
 import { FaIcon } from './FaIcon';
-import { TaskItem, CardDensity } from '../models/types';
+import { TaskItem, CardDensity, TaskCommentVoiceMemo } from '../models/types';
 import { CustomChip } from './CustomChip';
 import { AssigneeAvatars } from './AssigneeAvatars';
 import { statusColor, parseWorkspaceIcon, contrastTextColor, priorityColor } from '../utils/helpers';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
+import { useTenant } from '../hooks/useTenant';
+import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { fontFamilies, radius, shadows } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
+import { api } from '../../../convex/_generated/api';
 
 function hexToRgba(hex: string, alpha: number): string {
   const c = hex.replace('#', '');
@@ -31,6 +36,170 @@ const FLAG_HEX: Record<string, string> = {
 };
 
 const MAX_VISIBLE_TAGS = 3;
+
+const TaskCardVoiceMemoPreview: React.FC<{
+  voiceMemo: TaskCommentVoiceMemo;
+  taskId?: string | null;
+  accentColor: string;
+  isDarkMode: boolean;
+}> = React.memo(({ voiceMemo, taskId, accentColor, isDarkMode }) => {
+  const { tenantId } = useTenant();
+  const url = useQuery(
+    api.files.getFileUrl,
+    tenantId ? { tenantId, storageId: voiceMemo.storageId as any } : 'skip',
+  );
+  const markVoiceMemoListened = useOfflineMutation(api.taskResources.markVoiceMemoListened, 'taskResources.markVoiceMemoListened');
+  const playerRef = useRef<ReturnType<typeof createAudioPlayer> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const playbackStartRequestedAtRef = useRef<number | null>(null);
+  const playbackStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isPlaying, setIsPlaying] = React.useState(false);
+  const [hasListened, setHasListened] = React.useState(voiceMemo.listened === true);
+
+  const clearPlaybackStartup = useCallback(() => {
+    playbackStartRequestedAtRef.current = null;
+    if (playbackStartTimerRef.current) {
+      clearTimeout(playbackStartTimerRef.current);
+      playbackStartTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    setHasListened(voiceMemo.listened === true);
+  }, [voiceMemo.listened, voiceMemo.storageId]);
+
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (playbackStartTimerRef.current) clearTimeout(playbackStartTimerRef.current);
+      playerRef.current?.pause();
+      playerRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!playerRef.current) return;
+    playerRef.current.pause();
+    playerRef.current = null;
+    clearPlaybackStartup();
+    setIsPlaying(false);
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, [clearPlaybackStartup, url]);
+
+  const togglePlayback = useCallback(async (event: GestureResponderEvent) => {
+    event.stopPropagation();
+    if (!url) return;
+
+    if (!playerRef.current) {
+      playerRef.current = createAudioPlayer({ uri: url }, { updateInterval: 100 });
+      playerRef.current.loop = false;
+      intervalRef.current = setInterval(() => {
+        const player = playerRef.current;
+        if (!player) return;
+        const requestedAt = playbackStartRequestedAtRef.current;
+        const isStarting = requestedAt != null;
+        const currentTime = player.currentTime || 0;
+
+        if (player.playing || (isStarting && currentTime > 0.03)) {
+          clearPlaybackStartup();
+          setIsPlaying(true);
+        } else if (isStarting && Date.now() - requestedAt < 1200) {
+          setIsPlaying(true);
+        } else {
+          clearPlaybackStartup();
+          setIsPlaying(false);
+        }
+
+        if (player.duration > 0 && currentTime >= player.duration - 0.05 && !isStarting) {
+          player.pause();
+          setIsPlaying(false);
+        }
+      }, 100);
+    }
+
+    const player = playerRef.current;
+    if (player.playing || playbackStartRequestedAtRef.current != null) {
+      player.pause();
+      clearPlaybackStartup();
+      setIsPlaying(false);
+      return;
+    }
+    if (player.duration > 0 && player.currentTime >= player.duration - 0.05) {
+      await player.seekTo(0);
+    }
+    playbackStartRequestedAtRef.current = Date.now();
+    if (playbackStartTimerRef.current) clearTimeout(playbackStartTimerRef.current);
+    playbackStartTimerRef.current = setTimeout(() => {
+      clearPlaybackStartup();
+    }, 1200);
+    player.play();
+    setIsPlaying(true);
+    if (!hasListened && tenantId && taskId) {
+      setHasListened(true);
+      markVoiceMemoListened({ tenantId, taskId: taskId as any, storageId: voiceMemo.storageId as any }).catch(() => {
+        setHasListened(false);
+      });
+    }
+  }, [clearPlaybackStartup, hasListened, markVoiceMemoListened, taskId, tenantId, url, voiceMemo.storageId]);
+
+  const activeBarOpacity = isPlaying ? 0.95 : hasListened ? 0.34 : 0.74;
+  const previewBackgroundColor = hasListened
+    ? (isDarkMode ? 'rgba(52, 211, 153, 0.06)' : 'rgba(22, 163, 74, 0.05)')
+    : (isDarkMode ? 'rgba(52, 211, 153, 0.18)' : 'rgba(22, 163, 74, 0.14)');
+
+  return (
+    <Pressable
+      onPress={togglePlayback}
+      onPressIn={(event) => event.stopPropagation()}
+      onPressOut={(event) => event.stopPropagation()}
+      style={[
+        styles.voiceMemoPreview,
+        { backgroundColor: previewBackgroundColor },
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={isPlaying ? 'Pause voice memo' : 'Play voice memo'}
+    >
+      <View
+        style={[styles.voiceMemoPlayButton, { backgroundColor: accentColor }]}
+      >
+        {url ? (
+          <MaterialIcons name={isPlaying ? 'pause' : 'play-arrow'} size={14} color="#FFFFFF" />
+        ) : (
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        )}
+        {!hasListened && (
+          <View
+            style={[
+              styles.voiceMemoUnreadDot,
+              {
+                backgroundColor: isDarkMode ? '#60A5FA' : '#2563EB',
+                borderColor: isDarkMode ? '#111827' : '#FFFFFF',
+              },
+            ]}
+          />
+        )}
+      </View>
+      <View style={styles.voiceMemoBars}>
+        {Array.from({ length: 32 }).map((_, index) => (
+          <View
+            key={index}
+            style={[
+              styles.voiceMemoBar,
+              {
+                height: 5 + ((index * 5) % 13),
+                backgroundColor: accentColor,
+                opacity: activeBarOpacity,
+              },
+            ]}
+          />
+        ))}
+      </View>
+    </Pressable>
+  );
+});
 
 /** Continuously rotating spinner for "in-progress" status badges */
 const SpinnerIcon: React.FC<{ color: string; size?: number }> = React.memo(({ color, size = 12 }) => {
@@ -99,6 +268,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const hasSeen = isCreator && task.firstViewedAt != null;
   const commentCount = task.commentCount ?? 0;
   const lastCommentText = task.lastCommentText?.trim() ?? '';
+  const hasUnreadComment = task.lastCommentUnread === true;
   const commentAccent = isDarkMode ? '#34D399' : '#16A34A';
   const commentBadgeBg = isDarkMode ? 'rgba(52, 211, 153, 0.14)' : 'rgba(22, 163, 74, 0.12)';
   const approvalState = task.approvalStatus === 'pending'
@@ -298,16 +468,35 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
 
       {effectiveDensity === 'detailed' && (
         <View style={styles.commentPreviewRow}>
-          <View style={[styles.commentBadge, { backgroundColor: commentBadgeBg }]}>
-            <MaterialCommunityIcons name="comment-outline" size={13} color={commentAccent} />
-            <Text style={[styles.commentCountText, { color: commentAccent }]}>
+          <View style={[styles.commentBadge, { backgroundColor: hasUnreadComment ? (isDarkMode ? 'rgba(52, 211, 153, 0.22)' : 'rgba(22, 163, 74, 0.16)') : commentBadgeBg }]}> 
+            <MaterialCommunityIcons name={hasUnreadComment ? 'comment-alert-outline' : 'comment-outline'} size={13} color={commentAccent} />
+            <Text style={[styles.commentCountText, { color: commentAccent, fontFamily: hasUnreadComment ? fontFamilies.bodyBold : fontFamilies.bodySemibold }]}> 
               {commentCount}
             </Text>
+            {hasUnreadComment && <View style={[styles.unreadDot, { backgroundColor: commentAccent }]} />}
           </View>
           {!!lastCommentText && (
-            <Text style={[styles.lastCommentText, { color: colors.text }]} numberOfLines={1} ellipsizeMode="tail">
+            <Text
+              style={[
+                styles.lastCommentText,
+                {
+                  color: hasUnreadComment ? colors.text : tertiaryText,
+                  fontFamily: hasUnreadComment ? fontFamilies.bodyBold : fontFamilies.bodySemibold,
+                },
+              ]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
               {lastCommentText}
             </Text>
+          )}
+          {!lastCommentText && task.lastCommentVoiceMemo && (
+            <TaskCardVoiceMemoPreview
+              voiceMemo={task.lastCommentVoiceMemo}
+              taskId={task.convexId ?? task.taskConvexId ?? null}
+              accentColor={commentAccent}
+              isDarkMode={isDarkMode}
+            />
           )}
         </View>
       )}
@@ -436,6 +625,50 @@ const styles = StyleSheet.create({
     minWidth: 0,
     fontSize: 12.5,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  voiceMemoPreview: {
+    flex: 1,
+    minWidth: 0,
+    height: 28,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 4,
+    paddingRight: 8,
+    gap: 7,
+  },
+  voiceMemoPlayButton: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  voiceMemoUnreadDot: {
+    position: 'absolute',
+    right: -3,
+    top: -3,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+  },
+  voiceMemoBars: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  voiceMemoBar: {
+    width: 2,
+    borderRadius: 1,
+  },
+  unreadDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
   },
   metaRow: {
     flexDirection: 'row',

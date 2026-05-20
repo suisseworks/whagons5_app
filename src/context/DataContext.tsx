@@ -22,6 +22,7 @@ import { usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useNetwork } from './NetworkContext';
+import { useAuth } from './AuthContext';
 import * as DB from '../store/database';
 
 // ---------------------------------------------------------------------------
@@ -804,8 +805,10 @@ async function loadFromSqlite<T = any>(table: string): Promise<T[]> {
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const { tenantId } = useTenant();
+  const { token } = useAuth();
   const { isOnline } = useNetwork();
-  const skipArgs = !tenantId ? 'skip' as const : undefined;
+  const activeTenantId = token ? tenantId : null;
+  const skipArgs = !activeTenantId ? 'skip' as const : undefined;
   const [taskQuery, setTaskQueryState] = useState<TaskQueryOptions>({ mode: 'hot' });
   const taskStatusIdsKey = (taskQuery.statusIds ?? []).join('|');
 
@@ -832,14 +835,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Hydrate from SQLite on mount / tenant change
   useEffect(() => {
-    if (!tenantId) {
+    if (!activeTenantId) {
       setCachedData(null);
       setCacheLoaded(true);
       return;
     }
     // Only hydrate once per tenant
-    if (hydrationTenantRef.current === tenantId) return;
-    hydrationTenantRef.current = tenantId;
+    if (hydrationTenantRef.current === activeTenantId) return;
+    hydrationTenantRef.current = activeTenantId;
 
     let cancelled = false;
     (async () => {
@@ -867,30 +870,30 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
     })();
     return () => { cancelled = true; };
-  }, [tenantId]);
+  }, [activeTenantId]);
 
   // Reference data (bulk query)
   const refData = useQuery(
     api.bulk.allReferenceData,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   const taskQueryArgs = useMemo(() => {
-    if (!tenantId) return 'skip' as const;
+    if (!activeTenantId) return 'skip' as const;
     return {
-      tenantId,
+      tenantId: activeTenantId,
       mode: taskQuery.mode ?? 'hot',
       ...(taskQuery.workspaceId ? { workspaceId: taskQuery.workspaceId } : {}),
       ...(taskQuery.statusIds && taskQuery.statusIds.length > 0 ? { statusIds: taskQuery.statusIds } : {}),
     };
-  }, [tenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
+  }, [activeTenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
 
   const taskQueryKey = useMemo(() => JSON.stringify({
-    tenantId: tenantId ?? null,
+    tenantId: activeTenantId ?? null,
     mode: taskQuery.mode ?? 'hot',
     workspaceId: taskQuery.workspaceId ?? null,
     statusIds: taskQuery.statusIds ?? [],
-  }), [tenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
+  }), [activeTenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
 
   const taskRowsByQueryRef = useRef<Map<string, any[]>>(new Map());
   const lastTaskRowsRef = useRef<any[] | undefined>(undefined);
@@ -926,68 +929,68 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // Pivot data (taskUsers, taskTags)
   const pivotData = useQuery(
     api.bulk.taskPivotData,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // Chat data
   const rawConversations = useQuery(
     api.chat.listConversations,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // Chat sub-data
   const rawParticipants = useQuery(
     api.chat.listAllParticipants,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
   const rawDirectMessages = useQuery(
     api.chat.listAllMessages,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
   const rawReactions = useQuery(
     api.chat.listAllReactions,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
   const rawLinkPreviews = useQuery(
     api.chat.listAllLinkPreviews,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // Boards
   const rawBoards = useQuery(
     api.boards.list,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
   const rawBoardMembers = useQuery(
     api.boards.listAllMembers,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
   const rawBoardMessages = useQuery(
     api.boards.listAllMessages,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // KPI Cards
   const rawKpiCards = useQuery(
     api.analytics.listKpiCards,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // Plugins (powerups)
   const rawPlugins = useQuery(
     api.settings.listPlugins,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // Shared tasks
   const rawSharedToMe = useQuery(
     api.taskResources.listSharedToMe,
-    skipArgs ?? { tenantId: tenantId! },
+    skipArgs ?? { tenantId: activeTenantId! },
   );
 
   // Build the SyncedData object by mapping Convex docs → legacy shape
   const data: SyncedData = useMemo(() => {
-    if (!tenantId) return EMPTY_DATA;
+    if (!activeTenantId) return EMPTY_DATA;
 
     // Build FK lookup maps so FK fields resolve from Convex _id → pgId
     const fk: FkLookups = {
@@ -1071,7 +1074,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         is_enabled: p.isEnabled ?? p.is_enabled ?? false,
       })) : EMPTY,
     };
-  }, [tenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards, rawPlugins]);
+  }, [activeTenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards, rawPlugins]);
 
   const sharedTaskIds = useMemo(() => {
     const ids = new Set<number | string>();
@@ -1114,7 +1117,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
   const prevDataRef = useRef<SyncedData | null>(null);
   useEffect(() => {
-    if (!tenantId) return;
+    if (!activeTenantId) return;
     const convexReady = refData !== undefined && rawTasks !== undefined;
     if (!convexReady) return;
     if (prevDataRef.current === data) return;
@@ -1137,7 +1140,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     DB.setMeta('last_sync_ts', String(Date.now())).catch(() => {});
-  }, [data, tenantId, refData, rawTasks]);
+  }, [data, activeTenantId, refData, rawTasks]);
 
   // ---------------------------------------------------------------------------
   // Determine loading / sync state
@@ -1146,25 +1149,25 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const hasCachedData = cachedData !== null;
 
   // We're "loading" only if Convex hasn't arrived AND we have no cached data
-  const isLoading = !!tenantId && !convexReady && !hasCachedData;
-  const hasEverSynced = !!tenantId && (convexReady || hasCachedData);
+  const isLoading = !!activeTenantId && !convexReady && !hasCachedData;
+  const hasEverSynced = !!activeTenantId && (convexReady || hasCachedData);
 
   // Use Convex data when available, else fall back to SQLite cache
   const effectiveData = convexReady ? data : (cachedData ?? data);
 
   const syncError = (!isOnline && !convexReady) ? 'No internet connection' : null;
-  const isSyncing = !!tenantId && !convexReady && isOnline;
+  const isSyncing = !!activeTenantId && !convexReady && isOnline;
 
   // refresh / forceResync are no-ops with Convex (data is always live)
   const refresh = useCallback(async () => {}, []);
   const forceResync = useCallback(async () => {
-    if (!tenantId) return;
+    if (!activeTenantId) return;
     try {
       await DB.clearAllData();
       setCachedData(null);
       hydrationTenantRef.current = null;
     } catch {}
-  }, [tenantId]);
+  }, [activeTenantId]);
 
   const contextValue = useMemo(() => ({
     data: effectiveData,

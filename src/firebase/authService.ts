@@ -39,7 +39,9 @@ import type { FirebaseAuthTypes } from '@react-native-firebase/auth';
 // ---------------------------------------------------------------------------
 GoogleSignin.configure({
   webClientId: '578623964983-iall0oeq2r2mke7trpqqv3pjingqljh0.apps.googleusercontent.com',
-  offlineAccess: true,
+  // Firebase only needs the Google ID token. Requesting offline access asks
+  // Google for a server auth code too, which adds unnecessary latency here.
+  offlineAccess: false,
 });
 
 // Modular auth instance
@@ -66,11 +68,18 @@ function generateNonce(length = 32): string {
  * Returns the Firebase UserCredential.
  */
 export async function signInWithGoogle(): Promise<FirebaseAuthTypes.UserCredential> {
+  const startedAt = Date.now();
+  console.log('[AuthService] Google sign-in start');
+
   // Check Play Services
+  const playServicesStartedAt = Date.now();
   await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+  console.log('[AuthService] Google Play Services checked:', Date.now() - playServicesStartedAt, 'ms');
 
   // Sign in and get the idToken
+  const nativeSignInStartedAt = Date.now();
   const signInResult = await GoogleSignin.signIn();
+  console.log('[AuthService] Google native sign-in returned:', Date.now() - nativeSignInStartedAt, 'ms');
   const idToken = signInResult?.data?.idToken;
 
   if (!idToken) {
@@ -81,7 +90,11 @@ export async function signInWithGoogle(): Promise<FirebaseAuthTypes.UserCredenti
   const googleCredential = GoogleAuthProvider.credential(idToken);
 
   // Sign in to Firebase with the Google credential (modular API)
-  return signInWithCredential(auth, googleCredential);
+  const firebaseSignInStartedAt = Date.now();
+  const userCredential = await signInWithCredential(auth, googleCredential);
+  console.log('[AuthService] Firebase Google credential accepted:', Date.now() - firebaseSignInStartedAt, 'ms');
+  console.log('[AuthService] Google sign-in complete:', Date.now() - startedAt, 'ms');
+  return userCredential;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,14 +190,12 @@ export async function sendPasswordReset(email: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Sign out of both Firebase and Google (if applicable).
+ * Sign out of Firebase app auth.
+ *
+ * Keep the Google SDK session warm so the next Google login can reuse the
+ * device account session instead of paying the full native re-auth cost again.
  */
 export async function firebaseSignOut(): Promise<void> {
-  try {
-    await GoogleSignin.signOut();
-  } catch {
-    // Google sign-out may fail if user didn't sign in with Google -- that's OK.
-  }
   await firebaseAuthSignOut(auth);
 }
 

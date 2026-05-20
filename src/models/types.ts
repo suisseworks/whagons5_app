@@ -11,6 +11,14 @@ export interface Assignee {
   picture?: string | null;
 }
 
+export interface TaskCommentVoiceMemo {
+  storageId: string;
+  fileName: string;
+  fileType: string;
+  fileSize: number;
+  listened?: boolean;
+}
+
 export interface TaskItem {
   id?: string;
   /** Convex document _id (needed for Convex queries like notes, logs, etc.) */
@@ -39,6 +47,8 @@ export interface TaskItem {
   sla?: string | null;
   /** Form ID linked via task's template (null if no form) */
   formId?: string | number | null;
+  /** Template ID used to create this task (null for ad-hoc tasks) */
+  templateId?: string | number | null;
   /** Name of the form linked to this task */
   formName?: string | null;
   /** Per-user flag color (null = not flagged) */
@@ -72,6 +82,10 @@ export interface TaskItem {
   commentCount?: number;
   /** Text from the latest comment/note, if present */
   lastCommentText?: string | null;
+  /** Voice memo from the latest comment/note, if present */
+  lastCommentVoiceMemo?: TaskCommentVoiceMemo | null;
+  /** Whether the latest comment/note is newer than the current user's last task detail view */
+  lastCommentUnread?: boolean;
 }
 
 // Notification item model

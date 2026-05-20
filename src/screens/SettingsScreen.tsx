@@ -35,6 +35,7 @@ import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
 import { themeMetadata } from '../config/themes';
+import { HIDE_SHARED_WITH_ME_STORAGE_KEY } from '../config/storageKeys';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { sendPasswordReset } from '../firebase/authService';
 
@@ -109,16 +110,26 @@ export const SettingsScreen: React.FC = () => {
   const [appDetailsModalVisible, setAppDetailsModalVisible] = useState(false);
   const [releaseNotesModalVisible, setReleaseNotesModalVisible] = useState(false);
   const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(true);
+  const [hideSharedWithMe, setHideSharedWithMe] = useState(false);
 
   useEffect(() => {
-    AsyncStorage.getItem(GPS_CAPTURE_STORAGE_KEY).then((val) => {
-      if (val !== null) setGpsCaptureEnabled(val === 'true');
+    AsyncStorage.multiGet([GPS_CAPTURE_STORAGE_KEY, HIDE_SHARED_WITH_ME_STORAGE_KEY]).then((entries) => {
+      const gpsCaptureValue = entries.find(([key]) => key === GPS_CAPTURE_STORAGE_KEY)?.[1];
+      const hideSharedValue = entries.find(([key]) => key === HIDE_SHARED_WITH_ME_STORAGE_KEY)?.[1];
+
+      if (gpsCaptureValue !== null && gpsCaptureValue !== undefined) setGpsCaptureEnabled(gpsCaptureValue === 'true');
+      if (hideSharedValue !== null && hideSharedValue !== undefined) setHideSharedWithMe(hideSharedValue === 'true');
     });
   }, []);
 
   const handleGpsToggle = (val: boolean) => {
     setGpsCaptureEnabled(val);
     AsyncStorage.setItem(GPS_CAPTURE_STORAGE_KEY, String(val));
+  };
+
+  const handleHideSharedWithMeToggle = (val: boolean) => {
+    setHideSharedWithMe(val);
+    AsyncStorage.setItem(HIDE_SHARED_WITH_ME_STORAGE_KEY, String(val));
   };
 
   const cardStyle = [
@@ -479,6 +490,18 @@ export const SettingsScreen: React.FC = () => {
             subtitle: t('settings.captureGpsLocationSubtitle'),
             value: gpsCaptureEnabled,
             onValueChange: handleGpsToggle,
+          })}
+        </View>
+
+        {/* Workspaces Section */}
+        <SectionHeader title={t('settings.sectionWorkspaces')} />
+        <View style={cardStyle}>
+          {renderSwitchTile({
+            icon: 'inbox',
+            title: t('settings.hideSharedWithMe'),
+            subtitle: t('settings.hideSharedWithMeSubtitle'),
+            value: hideSharedWithMe,
+            onValueChange: handleHideSharedWithMeToggle,
           })}
         </View>
 

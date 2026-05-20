@@ -19,6 +19,7 @@ import {
   onTokenRefresh,
   registerDeviceForRemoteMessages,
   requestPermission as requestMessagingPermission,
+  setBackgroundMessageHandler,
 } from '@react-native-firebase/messaging';
 import notifee, {
   AndroidImportance,
@@ -297,7 +298,7 @@ export function setupForegroundMessageHandler(): () => void {
  */
 export function registerBackgroundMessageHandler(): void {
   const messaging = getMessaging(getApp());
-  messaging.setBackgroundMessageHandler(async (remoteMessage) => {
+  setBackgroundMessageHandler(messaging, async (remoteMessage) => {
     console.log('[Notifications] Background message:', JSON.stringify(remoteMessage.data));
 
     // Background messages on Android are automatically displayed by FCM

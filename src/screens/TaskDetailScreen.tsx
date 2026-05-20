@@ -36,6 +36,7 @@ import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { usePermission } from '../hooks/usePermissions';
 import { useTasks, StatusOption } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
@@ -217,6 +218,28 @@ interface TaskSignatureRecord {
   signedAt?: number;
 }
 
+interface TaskHistoryRecord {
+  _id: string;
+  _creationTime?: number;
+  pgId?: number;
+  name?: string;
+  description?: string | null;
+  workspaceId?: string;
+  categoryId?: string;
+  templateId?: string;
+  formId?: string;
+  spotId?: string;
+  statusId?: string;
+  priorityId?: string;
+  createdBy?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  completedAt?: number;
+  latitude?: number;
+  longitude?: number;
+  requiresSignature?: boolean;
+}
+
 function fixConvexStorageUrl(url: string): string {
   const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
   if (!convexUrl) return url;
@@ -241,13 +264,15 @@ function fixConvexStorageUrl(url: string): string {
 
 const NoteAttachmentView: React.FC<{
   attachment: NoteAttachmentData;
+  taskId?: string | null;
   colors: any;
   isDarkMode: boolean;
   isMe: boolean;
   onImagePress?: (uri: string) => void;
   primaryColor: string;
-}> = ({ attachment, colors, isDarkMode, isMe, onImagePress, primaryColor }) => {
+}> = ({ attachment, taskId, colors, isDarkMode, isMe, onImagePress, primaryColor }) => {
   const { tenantId } = useTenant();
+  const markVoiceMemoListened = useOfflineMutation(api.taskResources.markVoiceMemoListened, 'taskResources.markVoiceMemoListened');
   const rawUrl = useQuery(
     api.files.getFileUrl,
     tenantId
@@ -258,6 +283,11 @@ const NoteAttachmentView: React.FC<{
   const isImage = attachment.fileType.startsWith('image/');
   const isVideo = attachment.fileType.startsWith('video/');
   const isAudio = attachment.fileType.startsWith('audio/') || /\.(m4a|mp3|aac|wav|caf|ogg|oga|webm)$/i.test(attachment.fileName) || attachment.fileName.toLowerCase().includes('voice memo');
+
+  const handleVoiceMemoPlaybackStart = useCallback(() => {
+    if (!tenantId || !taskId || !attachment.storageId) return;
+    markVoiceMemoListened({ tenantId, taskId: taskId as any, storageId: attachment.storageId as any }).catch(() => {});
+  }, [attachment.storageId, markVoiceMemoListened, taskId, tenantId]);
 
   const handleFilePress = useCallback(() => {
     if (!url) return;
@@ -287,6 +317,7 @@ const NoteAttachmentView: React.FC<{
           incomingBackgroundColor={isDarkMode ? 'rgba(31, 36, 34, 0.8)' : '#FFFFFF'}
           incomingTextColor={colors.textSecondary}
           timeLabel=""
+          onPlaybackStart={handleVoiceMemoPlaybackStart}
         />
       </View>
     );
@@ -437,6 +468,25 @@ function formatViewedAt(dateStr: string): string {
   })}`;
 }
 
+function taskHistoryTimestamp(task: TaskHistoryRecord): number | null {
+  const timestamp = task.createdAt ?? task._creationTime ?? null;
+  return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function formatTaskHistoryDate(timestamp: number | null): string {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })} ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+}
+
+function plainTaskHistoryText(value?: string | null): string {
+  return String(value ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function buildTaskShareUrl(token: string, tenantSubdomain?: string | null): string | null {
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim() || null;
   const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim() || null;
@@ -516,6 +566,7 @@ export const TaskDetailScreen: React.FC = () => {
   } = useTasks();
   const { user: authUser, subdomain: authSubdomain } = useAuth();
   const { tenantId } = useTenant();
+  const canAssignTasks = usePermission('assign-tasks');
   const { data } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const secondarySurface = isDarkMode ? '#242424' : '#F5F5F7';
@@ -545,6 +596,28 @@ export const TaskDetailScreen: React.FC = () => {
     }
     return map;
   }, [data.users]);
+
+  const statusInfoByAnyId = useMemo(() => {
+    const map = new Map<string, { name: string; color: string | null }>();
+    for (const status of data.statuses as any[]) {
+      const info = { name: String(status.name ?? ''), color: status.color ?? null };
+      for (const id of [status.id, status.pgId, status._id]) {
+        if (id != null) map.set(String(id), info);
+      }
+    }
+    return map;
+  }, [data.statuses]);
+
+  const priorityInfoByAnyId = useMemo(() => {
+    const map = new Map<string, { name: string; color: string | null }>();
+    for (const priority of data.priorities as any[]) {
+      const info = { name: String(priority.name ?? 'Medium'), color: priority.color ?? null };
+      for (const id of [priority.id, priority.pgId, priority._id]) {
+        if (id != null) map.set(String(id), info);
+      }
+    }
+    return map;
+  }, [data.priorities]);
 
   const taskCreator = useMemo(() => {
     if (task.createdBy == null) return null;
@@ -616,6 +689,7 @@ export const TaskDetailScreen: React.FC = () => {
   const [currentPriorityColor, setCurrentPriorityColor] = useState(task.priorityColor ?? null);
   const [currentPriorityId, setCurrentPriorityId] = useState(task.priorityId ?? null);
   const [taskActionsVisible, setTaskActionsVisible] = useState(false);
+  const [taskHistoryExpanded, setTaskHistoryExpanded] = useState(false);
   const [signatureVisible, setSignatureVisible] = useState(false);
   const [pendingStatusAfterSignature, setPendingStatusAfterSignature] = useState<StatusOption | null>(null);
 
@@ -724,12 +798,19 @@ export const TaskDetailScreen: React.FC = () => {
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
+  const shouldLoadTaskHistory = Boolean(tenantId && hasValidConvexId && task.spotId);
   const taskDocumentAssociations = useQuery(
     api.documents.listAssociationsByEntity,
     tenantId && taskDocumentAssociableId
       ? { tenantId, associableType: 'task', associableId: taskDocumentAssociableId }
       : 'skip'
   ) as TaskDocumentAssociation[] | undefined;
+  const taskHistory = useQuery(
+    api.taskResources.listTaskHistory,
+    shouldLoadTaskHistory ? { tenantId: tenantId!, taskId: convexTaskId as any } : 'skip',
+  ) as TaskHistoryRecord[] | undefined;
+  const taskHistoryForDisplay = taskHistory ?? [];
+  const hasTaskHistory = taskHistoryForDisplay.length > 0;
   const rawNotes = useQuery(
     api.taskResources.listTaskNotes,
     tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
@@ -1177,6 +1258,12 @@ export const TaskDetailScreen: React.FC = () => {
     setDraftAssigneeIds(Array.from(assignedUserIds));
   }, [assigneePickerVisible, assignedUserIds]);
 
+  useEffect(() => {
+    if (canAssignTasks) return;
+    setAssigneePickerVisible(false);
+    setDraftAssigneeIds(Array.from(assignedUserIds));
+  }, [canAssignTasks, assignedUserIds]);
+
   const seenTaskIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (!tenantId || !Number.isFinite(taskPgId) || taskPgId <= 0) return;
@@ -1268,15 +1355,20 @@ export const TaskDetailScreen: React.FC = () => {
   }, [savingAssignees]);
 
   const handleAssigneeToggle = useCallback((userId: number | string) => {
+    if (!canAssignTasks) return;
     const nextId = String(userId);
     setDraftAssigneeIds((prev) => (
       prev.includes(nextId)
         ? prev.filter((id) => id !== nextId)
         : [...prev, nextId]
     ));
-  }, []);
+  }, [canAssignTasks]);
 
   const handleSaveAssignees = useCallback(async () => {
+    if (!canAssignTasks) {
+      closeAssigneePicker();
+      return;
+    }
     if (!tenantId || !convexTaskId) {
       toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCannotUpdateAssignees') });
       return;
@@ -1320,7 +1412,7 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       setSavingAssignees(false);
     }
-  }, [tenantId, convexTaskId, draftAssigneeIds, assignedUserIds, data.users, assignUserMutation, assignmentRowsByUserId, unassignUserMutation, closeAssigneePicker, t]);
+  }, [canAssignTasks, tenantId, convexTaskId, draftAssigneeIds, assignedUserIds, data.users, assignUserMutation, assignmentRowsByUserId, unassignUserMutation, closeAssigneePicker, t]);
 
   const handleAddComment = async () => {
     const text = commentText.trim();
@@ -1638,6 +1730,42 @@ export const TaskDetailScreen: React.FC = () => {
   const { width: windowWidth } = useWindowDimensions();
   const descriptionContentWidth = windowWidth - spacing.md * 2;
 
+  const buildTaskItemFromHistory = useCallback((historyTask: TaskHistoryRecord): TaskItem => {
+    const statusInfo = historyTask.statusId ? statusInfoByAnyId.get(String(historyTask.statusId)) : undefined;
+    const priorityInfo = historyTask.priorityId ? priorityInfoByAnyId.get(String(historyTask.priorityId)) : undefined;
+    const timestamp = taskHistoryTimestamp(historyTask);
+
+    return {
+      id: String(historyTask.pgId ?? historyTask._id),
+      convexId: String(historyTask._id),
+      title: historyTask.name || 'Untitled',
+      description: historyTask.description ?? null,
+      spot: task.spot,
+      spotId: historyTask.spotId ?? task.spotId ?? null,
+      priority: priorityInfo?.name ?? 'Medium',
+      priorityColor: priorityInfo?.color ?? null,
+      priorityId: historyTask.priorityId ?? null,
+      status: statusInfo?.name ?? '',
+      statusColor: statusInfo?.color ?? null,
+      statusId: historyTask.statusId ?? null,
+      categoryId: historyTask.categoryId ?? null,
+      workspaceId: historyTask.workspaceId ?? null,
+      assignees: [],
+      createdAt: formatTaskHistoryDate(timestamp),
+      tags: [],
+      templateId: historyTask.templateId ?? null,
+      formId: historyTask.formId ?? null,
+      createdBy: historyTask.createdBy ?? null,
+      latitude: historyTask.latitude ?? null,
+      longitude: historyTask.longitude ?? null,
+      requiresSignature: historyTask.requiresSignature === true,
+    };
+  }, [priorityInfoByAnyId, statusInfoByAnyId, task.spot, task.spotId]);
+
+  const openHistoryTask = useCallback((historyTask: TaskHistoryRecord) => {
+    (navigation as any).push('TaskDetail', { task: buildTaskItemFromHistory(historyTask) });
+  }, [buildTaskItemFromHistory, navigation]);
+
   const renderDetailsTab = () => (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
       {/* Title row: task name + flag + #id inline */}
@@ -1845,13 +1973,15 @@ export const TaskDetailScreen: React.FC = () => {
       {/* Assignees section */}
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <Text style={[styles.sectionLabel, { color: tertiaryText }]}>{t('taskDetail.assigneesLabel')}</Text>
-        <TouchableOpacity
-          onPress={() => setAssigneePickerVisible(true)}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons name="person-add" size={20} color={primaryColor} />
-        </TouchableOpacity>
+        {canAssignTasks && (
+          <TouchableOpacity
+            onPress={() => setAssigneePickerVisible(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name="person-add" size={20} color={primaryColor} />
+          </TouchableOpacity>
+        )}
       </View>
       {displayAssignees.length > 0 ? (
         <View style={styles.assigneeList}>
@@ -1870,13 +2000,13 @@ export const TaskDetailScreen: React.FC = () => {
             </View>
           ))}
         </View>
-      ) : (
+      ) : canAssignTasks ? (
         <TouchableOpacity onPress={() => setAssigneePickerVisible(true)} activeOpacity={0.7}>
           <View style={[styles.assigneeEmpty, { borderColor: isDarkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
             <Text style={[styles.assigneeEmptyText, { color: tertiaryText }]}>{t('taskDetail.tapToAssign')}</Text>
           </View>
         </TouchableOpacity>
-      )}
+      ) : null}
 
       {/* Tags */}
       {task.tags.length > 0 && (
@@ -2064,6 +2194,90 @@ export const TaskDetailScreen: React.FC = () => {
             </View>
           </TouchableOpacity>
         </>
+      )}
+
+      {hasTaskHistory && (
+        <View style={styles.historySection}>
+          <TouchableOpacity
+            style={[styles.historyHeader, { backgroundColor: secondarySurface }]}
+            activeOpacity={0.75}
+            onPress={() => setTaskHistoryExpanded((expanded) => !expanded)}
+          >
+            <View style={[styles.historyHeaderIcon, { backgroundColor: `${primaryColor}18` }]}> 
+              <MaterialIcons name="history" size={18} color={primaryColor} />
+            </View>
+            <View style={styles.historyHeaderTextWrap}>
+              <Text style={[styles.historyTitle, { color: colors.text }]}>{t('taskDetail.historyTitle')}</Text>
+              <Text style={[styles.historySubtitle, { color: tertiaryText }]}> 
+                {t('taskDetail.historyCount', { count: taskHistoryForDisplay.length })}
+              </Text>
+            </View>
+            <MaterialIcons
+              name={taskHistoryExpanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
+              size={24}
+              color={tertiaryText}
+            />
+          </TouchableOpacity>
+
+          {taskHistoryExpanded && (
+            <View style={[styles.historyBody, { borderColor: cardBorder }]}> 
+              <View style={styles.historyList}>
+                {taskHistoryForDisplay.map((historyTask) => {
+                  const timestamp = taskHistoryTimestamp(historyTask);
+                  const statusInfo = historyTask.statusId ? statusInfoByAnyId.get(String(historyTask.statusId)) : undefined;
+                  const priorityInfo = historyTask.priorityId ? priorityInfoByAnyId.get(String(historyTask.priorityId)) : undefined;
+                  const description = plainTaskHistoryText(historyTask.description);
+
+                  return (
+                    <TouchableOpacity
+                      key={historyTask._id}
+                      style={[styles.historyItem, { backgroundColor: secondarySurface }]}
+                      activeOpacity={0.75}
+                      onPress={() => openHistoryTask(historyTask)}
+                    >
+                      <View style={styles.historyItemTopRow}>
+                        <View style={styles.historyItemTextWrap}>
+                          <Text style={[styles.historyItemTitle, { color: colors.text }]} numberOfLines={2}>
+                            {historyTask.name || 'Untitled'}
+                          </Text>
+                          <Text style={[styles.historyItemMeta, { color: tertiaryText }]} numberOfLines={1}>
+                            {formatTaskHistoryDate(timestamp) || '—'}{historyTask.pgId ? ` · #${historyTask.pgId}` : ''}
+                          </Text>
+                        </View>
+                        <MaterialIcons name="chevron-right" size={20} color={tertiaryText} />
+                      </View>
+
+                      {!!description && (
+                        <Text style={[styles.historyItemDescription, { color: colors.textSecondary }]} numberOfLines={2}>
+                          {description}
+                        </Text>
+                      )}
+
+                      {(statusInfo || priorityInfo) && (
+                        <View style={styles.historyPillRow}>
+                          {statusInfo && (
+                            <View style={[styles.historyPill, { backgroundColor: statusInfo.color ? `${statusInfo.color}22` : (isDarkMode ? 'rgba(255,255,255,0.08)' : '#ECECEC') }]}> 
+                              <Text style={[styles.historyPillText, { color: statusInfo.color || colors.textSecondary }]} numberOfLines={1}>
+                                {statusInfo.name}
+                              </Text>
+                            </View>
+                          )}
+                          {priorityInfo && (
+                            <View style={[styles.historyPill, { backgroundColor: priorityInfo.color ? `${priorityInfo.color}22` : (isDarkMode ? 'rgba(255,255,255,0.08)' : '#ECECEC') }]}> 
+                              <Text style={[styles.historyPillText, { color: priorityInfo.color || colors.textSecondary }]} numberOfLines={1}>
+                                {priorityInfo.name}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        </View>
       )}
     </ScrollView>
   );
@@ -2268,6 +2482,7 @@ export const TaskDetailScreen: React.FC = () => {
                           <NoteAttachmentView
                             key={att.storageId || idx}
                             attachment={att}
+                            taskId={convexTaskId}
                             colors={colors}
                             isDarkMode={isDarkMode}
                             isMe={isMe}
@@ -2773,44 +2988,46 @@ export const TaskDetailScreen: React.FC = () => {
       </Modal>
 
       {/* Assignee Picker Modal */}
-      <UserPickerSheet
-        visible={assigneePickerVisible}
-        title={t('common.assignTo')}
-        users={assigneePickerUsers}
-        selectedIds={new Set(draftAssigneeIds)}
-        onToggleUser={handleAssigneeToggle}
-        onClose={closeAssigneePicker}
-        colors={colors}
-        primaryColor={primaryColor}
-        isDarkMode={isDarkMode}
-        currentUserId={authUser?.id ?? null}
-        currentUserName={authUser?.name ?? null}
-        searchPlaceholder={t('common.searchUsers')}
-        emptyText={t('common.noItemsFound')}
-        youLabel={t('common.you')}
-        footer={(
-          <View style={[styles.assigneePickerFooter, { borderTopColor: cardBorder }]}> 
-            <TouchableOpacity
-              style={[
-                styles.assigneePickerSaveButton,
-                {
-                  backgroundColor: hasAssigneeChanges ? primaryColor : colors.textSecondary,
-                  opacity: savingAssignees ? 0.7 : 1,
-                },
-              ]}
-              onPress={handleSaveAssignees}
-              disabled={savingAssignees}
-              activeOpacity={0.8}
-            >
-              {savingAssignees ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={styles.assigneePickerSaveText}>{t('common.save')}</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        )}
-      />
+      {canAssignTasks && (
+        <UserPickerSheet
+          visible={assigneePickerVisible}
+          title={t('common.assignTo')}
+          users={assigneePickerUsers}
+          selectedIds={new Set(draftAssigneeIds)}
+          onToggleUser={handleAssigneeToggle}
+          onClose={closeAssigneePicker}
+          colors={colors}
+          primaryColor={primaryColor}
+          isDarkMode={isDarkMode}
+          currentUserId={authUser?.id ?? null}
+          currentUserName={authUser?.name ?? null}
+          searchPlaceholder={t('common.searchUsers')}
+          emptyText={t('common.noItemsFound')}
+          youLabel={t('common.you')}
+          footer={(
+            <View style={[styles.assigneePickerFooter, { borderTopColor: cardBorder }]}>
+              <TouchableOpacity
+                style={[
+                  styles.assigneePickerSaveButton,
+                  {
+                    backgroundColor: hasAssigneeChanges ? primaryColor : colors.textSecondary,
+                    opacity: savingAssignees ? 0.7 : 1,
+                  },
+                ]}
+                onPress={handleSaveAssignees}
+                disabled={savingAssignees}
+                activeOpacity={0.8}
+              >
+                {savingAssignees ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.assigneePickerSaveText}>{t('common.save')}</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+        />
+      )}
 
       {/* Full-screen image viewer */}
       <Modal
@@ -3366,6 +3583,114 @@ const styles = StyleSheet.create({
   reportedFromActionText: {
     fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
+  },
+
+  /* ── Task history ── */
+  historySection: {
+    marginTop: 20,
+  },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  historyHeaderIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyHeaderTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  historyTitle: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  historySubtitle: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
+  },
+  historyBody: {
+    borderLeftWidth: 1,
+    marginLeft: 17,
+    paddingLeft: 12,
+    paddingTop: 10,
+  },
+  historyList: {
+    gap: 8,
+  },
+  historyItem: {
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  historyItemTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  historyItemTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  historyItemTitle: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+    lineHeight: 18,
+  },
+  historyItemMeta: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 3,
+  },
+  historyItemDescription: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+    lineHeight: 17,
+    marginTop: 8,
+  },
+  historyPillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 9,
+  },
+  historyPill: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  historyPillText: {
+    fontSize: 10.5,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  historyStateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  historyEmptyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 0.5,
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  historyStateText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
   },
 
   /* ── Signature ── */

@@ -29,6 +29,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTenant } from '../hooks/useTenant';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useConvexUpload, ConvexAttachment } from '../hooks/useConvexUpload';
+import { usePermission } from '../hooks/usePermissions';
 import { AttachmentPickerSheet } from '../components/AttachmentPickerSheet';
 import { FaIcon } from '../components/FaIcon';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
@@ -206,6 +207,7 @@ export const CreateTaskScreen: React.FC = () => {
   const { user } = useAuth();
   const { tenantId } = useTenant();
   const { t } = useLanguage();
+  const canAssignTasks = usePermission('assign-tasks');
   const { pickImages, takePhoto, pickDocuments, uploadFile } = useConvexUpload();
   const createDocumentMutation = useMutation(api.documents.create);
   const createDocumentAssociationMutation = useOfflineMutation(api.documents.createAssociation, 'documents.createAssociation');
@@ -503,6 +505,12 @@ export const CreateTaskScreen: React.FC = () => {
   const selectedAssigneeIds = useMemo(() => new Set(selectedAssignees.map(a => a._id)), [selectedAssignees]);
   const selectedTagIds = useMemo(() => new Set(selectedTags.map(tg => tg._id)), [selectedTags]);
 
+  useEffect(() => {
+    if (canAssignTasks) return;
+    setSelectedAssignees([]);
+    setAssigneeModalVisible(false);
+  }, [canAssignTasks]);
+
   // ---------------------------------------------------------------------------
   // Workspace selection
   // ---------------------------------------------------------------------------
@@ -686,7 +694,7 @@ export const CreateTaskScreen: React.FC = () => {
         statusConvexId: initialStatusConvexId ?? undefined,
         priorityConvexId: selectedPriorityConvexId ?? undefined,
         spotConvexId: selectedSpot?._id,
-        userConvexIds: selectedAssignees.length > 0 ? selectedAssignees.map(a => a._id) : undefined,
+        userConvexIds: canAssignTasks && selectedAssignees.length > 0 ? selectedAssignees.map(a => a._id) : undefined,
         tagIds: selectedTags.length > 0
           ? selectedTags.map((tag) => {
               const numericTagId = Number(tag._id);
@@ -734,7 +742,7 @@ export const CreateTaskScreen: React.FC = () => {
     taskName, description, workspaceConvexId, createTask, navigation,
     initialStatusConvexId, selectedPriorityConvexId, attachments, hasUploadingFiles,
     workspaceCategories, currentWorkspace, capturedLocation,
-    hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, t,
+    hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, canAssignTasks, t,
     tenantId, createDocumentMutation, createDocumentAssociationMutation,
     selectedTags,
   ]);
@@ -919,50 +927,54 @@ export const CreateTaskScreen: React.FC = () => {
             </>
           )}
 
-          {/* Assign To */}
-          <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.assignToLabel')}</Text>
-          <TouchableOpacity
-            style={[
-              styles.fieldSelector,
-              {
-                borderColor: selectedAssignees.length > 0 ? primaryColor : borderColor,
-                backgroundColor: selectedAssignees.length > 0
-                  ? `${primaryColor}08`
-                  : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
-              },
-            ]}
-            onPress={() => setAssigneeModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <MaterialIcons
-              name="person-add"
-              size={18}
-              color={selectedAssignees.length > 0 ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
-            />
-            <Text
-              style={[
-                styles.fieldSelectorText,
-                selectedAssignees.length > 0
-                  ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
-                  : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
-              ]}
-              numberOfLines={1}
-            >
-              {selectedAssignees.length > 0 ? selectedAssignees.map(a => a.name).join(', ') : t('createTask.selectAssignees')}
-            </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
-          </TouchableOpacity>
-          {selectedAssignees.length > 0 && (
-            <View style={styles.chipsRow}>
-              {selectedAssignees.map((a) => (
-                <View key={a._id} style={[styles.chip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3EEE4' }]}>
-                  <Text style={[styles.chipText, { color: colors.text }]}>{a.name}</Text>
-                  <TouchableOpacity onPress={() => setSelectedAssignees((prev) => prev.filter((x) => x._id !== a._id))} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                    <MaterialIcons name="close" size={14} color={isDarkMode ? 'rgba(255,255,255,0.4)' : '#A8A299'} />
-                  </TouchableOpacity>
+          {canAssignTasks && (
+            <>
+              {/* Assign To */}
+              <Text style={[styles.sectionLabel, { color: isDarkMode ? 'rgba(255,255,255,0.4)' : '#8C8780' }]}>{t('createTask.assignToLabel')}</Text>
+              <TouchableOpacity
+                style={[
+                  styles.fieldSelector,
+                  {
+                    borderColor: selectedAssignees.length > 0 ? primaryColor : borderColor,
+                    backgroundColor: selectedAssignees.length > 0
+                      ? `${primaryColor}08`
+                      : (isDarkMode ? 'rgba(255,255,255,0.04)' : colors.surface),
+                  },
+                ]}
+                onPress={() => setAssigneeModalVisible(true)}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons
+                  name="person-add"
+                  size={18}
+                  color={selectedAssignees.length > 0 ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299')}
+                />
+                <Text
+                  style={[
+                    styles.fieldSelectorText,
+                    selectedAssignees.length > 0
+                      ? { color: colors.text, fontFamily: fontFamilies.bodySemibold }
+                      : { color: isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299', fontFamily: fontFamilies.bodyMedium },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {selectedAssignees.length > 0 ? selectedAssignees.map(a => a.name).join(', ') : t('createTask.selectAssignees')}
+                </Text>
+                <MaterialIcons name="keyboard-arrow-down" size={20} color={isDarkMode ? 'rgba(255,255,255,0.3)' : '#A8A299'} />
+              </TouchableOpacity>
+              {selectedAssignees.length > 0 && (
+                <View style={styles.chipsRow}>
+                  {selectedAssignees.map((a) => (
+                    <View key={a._id} style={[styles.chip, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3EEE4' }]}>
+                      <Text style={[styles.chipText, { color: colors.text }]}>{a.name}</Text>
+                      <TouchableOpacity onPress={() => setSelectedAssignees((prev) => prev.filter((x) => x._id !== a._id))} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <MaterialIcons name="close" size={14} color={isDarkMode ? 'rgba(255,255,255,0.4)' : '#A8A299'} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
+              )}
+            </>
           )}
 
           {/* Priority Selector */}
@@ -1247,22 +1259,24 @@ export const CreateTaskScreen: React.FC = () => {
       />
 
       {/* Assignee Modal (multi-select) */}
-      <UserPickerSheet
-        visible={assigneeModalVisible}
-        title={t('createTask.selectAssigneesModalTitle')}
-        users={assigneePickerUsers}
-        selectedIds={selectedAssigneeIds}
-        onToggleUser={handleToggleAssignee}
-        onClose={() => setAssigneeModalVisible(false)}
-        colors={colors}
-        primaryColor={primaryColor}
-        isDarkMode={isDarkMode}
-        currentUserId={user?.id ?? null}
-        currentUserName={user?.name ?? null}
-        searchPlaceholder={t('common.searchUsers')}
-        emptyText={t('common.noItemsFound')}
-        youLabel={t('common.you')}
-      />
+      {canAssignTasks && (
+        <UserPickerSheet
+          visible={assigneeModalVisible}
+          title={t('createTask.selectAssigneesModalTitle')}
+          users={assigneePickerUsers}
+          selectedIds={selectedAssigneeIds}
+          onToggleUser={handleToggleAssignee}
+          onClose={() => setAssigneeModalVisible(false)}
+          colors={colors}
+          primaryColor={primaryColor}
+          isDarkMode={isDarkMode}
+          currentUserId={user?.id ?? null}
+          currentUserName={user?.name ?? null}
+          searchPlaceholder={t('common.searchUsers')}
+          emptyText={t('common.noItemsFound')}
+          youLabel={t('common.you')}
+        />
+      )}
 
       {/* Spot Modal */}
       <SelectorModal

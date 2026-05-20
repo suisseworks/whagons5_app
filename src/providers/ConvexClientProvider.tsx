@@ -32,7 +32,13 @@ function useFirebaseAuth() {
   const fetchAccessToken = useCallback(
     async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
       if (!user) return null;
-      return getFirebaseIdToken(user, forceRefreshToken);
+      const startedAt = Date.now();
+      const token = await getFirebaseIdToken(user, forceRefreshToken);
+      console.log('[ConvexAuth] Firebase ID token fetched:', {
+        forceRefreshToken,
+        durationMs: Date.now() - startedAt,
+      });
+      return token;
     },
     [user],
   );

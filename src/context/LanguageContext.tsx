@@ -5,6 +5,7 @@ import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import i18n from '../locales/i18n';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { useAuth } from './AuthContext';
 
 const STORAGE_KEY = '@whagons/language';
 const TIME_FORMAT_STORAGE_KEY = '@whagons/time_format';
@@ -26,7 +27,8 @@ export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [language, setLanguageState] = useState<SupportedLanguage>(i18n.locale as SupportedLanguage);
   const [timeFormat, setTimeFormatState] = useState<TimeFormatPreference>('12h');
   const { tenantId } = useTenant();
-  const convexUser = useQuery(api.users.me, tenantId ? { tenantId } : 'skip');
+  const { token } = useAuth();
+  const convexUser = useQuery(api.users.me, tenantId && token ? { tenantId } : 'skip');
   const updateMe = useOfflineMutation(api.users.updateMe, 'users.updateMe');
 
   const normalizeLanguage = useCallback((value?: string | null): SupportedLanguage => {

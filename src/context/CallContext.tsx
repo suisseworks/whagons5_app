@@ -151,8 +151,9 @@ function ControlButton({
 }
 
 export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { tenantId } = useTenant();
+  const activeTenantId = token ? tenantId : null;
   const { colors, primaryColor, isDarkMode } = useTheme();
   const [incomingCall, setIncomingCall] = useState<IncomingMobileCall | null>(null);
   const [presentation, setPresentation] = useState<CallPresentation | null>(null);
@@ -169,7 +170,7 @@ export const CallProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const acknowledgeRoomSignals = useOfflineMutation(api.calls.acknowledgeRoomSignals, 'calls.acknowledgeRoomSignals');
   const signalDocs = useQuery(
     api.calls.listForUser,
-    tenantId && user?.id ? { tenantId, userId: String(user.id) } : 'skip',
+    activeTenantId && user?.id ? { tenantId: activeTenantId, userId: String(user.id) } : 'skip',
   );
 
   const bumpRevision = useCallback(() => {

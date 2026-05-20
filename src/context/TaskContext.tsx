@@ -11,7 +11,7 @@ import React, { createContext, useContext, useState, useMemo, useCallback, useRe
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import { useQuery } from 'convex/react';
-import { TaskItem, Assignee, CardDensity } from '../models/types';
+import { TaskItem, Assignee, CardDensity, TaskCommentVoiceMemo } from '../models/types';
 import { useData, SyncedTask, SyncedWorkspace, SyncedTemplate, SyncedForm, SyncedFormVersion, SyncedTaskForm } from './DataContext';
 import { useAuth } from './AuthContext';
 import { api } from '../../../convex/_generated/api';
@@ -165,7 +165,7 @@ function mapTaskToItem(
   templateFormMap: Map<AnyId, { formId: AnyId; formName: string }>,
   userFlagMap: Map<AnyId, string>,
   categoryInfoMap: Map<AnyId, { color?: string | null; icon?: string | null }>,
-  commentSummaryMap: Map<string, { count: number; lastText?: string | null }>,
+  commentSummaryMap: Map<string, { count: number; lastText?: string | null; lastVoiceMemo?: TaskCommentVoiceMemo | null; lastUnread?: boolean }>,
   formatTaskDate: (dateStr?: string | null) => string,
 ): TaskItem {
   const status = resolveStatus(task.status_id, statusMap, initialStatus);
@@ -202,6 +202,7 @@ function mapTaskToItem(
     tags: tagMap.get(task.id) ?? [],
     approval: null,
     sla: null,
+    templateId: task.template_id ?? null,
     formId: formInfo?.formId ?? null,
     formName: formInfo?.formName ?? null,
     flagColor,
@@ -212,6 +213,8 @@ function mapTaskToItem(
     requiresSignature: (task as any).requiresSignature === true || (task as any).requires_signature === true,
     commentCount: commentSummary?.count ?? 0,
     lastCommentText: commentSummary?.lastText ?? null,
+    lastCommentVoiceMemo: commentSummary?.lastVoiceMemo ?? null,
+    lastCommentUnread: commentSummary?.lastUnread === true,
   };
 }
 
@@ -377,13 +380,14 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     loadMoreTaskRows,
     setTaskQuery,
   } = useData();
-  const { user: authUser } = useAuth();
+  const { user: authUser, token } = useAuth();
   const { tenantId } = useTenant();
   const { t, language, timeFormat } = useLanguage();
-  const convexUser = useQuery(api.users.me, tenantId ? { tenantId } : 'skip');
+  const activeTenantId = token ? tenantId : null;
+  const convexUser = useQuery(api.users.me, activeTenantId ? { tenantId: activeTenantId } : 'skip');
   const taskSummaryCounts = useQuery(
     api.bulk.taskSummaryCounts,
-    tenantId ? { tenantId } : 'skip',
+    activeTenantId ? { tenantId: activeTenantId } : 'skip',
   );
   const { queue } = useMutationQueue();
   const { isOnline } = useNetwork();
@@ -392,7 +396,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const compactCards = false;
   const taskNoteSummaries = useQuery(
     api.taskResources.noteSummariesByTenant,
-    tenantId && cardDensity === 'detailed' ? { tenantId } : 'skip',
+    activeTenantId && cardDensity === 'detailed' ? { tenantId: activeTenantId } : 'skip',
   );
   const updateMeMutation = useOfflineMutation(api.users.updateMe, 'users.updateMe');
   const formatTaskDate = useCallback(
@@ -832,12 +836,14 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [data.categories]);
 
   const commentSummaryMap = useMemo(() => {
-    const m = new Map<string, { count: number; lastText?: string | null }>();
+    const m = new Map<string, { count: number; lastText?: string | null; lastVoiceMemo?: TaskCommentVoiceMemo | null; lastUnread?: boolean }>();
     for (const summary of taskNoteSummaries ?? []) {
       if (!summary?.taskId) continue;
       m.set(String(summary.taskId), {
         count: Number(summary.count ?? 0),
         lastText: summary.lastText ?? null,
+        lastVoiceMemo: summary.lastVoiceMemo ?? null,
+        lastUnread: summary.lastUnread === true,
       });
     }
     return m;

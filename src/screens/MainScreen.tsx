@@ -18,6 +18,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const RN_TIGHT_SPRING = {
@@ -56,6 +57,7 @@ import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useVoiceTaskCapture } from '../hooks/useVoiceTaskCapture';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { HIDE_SHARED_WITH_ME_STORAGE_KEY } from '../config/storageKeys';
 
 // ---------------------------------------------------------------------------
 // Surface color tokens (3-level hierarchy)
@@ -354,6 +356,7 @@ export const MainScreen: React.FC = () => {
   const [colabInChat, setColabInChat] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [initialConversationId, setInitialConversationId] = useState<string | number | undefined>(undefined);
+  const [hideSharedWithMe, setHideSharedWithMe] = useState(false);
   // Status chip selection is now driven by filters.statuses from context
   // so it stays in sync with the filter sheet
   const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
@@ -382,6 +385,28 @@ export const MainScreen: React.FC = () => {
       animateTasksTabTo(tasksTab);
     }
   }, [animateTasksTabTo, selectedNavKey, tasksTab]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let isActive = true;
+
+      AsyncStorage.getItem(HIDE_SHARED_WITH_ME_STORAGE_KEY)
+        .then((value) => {
+          if (!isActive) return;
+          const shouldHide = value === 'true';
+          setHideSharedWithMe(shouldHide);
+          if (shouldHide && selectedWorkspace === 'Shared') {
+            setSelectedWorkspace('Everything');
+            setTasksTab('everything');
+          }
+        })
+        .catch(() => {});
+
+      return () => {
+        isActive = false;
+      };
+    }, [selectedWorkspace, setSelectedWorkspace]),
+  );
 
   const finishTasksTabSwipe = useCallback((dx: number, vx: number) => {
     if (selectedNavKey !== 'tasks' || tasksTab === 'workspace') return;
@@ -1086,7 +1111,7 @@ export const MainScreen: React.FC = () => {
         keyExtractor={(item) => String(item.id)}
         contentContainerStyle={styles.wsListContent}
         ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
-        ListHeaderComponent={
+        ListHeaderComponent={hideSharedWithMe ? null : (
           /* Shared with me — permanent item at top */
           <TouchableOpacity
             style={[
@@ -1123,7 +1148,7 @@ export const MainScreen: React.FC = () => {
             )}
             <MaterialIcons name="chevron-right" size={20} color={colors.textSecondary} />
           </TouchableOpacity>
-        }
+        )}
         ListEmptyComponent={
           <View style={[styles.placeholderContainer, { paddingTop: 40 }]}>
             <MaterialIcons name="workspaces" size={56} color={isDarkMode ? 'rgba(255,255,255,0.15)' : '#D1D5DB'} />
