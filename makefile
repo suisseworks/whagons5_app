@@ -26,7 +26,7 @@ IOS_CONFIGURATION ?= Release
 help:
 	@echo "Targets:"
 	@echo ""
-	@echo "  make release               Atomic: auto-bump patch, build, upload as draft, tag + push"
+	@echo "  make release               Atomic: auto-bump patch, build, upload, tag + GitHub APK asset"
 	@echo "  make release VERSION=2.0.0 Same but with explicit version"
 	@echo "  make release-prod          Same as release but publishes to production (not draft)"
 	@echo "  make release-prod VERSION=2.0.0  Production release with explicit version"
@@ -163,7 +163,7 @@ release-notes-preview:
 #    4. Sync versionName across files
 #    5. Stamp git hash into version.ts
 #    6. Generate AI release notes through OpenRouter and bundle them into the app
-#    7. Build release AAB with the new versionCode
+#    7. Build release AAB/APK with the new versionCode
 #    8. Upload AAB to Google Play Console
 #    9. Commit, tag, create GitHub release, publish app release notes to Convex
 # ===========================================================================
@@ -222,8 +222,11 @@ release:
 	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
 	cat "$$release_notes_file" >> "$$release_tag_file" && \
 	\
-	echo "=== Step 7: Build AAB ===" && \
-	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
+	echo "=== Step 7: Build AAB and APK ===" && \
+	cd android && ./gradlew --no-daemon bundleRelease assembleRelease && cd .. && \
+	release_apk="android/app/build/outputs/apk/release/app-release.apk" && \
+	release_asset_name="Whagons-$$version-build-$$next_code.apk" && \
+	if [ ! -f "$$release_apk" ]; then echo "Error: missing release APK at $$release_apk"; exit 1; fi && \
 	\
 	echo "=== Step 8: Upload to Google Play Console ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
@@ -234,7 +237,7 @@ release:
 	git tag -a "$$tag_name" -F "$$release_tag_file" && \
 	git push $(REMOTE_REPO) main && \
 	git push $(REMOTE_REPO) --tags && \
-	gh release create "$$tag_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
+	gh release create "$$tag_name" "$$release_apk#$$release_asset_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
 	RELEASE_VERSION="$$version" RELEASE_TAG="$$tag_name" RELEASE_TITLE="Release $$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" RELEASE_GITHUB_URL="$$(gh release view "$$tag_name" --json url --jq .url)" RELEASE_PUBLISHED_AT="$$(node -e 'console.log(Date.now())')" node scripts/publish-release-notes.mjs && \
 	echo "" && \
 	echo "Done: $$release_name published to Play Console and tagged on GitHub."
@@ -297,8 +300,11 @@ release-prod:
 	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
 	cat "$$release_notes_file" >> "$$release_tag_file" && \
 	\
-	echo "=== Step 7: Build AAB ===" && \
-	cd android && ./gradlew --no-daemon bundleRelease && cd .. && \
+	echo "=== Step 7: Build AAB and APK ===" && \
+	cd android && ./gradlew --no-daemon bundleRelease assembleRelease && cd .. && \
+	release_apk="android/app/build/outputs/apk/release/app-release.apk" && \
+	release_asset_name="Whagons-$$version-build-$$next_code.apk" && \
+	if [ ! -f "$$release_apk" ]; then echo "Error: missing release APK at $$release_apk"; exit 1; fi && \
 	\
 	echo "=== Step 8: Upload to Google Play Console (PRODUCTION) ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab --track production --publish && cd .. && \
@@ -309,7 +315,7 @@ release-prod:
 	git tag -a "$$tag_name" -F "$$release_tag_file" && \
 	git push $(REMOTE_REPO) main && \
 	git push $(REMOTE_REPO) --tags && \
-	gh release create "$$tag_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
+	gh release create "$$tag_name" "$$release_apk#$$release_asset_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
 	RELEASE_VERSION="$$version" RELEASE_TAG="$$tag_name" RELEASE_TITLE="Release $$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" RELEASE_GITHUB_URL="$$(gh release view "$$tag_name" --json url --jq .url)" RELEASE_PUBLISHED_AT="$$(node -e 'console.log(Date.now())')" node scripts/publish-release-notes.mjs && \
 	echo "" && \
 	echo "Done: $$release_name published to PRODUCTION on Play Console and tagged on GitHub."
