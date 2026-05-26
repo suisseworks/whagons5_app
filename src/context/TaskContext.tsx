@@ -215,6 +215,8 @@ function mapTaskToItem(
     latitude: (task as any).latitude ?? null,
     longitude: (task as any).longitude ?? null,
     requiresSignature: (task as any).requiresSignature === true || (task as any).requires_signature === true,
+    approvalActionDecision: (task as any).approvalActionDecision ?? (task as any).approval_action_decision ?? null,
+    approval_action_decision: (task as any).approval_action_decision ?? (task as any).approvalActionDecision ?? null,
     commentCount: commentSummary?.count ?? 0,
     lastCommentText: commentSummary?.lastText ?? null,
     lastCommentVoiceMemo: commentSummary?.lastVoiceMemo ?? null,
