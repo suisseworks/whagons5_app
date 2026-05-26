@@ -256,13 +256,19 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
 
   const { colors, isDarkMode } = useTheme();
   const { t } = useLanguage();
+  const { tenantId } = useTenant();
   const { tagInfoMap, isTaskWorking } = useTasks();
   const { user: authUser } = useAuth();
+  const shareActionKind = useQuery(
+    (api as any).tasks.getShareActionTaskKind,
+    tenantId && task.convexId ? { tenantId, taskId: task.convexId as any } : 'skip',
+  ) as string | null | undefined;
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const tertiaryText = isDarkMode ? 'rgba(255, 255, 255, 0.45)' : '#9CA3AF';
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
   const statusAction = task.statusAction?.trim().toUpperCase() ?? null;
   const statusType = classifyStatusAction(statusAction) ?? classifyStatus(task.status);
+  const shareActionTask = shareActionKind === 'ACKNOWLEDGMENT' || shareActionKind === 'STATUS_TRACKING';
   const working = Boolean(task.id && isTaskWorking(task.id));
   const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
   const hasSeen = isCreator && task.firstViewedAt != null;
@@ -416,7 +422,23 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
             <MaterialCommunityIcons name={approvalState.icon} size={11} color={approvalState.color} />
             <Text style={[styles.approvalPillText, { color: approvalState.color }]}>{approvalState.label}</Text>
           </View>
-        ) : (
+        ) : shareActionKind === 'STATUS_TRACKING' ? (
+          <View style={styles.actionPromptGroup}>
+            <View style={[styles.actionPromptPill, styles.approvePromptPill]}>
+              <MaterialCommunityIcons name="check-circle-outline" size={11} color="#047857" />
+              <Text style={[styles.actionPromptText, { color: '#047857' }]}>{t('sharedTask.approveButton')}</Text>
+            </View>
+            <View style={[styles.actionPromptPill, styles.rejectPromptPill]}>
+              <MaterialCommunityIcons name="close-circle-outline" size={11} color="#DC2626" />
+              <Text style={[styles.actionPromptText, { color: '#DC2626' }]}>{t('sharedTask.rejectButton')}</Text>
+            </View>
+          </View>
+        ) : shareActionKind === 'ACKNOWLEDGMENT' ? (
+          <View style={[styles.actionPromptPill, styles.ackPromptPill]}>
+            <MaterialIcons name="visibility" size={11} color="#047857" />
+            <Text style={[styles.actionPromptText, { color: '#047857' }]}>{t('sharedTask.acknowledgeButton')}</Text>
+          </View>
+        ) : !shareActionTask ? (
           <CustomChip
             label={task.status}
             color={stColor}
@@ -426,7 +448,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
                 : <MaterialCommunityIcons name={(STATUS_ICONS[statusType as Exclude<StatusType, 'working'>] ?? STATUS_ICONS.default) as any} size={12} color="#FFFFFF" />
             }
           />
-        )}
+        ) : null}
         {(task.ackTotal ?? 0) > 0 && (
           <View style={[styles.ackBadge, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : '#F3F4F6' }]}> 
             <MaterialCommunityIcons name="eye-check" size={11} color={task.shareStatus === 'acknowledged' || task.ackDone === task.ackTotal ? '#16A34A' : tertiaryText} />
@@ -742,6 +764,36 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   approvalPillText: {
+    fontSize: 10.5,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  actionPromptGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  actionPromptPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  approvePromptPill: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  rejectPromptPill: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
+  ackPromptPill: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  actionPromptText: {
     fontSize: 10.5,
     fontFamily: fontFamilies.bodySemibold,
   },

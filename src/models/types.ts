@@ -78,6 +78,9 @@ export interface TaskItem {
   longitude?: number | null;
   /** Task requires a signature before completion */
   requiresSignature?: boolean;
+  /** Decision recorded on approval action tasks */
+  approvalActionDecision?: 'approved' | 'rejected' | null;
+  approval_action_decision?: 'approved' | 'rejected' | null;
   /** Number of comments/notes on this task */
   commentCount?: number;
   /** Text from the latest comment/note, if present */
