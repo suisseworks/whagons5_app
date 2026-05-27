@@ -399,13 +399,13 @@ release-ios-latest:
 	echo "  version: $$version" && \
 	\
 	echo "=== Step 2: Sync local iOS project version ===" && \
+	ios_build_number="$(IOS_BUILD_NUMBER)" && \
 	if [ ! -f ios/Whagons.xcodeproj/project.pbxproj ]; then \
+		if [ -z "$$ios_build_number" ]; then echo "Error: local iOS project is missing. Pass the iOS build explicitly with IOS_BUILD_NUMBER=123."; exit 1; fi; \
 		echo "  generating local iOS project"; \
 		npx expo prebuild -p ios; \
 	fi && \
-	ios_build_number="$(IOS_BUILD_NUMBER)" && \
 	if [ -z "$$ios_build_number" ]; then ios_build_number=$$(grep 'CURRENT_PROJECT_VERSION' ios/Whagons.xcodeproj/project.pbxproj | head -1 | sed 's/.*= //; s/;//; s/ //g'); fi && \
-	if [ -z "$$ios_build_number" ]; then ios_build_number=$$(python3 -c 'import json; d=json.load(open("app.json")); print(d["expo"].get("ios", {}).get("buildNumber", ""))'); fi && \
 	if [ -z "$$ios_build_number" ]; then echo "Error: no iOS build number found. Pass IOS_BUILD_NUMBER=123."; exit 1; fi && \
 	$(SED_INPLACE) "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $$version/" ios/Whagons.xcodeproj/project.pbxproj && \
 	$(SED_INPLACE) "s/CURRENT_PROJECT_VERSION = [^;]*/CURRENT_PROJECT_VERSION = $$ios_build_number/" ios/Whagons.xcodeproj/project.pbxproj && \
