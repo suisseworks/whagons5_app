@@ -78,7 +78,12 @@ play-listing-assets:
 	if [ -z "$(IMAGEMAGICK)" ]; then echo "Error: ImageMagick magick or convert is required."; exit 1; fi && \
 	mkdir -p assets/play-store && \
 	$(IMAGEMAGICK) assets/icon.png -resize 512x512 assets/play-store/icon.png && \
-	$(IMAGEMAGICK) -size 1024x500 xc:'#151716' \( assets/whagons-logo-black.png -resize 620x198 \) -gravity center -composite assets/play-store/feature-graphic.png && \
+	if [ ! -f ../src/assets/WhagonsTitle.svg ]; then echo "Error: missing ../src/assets/WhagonsTitle.svg."; exit 1; fi && \
+	play_title_svg="/tmp/whagons-title-play.svg" && \
+	play_title_png="/tmp/whagons-title-play.png" && \
+	sed 's/#D32F55/#d12434/g' ../src/assets/WhagonsTitle.svg > "$$play_title_svg" && \
+	$(IMAGEMAGICK) -density 1200 -background none "$$play_title_svg" -resize 760x164 png32:"$$play_title_png" && \
+	$(IMAGEMAGICK) -size 1024x500 xc:'#151716' \( "$$play_title_png" \) -gravity center -composite assets/play-store/feature-graphic.png && \
 	echo "Generated assets/play-store/icon.png and assets/play-store/feature-graphic.png"
 
 upload-play-listing-assets: play-listing-assets
