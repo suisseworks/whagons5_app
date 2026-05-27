@@ -1,5 +1,6 @@
 .PHONY: help android-run android-apk-debug android-apk-release android-apk-dev-backend android-clean \
        ios-run ios-prebuild ios-build-sim ios-archive ios-upload ios-clean ios-screenshots \
+       play-listing-assets upload-play-listing-assets \
        release release-prod release-prod-android release-ios-latest release-prod-mac release-notes-preview version
 
 # Detect OS for sed compatibility
@@ -12,6 +13,7 @@ endif
 
 REMOTE_REPO := $(shell git remote get-url origin)
 OPENROUTER_MODEL ?= moonshotai/kimi-k2.5
+IMAGEMAGICK ?= $(shell command -v magick 2>/dev/null || command -v convert 2>/dev/null)
 
 # ---- iOS build vars ----
 IOS_WORKSPACE ?= ios/Whagons.xcworkspace
@@ -43,6 +45,8 @@ help:
 	@echo "  make android-apk-release   Build release APK"
 	@echo "  make android-apk-dev-backend  Build release APK using .env.dev-backend"
 	@echo "  make android-clean         Clean Android build"
+	@echo "  make play-listing-assets   Generate red Play Store listing icon and feature graphic"
+	@echo "  make upload-play-listing-assets  Upload red Play Store listing icon and feature graphic"
 	@echo "  make ios-run               Run app on iOS via Expo (dev)"
 	@echo "  make ios-prebuild          Generate native iOS project"
 	@echo "  make ios-build-sim         Build iOS simulator app"
@@ -68,6 +72,22 @@ android-apk-dev-backend: android-clean
 
 android-clean:
 	rm -rf android/app/.cxx android/app/build android/build android/.gradle
+
+play-listing-assets:
+	@set -e && \
+	if [ -z "$(IMAGEMAGICK)" ]; then echo "Error: ImageMagick magick or convert is required."; exit 1; fi && \
+	mkdir -p assets/play-store && \
+	$(IMAGEMAGICK) assets/icon.png -resize 512x512 assets/play-store/icon.png && \
+	$(IMAGEMAGICK) -size 1024x500 xc:'#151716' \( assets/icon.png -resize 150x150 \) -geometry +230+175 -composite -font assets/fonts/Montserrat_700Bold.ttf -pointsize 86 -fill '#d12434' -gravity NorthWest -annotate +420+205 'Whagons' assets/play-store/feature-graphic.png && \
+	echo "Generated assets/play-store/icon.png and assets/play-store/feature-graphic.png"
+
+upload-play-listing-assets: play-listing-assets
+	@set -e && \
+	cd scripts && go build -o whagons-uploader main.go && cd .. && \
+	cd scripts && \
+	./whagons-uploader --service-account ../play-store-service-account.json upload-listing-image --language en-US --type icon --file ../assets/play-store/icon.png && \
+	./whagons-uploader --service-account ../play-store-service-account.json upload-listing-image --language en-US --type featureGraphic --file ../assets/play-store/feature-graphic.png && \
+	cd ..
 
 # ===========================================================================
 #  iOS builds

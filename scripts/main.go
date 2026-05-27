@@ -24,6 +24,9 @@ type Config struct {
 	VersionCode        int64
 	VersionName        string
 	Publish            bool
+	ListingLanguage    string
+	ListingImageType   string
+	ListingImagePath   string
 }
 
 var config Config
@@ -46,6 +49,12 @@ var latestCodeCmd = &cobra.Command{
 	Run:   runLatestCode,
 }
 
+var uploadListingImageCmd = &cobra.Command{
+	Use:   "upload-listing-image",
+	Short: "Upload a Google Play store listing image",
+	Run:   runUploadListingImage,
+}
+
 func init() {
 	// Global flags
 	rootCmd.PersistentFlags().StringVarP(&config.PackageName, "package", "p", "com.whagons.v5", "Android package name")
@@ -61,8 +70,16 @@ func init() {
 	uploadCmd.Flags().BoolVar(&config.Publish, "publish", false, "Publish immediately (default: save as draft)")
 	uploadCmd.MarkFlagRequired("bundle")
 
+	// Store listing image flags
+	uploadListingImageCmd.Flags().StringVarP(&config.ListingLanguage, "language", "l", "en-US", "Store listing language")
+	uploadListingImageCmd.Flags().StringVarP(&config.ListingImageType, "type", "t", "", "Image type (icon, featureGraphic, phoneScreenshots, sevenInchScreenshots, tenInchScreenshots)")
+	uploadListingImageCmd.Flags().StringVarP(&config.ListingImagePath, "file", "f", "", "Path to the PNG or JPEG image")
+	uploadListingImageCmd.MarkFlagRequired("type")
+	uploadListingImageCmd.MarkFlagRequired("file")
+
 	rootCmd.AddCommand(uploadCmd)
 	rootCmd.AddCommand(latestCodeCmd)
+	rootCmd.AddCommand(uploadListingImageCmd)
 }
 
 func main() {
@@ -186,6 +203,52 @@ func runUpload(cmd *cobra.Command, args []string) {
 	}
 }
 
+// ---- upload-listing-image command ----
+
+func runUploadListingImage(cmd *cobra.Command, args []string) {
+	fmt.Printf("🚀 Uploading %s listing image for %s...\n", config.ListingImageType, config.ListingLanguage)
+
+	if _, err := os.Stat(config.ListingImagePath); os.IsNotExist(err) {
+		log.Fatalf("❌ Listing image not found: %s", config.ListingImagePath)
+	}
+
+	contentType, err := listingImageContentType(config.ListingImagePath)
+	if err != nil {
+		log.Fatalf("❌ %v", err)
+	}
+
+	service, err := createAndroidPublisherService()
+	if err != nil {
+		log.Fatalf("❌ Failed to create Android Publisher service: %v", err)
+	}
+
+	fmt.Println("📝 Starting edit session...")
+	editId, err := startEdit(service)
+	if err != nil {
+		log.Fatalf("❌ Failed to start edit: %v", err)
+	}
+	fmt.Printf("✅ Edit session started with ID: %s\n", editId)
+
+	fmt.Println("🧹 Replacing existing image(s)...")
+	if _, err := service.Edits.Images.Deleteall(config.PackageName, editId, config.ListingLanguage, config.ListingImageType).Do(); err != nil {
+		_ = deleteEdit(service, editId)
+		log.Fatalf("❌ Failed to clear existing listing images: %v", err)
+	}
+
+	fmt.Println("🖼️  Uploading listing image...")
+	if err := uploadListingImage(service, editId, contentType); err != nil {
+		_ = deleteEdit(service, editId)
+		log.Fatalf("❌ Failed to upload listing image: %v", err)
+	}
+
+	fmt.Println("💾 Committing changes...")
+	if err := commitEdit(service, editId); err != nil {
+		log.Fatalf("❌ Failed to commit changes: %v", err)
+	}
+
+	fmt.Printf("🎉 Uploaded %s for %s successfully!\n", config.ListingImageType, config.ListingLanguage)
+}
+
 // ---- shared helpers ----
 
 func createAndroidPublisherService() (*androidpublisher.Service, error) {
@@ -234,6 +297,22 @@ func uploadBundle(service *androidpublisher.Service, editId string) (int64, erro
 	return bundleResponse.VersionCode, nil
 }
 
+func uploadListingImage(service *androidpublisher.Service, editId string, contentType string) error {
+	file, err := os.Open(config.ListingImagePath)
+	if err != nil {
+		return fmt.Errorf("failed to open listing image: %v", err)
+	}
+	defer file.Close()
+
+	_, err = service.Edits.Images.Upload(config.PackageName, editId, config.ListingLanguage, config.ListingImageType).
+		Media(file, googleapi.ContentType(contentType)).Do()
+	if err != nil {
+		return fmt.Errorf("failed to upload listing image: %v", err)
+	}
+
+	return nil
+}
+
 func createRelease(service *androidpublisher.Service, editId string, versionCode int64) error {
 	track, err := service.Edits.Tracks.Get(config.PackageName, editId, config.Track).Do()
 	if err != nil {
@@ -272,6 +351,18 @@ func createRelease(service *androidpublisher.Service, editId string, versionCode
 	}
 
 	return nil
+}
+
+func listingImageContentType(path string) (string, error) {
+	lowerPath := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lowerPath, ".png"):
+		return "image/png", nil
+	case strings.HasSuffix(lowerPath, ".jpg"), strings.HasSuffix(lowerPath, ".jpeg"):
+		return "image/jpeg", nil
+	default:
+		return "", fmt.Errorf("listing image must be a PNG or JPEG: %s", path)
+	}
 }
 
 func commitEdit(service *androidpublisher.Service, editId string) error {
