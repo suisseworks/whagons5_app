@@ -78,7 +78,7 @@ play-listing-assets:
 	if [ -z "$(IMAGEMAGICK)" ]; then echo "Error: ImageMagick magick or convert is required."; exit 1; fi && \
 	mkdir -p assets/play-store && \
 	$(IMAGEMAGICK) assets/icon.png -resize 512x512 assets/play-store/icon.png && \
-	$(IMAGEMAGICK) -size 1024x500 xc:'#151716' \( assets/icon.png -resize 150x150 \) -geometry +230+175 -composite -font assets/fonts/Montserrat_700Bold.ttf -pointsize 86 -fill '#d12434' -gravity NorthWest -annotate +420+205 'Whagons' assets/play-store/feature-graphic.png && \
+	$(IMAGEMAGICK) -size 1024x500 xc:'#151716' \( assets/whagons-logo-black.png -resize 620x198 \) -gravity center -composite assets/play-store/feature-graphic.png && \
 	echo "Generated assets/play-store/icon.png and assets/play-store/feature-graphic.png"
 
 upload-play-listing-assets: play-listing-assets
