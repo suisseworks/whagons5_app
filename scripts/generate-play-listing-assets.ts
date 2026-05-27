@@ -7,7 +7,7 @@ const appRoot = path.resolve(__dirname, '..');
 const repoRoot = path.resolve(appRoot, '..');
 const outputDir = path.join(appRoot, 'assets', 'play-store');
 const sourceIcon = path.join(appRoot, 'assets', 'icon.png');
-const titleSource = path.join(repoRoot, 'src', 'assets', 'WhagonsTitle.tsx');
+const titleSource = path.join(repoRoot, 'src', 'assets', 'WhagonsTitle.svg');
 const outputIcon = path.join(outputDir, 'icon.png');
 const outputFeatureGraphic = path.join(outputDir, 'feature-graphic.png');
 
@@ -41,35 +41,10 @@ function findImageMagick() {
   throw new Error('ImageMagick magick or convert is required.');
 }
 
-function extractWordmarkPaths() {
-  const source = readFileSync(titleSource, 'utf8');
-  const match = source.match(/const WORDMARK_D = \[([\s\S]*?)\] as const;/);
-  if (!match) {
-    throw new Error(`Could not find WORDMARK_D in ${titleSource}`);
-  }
-
-  const paths: string[] = [];
-  const pathRegex = /'([^']+)'/g;
-  let pathMatch: RegExpExecArray | null;
-  while ((pathMatch = pathRegex.exec(match[1])) !== null) {
-    paths.push(pathMatch[1]);
-  }
-
-  if (!paths.length) {
-    throw new Error(`No wordmark paths found in ${titleSource}`);
-  }
-
-  return paths;
-}
-
-function makeTitleSvg(paths: string[]) {
-  const pathMarkup = paths.map((d) => `<path d="${d}"/>`).join('\n');
-  return `<svg viewBox="0 0 2000 500" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g fill="${titleColor}">
-${pathMarkup}
-</g>
-</svg>
-`;
+function makeTitleSvg() {
+  return readFileSync(titleSource, 'utf8')
+    .replaceAll('#D32F55', titleColor)
+    .replaceAll('#d32f55', titleColor);
 }
 
 const imageMagick = findImageMagick();
@@ -78,7 +53,7 @@ const tempDir = mkdtempSync(path.join(tmpdir(), 'whagons-play-listing-'));
 try {
   const titleSvg = path.join(tempDir, 'whagons-title.svg');
   const titlePng = path.join(tempDir, 'whagons-title.png');
-  writeFileSync(titleSvg, makeTitleSvg(extractWordmarkPaths()));
+  writeFileSync(titleSvg, makeTitleSvg());
 
   run(imageMagick, [sourceIcon, '-resize', '512x512', outputIcon]);
   run(imageMagick, [
