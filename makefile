@@ -33,7 +33,7 @@ help:
 	@echo "  make release VERSION=2.0.0 Same Android release with explicit version"
 	@echo "  make release-prod          Android-only production release"
 	@echo "  make release-prod-android  Android-only production release"
-	@echo "  make release-ios-latest    Mac-only: sync local iOS project, then upload latest GitHub release build"
+	@echo "  make release-ios-latest    Mac-only: sync local iOS version, then upload to App Store Connect"
 	@echo "  make release-prod VERSION=2.0.0  Production release with explicit version"
 	@echo "  make release-notes-preview Safe: generate release notes only into /tmp"
 	@echo "  make version               Show current version info"
@@ -379,7 +379,7 @@ release-prod-android:
 	echo "Done: $$release_name published to PRODUCTION on Play Console and tagged on GitHub."
 
 # ===========================================================================
-#  release-ios-latest - upload iOS build matching the latest GitHub release
+#  release-ios-latest - upload iOS version matching the latest GitHub release
 # ===========================================================================
 release-ios-latest:
 	@set -e && \
@@ -394,37 +394,33 @@ release-ios-latest:
 	echo "=== Step 1: Read latest GitHub release ===" && \
 	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
 	if [ -z "$$latest_tag" ]; then echo "Error: no GitHub release found. Run make release or make release-prod from Linux first."; exit 1; fi && \
-	release_title=$$(gh release view "$$latest_tag" --json name --jq '.name // ""') && \
 	version=$${latest_tag#v} && \
-	build_number=$$(printf "%s\n" "$$release_title" | sed -n 's/.*(Build \([0-9][0-9]*\)).*/\1/p') && \
-	if [ -z "$$build_number" ]; then echo "Error: could not parse build number from latest release title: $$release_title"; exit 1; fi && \
 	echo "  latest release: $$latest_tag" && \
 	echo "  version: $$version" && \
-	echo "  build: $$build_number" && \
 	\
 	echo "=== Step 2: Sync local iOS project version ===" && \
 	if [ ! -f ios/Whagons.xcodeproj/project.pbxproj ]; then \
 		echo "  generating local iOS project"; \
 		npx expo prebuild -p ios; \
 	fi && \
+	ios_build_number="$(IOS_BUILD_NUMBER)" && \
+	if [ -z "$$ios_build_number" ]; then ios_build_number=$$(grep 'CURRENT_PROJECT_VERSION' ios/Whagons.xcodeproj/project.pbxproj | head -1 | sed 's/.*= //; s/;//; s/ //g'); fi && \
+	if [ -z "$$ios_build_number" ]; then ios_build_number=$$(python3 -c 'import json; d=json.load(open("app.json")); print(d["expo"].get("ios", {}).get("buildNumber", ""))'); fi && \
+	if [ -z "$$ios_build_number" ]; then echo "Error: no iOS build number found. Pass IOS_BUILD_NUMBER=123."; exit 1; fi && \
 	$(SED_INPLACE) "s/MARKETING_VERSION = [^;]*/MARKETING_VERSION = $$version/" ios/Whagons.xcodeproj/project.pbxproj && \
-	$(SED_INPLACE) "s/CURRENT_PROJECT_VERSION = [^;]*/CURRENT_PROJECT_VERSION = $$build_number/" ios/Whagons.xcodeproj/project.pbxproj && \
+	$(SED_INPLACE) "s/CURRENT_PROJECT_VERSION = [^;]*/CURRENT_PROJECT_VERSION = $$ios_build_number/" ios/Whagons.xcodeproj/project.pbxproj && \
 	echo "  Xcode MARKETING_VERSION: $$version" && \
-	echo "  Xcode CURRENT_PROJECT_VERSION: $$build_number" && \
+	echo "  Xcode CURRENT_PROJECT_VERSION: $$ios_build_number" && \
 	\
 	echo "=== Step 3: Verify local release metadata ===" && \
 	current_app_version=$$(python3 -c 'import json; d=json.load(open("app.json")); print(d["expo"]["version"])') && \
-	current_ios_build=$$(python3 -c 'import json; d=json.load(open("app.json")); print(d["expo"].get("ios", {}).get("buildNumber", ""))') && \
 	current_xcode_version=$$(grep 'MARKETING_VERSION' ios/Whagons.xcodeproj/project.pbxproj | head -1 | sed 's/.*= //; s/;//; s/ //g') && \
 	current_xcode_build=$$(grep 'CURRENT_PROJECT_VERSION' ios/Whagons.xcodeproj/project.pbxproj | head -1 | sed 's/.*= //; s/;//; s/ //g') && \
 	current_ts_version=$$(grep "APP_VERSION" src/config/version.ts | head -1 | sed "s/.*APP_VERSION = '//; s/';.*//") && \
-	current_ts_build=$$(grep "BUILD_NUMBER" src/config/version.ts | head -1 | grep -o '[0-9]*') && \
 	if [ "$$current_app_version" != "$$version" ]; then echo "Error: app.json version $$current_app_version does not match latest release $$version. Pull latest main first."; exit 1; fi && \
-	if [ "$$current_ios_build" != "$$build_number" ]; then echo "Error: app.json iOS build $$current_ios_build does not match latest release build $$build_number. Pull latest main first."; exit 1; fi && \
 	if [ "$$current_xcode_version" != "$$version" ]; then echo "Error: Xcode MARKETING_VERSION $$current_xcode_version does not match latest release $$version after local sync."; exit 1; fi && \
-	if [ "$$current_xcode_build" != "$$build_number" ]; then echo "Error: Xcode CURRENT_PROJECT_VERSION $$current_xcode_build does not match latest release build $$build_number after local sync."; exit 1; fi && \
+	if [ "$$current_xcode_build" != "$$ios_build_number" ]; then echo "Error: Xcode CURRENT_PROJECT_VERSION $$current_xcode_build does not match selected iOS build $$ios_build_number after local sync."; exit 1; fi && \
 	if [ "$$current_ts_version" != "$$version" ]; then echo "Error: version.ts APP_VERSION $$current_ts_version does not match latest release $$version. Pull latest main first."; exit 1; fi && \
-	if [ "$$current_ts_build" != "$$build_number" ]; then echo "Error: version.ts BUILD_NUMBER $$current_ts_build does not match latest release build $$build_number. Pull latest main first."; exit 1; fi && \
 	\
 	echo "=== Step 4: Archive and upload iOS to App Store Connect ===" && \
 	rm -rf "$(IOS_ARCHIVE_PATH)" "$(IOS_EXPORT_PATH)" && \
@@ -451,6 +447,6 @@ release-ios-latest:
 		-authenticationKeyID "$${APP_STORE_CONNECT_API_KEY_ID}" \
 		-authenticationKeyIssuerID "$${APP_STORE_CONNECT_ISSUER_ID}" && \
 	echo "" && \
-	echo "Done: iOS $$version build $$build_number uploaded to App Store Connect."
+	echo "Done: iOS $$version build $$ios_build_number uploaded to App Store Connect."
 
 release-prod-mac: release-ios-latest
