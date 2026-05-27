@@ -259,8 +259,8 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const { tenantId } = useTenant();
   const { tagInfoMap, isTaskWorking } = useTasks();
   const { user: authUser } = useAuth();
-  const shareActionKind = useQuery(
-    (api as any).tasks.getShareActionTaskKind,
+  const actionTaskKind = useQuery(
+    (api as any).tasks.getActionTaskKind,
     tenantId && task.convexId ? { tenantId, taskId: task.convexId as any } : 'skip',
   ) as string | null | undefined;
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
@@ -268,7 +268,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
   const statusAction = task.statusAction?.trim().toUpperCase() ?? null;
   const statusType = classifyStatusAction(statusAction) ?? classifyStatus(task.status);
-  const shareActionTask = shareActionKind === 'ACKNOWLEDGMENT' || shareActionKind === 'STATUS_TRACKING';
+  const actionTask = actionTaskKind === 'ACKNOWLEDGMENT' || actionTaskKind === 'STATUS_TRACKING';
   const working = Boolean(task.id && isTaskWorking(task.id));
   const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
   const hasSeen = isCreator && task.firstViewedAt != null;
@@ -422,7 +422,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
             <MaterialCommunityIcons name={approvalState.icon} size={11} color={approvalState.color} />
             <Text style={[styles.approvalPillText, { color: approvalState.color }]}>{approvalState.label}</Text>
           </View>
-        ) : shareActionKind === 'STATUS_TRACKING' ? (
+        ) : actionTaskKind === 'STATUS_TRACKING' ? (
           <View style={styles.actionPromptGroup}>
             <View style={[styles.actionPromptPill, styles.approvePromptPill]}>
               <MaterialCommunityIcons name="check-circle-outline" size={11} color="#047857" />
@@ -433,12 +433,12 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
               <Text style={[styles.actionPromptText, { color: '#DC2626' }]}>{t('sharedTask.rejectButton')}</Text>
             </View>
           </View>
-        ) : shareActionKind === 'ACKNOWLEDGMENT' ? (
+        ) : actionTaskKind === 'ACKNOWLEDGMENT' ? (
           <View style={[styles.actionPromptPill, styles.ackPromptPill]}>
             <MaterialIcons name="visibility" size={11} color="#047857" />
             <Text style={[styles.actionPromptText, { color: '#047857' }]}>{t('sharedTask.acknowledgeButton')}</Text>
           </View>
-        ) : !shareActionTask ? (
+        ) : !actionTask ? (
           <CustomChip
             label={task.status}
             color={stColor}

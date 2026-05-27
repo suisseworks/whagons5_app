@@ -809,20 +809,20 @@ export const TaskDetailScreen: React.FC = () => {
   const assignUserMutation = useOfflineMutation(api.taskResources.assignUser, 'taskResources.assignUser');
   const unassignUserMutation = useOfflineMutation(api.taskResources.unassignUser, 'taskResources.unassignUser');
   const createSignatureMutation = useOfflineMutation(api.taskResources.createSignature, 'taskResources.createSignature');
-  const decideShareApprovalActionTask = useOfflineMutation((api as any).tasks.decideShareApprovalActionTask, 'tasks.decideShareApprovalActionTask');
-  const acknowledgeShareActionTask = useOfflineMutation((api as any).tasks.acknowledgeShareActionTask, 'tasks.acknowledgeShareActionTask');
+  const decideApprovalActionTask = useOfflineMutation((api as any).tasks.decideApprovalActionTask, 'tasks.decideApprovalActionTask');
+  const acknowledgeTaskAckActionTask = useOfflineMutation((api as any).tasks.acknowledgeTaskAckActionTask, 'tasks.acknowledgeTaskAckActionTask');
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
-  const shareActionKind = useQuery(
-    (api as any).tasks.getShareActionTaskKind,
+  const actionTaskKind = useQuery(
+    (api as any).tasks.getActionTaskKind,
     tenantId && hasValidConvexId
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
   ) as string | null | undefined;
-  const isApprovalAction = shareActionKind === 'STATUS_TRACKING';
-  const isAckAction = shareActionKind === 'ACKNOWLEDGMENT';
-  const isShareActionTask = isApprovalAction || isAckAction;
+  const isApprovalAction = actionTaskKind === 'STATUS_TRACKING';
+  const isAckAction = actionTaskKind === 'ACKNOWLEDGMENT';
+  const isActionTask = isApprovalAction || isAckAction;
   const approvalActionRequirement = useQuery(
     (api as any).tasks.getShareApprovalActionRequirement,
     tenantId && hasValidConvexId && isApprovalAction
@@ -830,7 +830,7 @@ export const TaskDetailScreen: React.FC = () => {
       : 'skip'
   ) as { requireSignature?: boolean } | undefined;
   const acknowledgmentActionState = useQuery(
-    (api as any).tasks.getShareActionTaskAcknowledgmentState,
+    (api as any).tasks.getActionTaskAcknowledgmentState,
     tenantId && hasValidConvexId && isAckAction
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
@@ -1399,7 +1399,7 @@ export const TaskDetailScreen: React.FC = () => {
     if (!tenantId || !hasValidConvexId || !convexTaskId) return;
     setActionSubmitting(true);
     try {
-      const result = await decideShareApprovalActionTask({
+      const result = await decideApprovalActionTask({
         tenantId,
         taskId: convexTaskId as any,
         decision,
@@ -1418,18 +1418,18 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       setActionSubmitting(false);
     }
-  }, [tenantId, hasValidConvexId, convexTaskId, decideShareApprovalActionTask, applyReturnedStatus, t]);
+  }, [tenantId, hasValidConvexId, convexTaskId, decideApprovalActionTask, applyReturnedStatus, t]);
 
   const submitAcknowledgmentAction = useCallback(async () => {
     if (!tenantId || !hasValidConvexId || !convexTaskId) return;
     setActionSubmitting(true);
     try {
-      const result = await acknowledgeShareActionTask({
+      const result = await acknowledgeTaskAckActionTask({
         tenantId,
         taskId: convexTaskId as any,
       });
       applyReturnedStatus((result as any)?.statusId);
-      setCurrentStatusAction('FINISHED');
+      if ((result as any)?.allRecipientsAcknowledged) setCurrentStatusAction('FINISHED');
       toastRef.current?.show({
         type: 'success',
         title: t('sharedTask.acknowledgedSuccessfully'),
@@ -1440,7 +1440,7 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       setActionSubmitting(false);
     }
-  }, [tenantId, hasValidConvexId, convexTaskId, acknowledgeShareActionTask, applyReturnedStatus, t]);
+  }, [tenantId, hasValidConvexId, convexTaskId, acknowledgeTaskAckActionTask, applyReturnedStatus, t]);
 
   const handlePriorityChange = (priority: { id: any; name: string; color?: string | null }) => {
     changeTaskPriority(task.id || '', priority.id);
@@ -1450,13 +1450,13 @@ export const TaskDetailScreen: React.FC = () => {
     setPriorityPickerVisible(false);
   };
 
-  const isAckActionResolved = isAckAction && (acknowledgmentActionState?.acknowledged === true || isFinishedAction(currentStatusAction));
+  const isAckActionResolved = isAckAction && acknowledgmentActionState?.acknowledged === true;
   const isActionResolved = actionDecision != null || isAckActionResolved || (!isAckAction && isFinishedAction(currentStatusAction));
   const canUseApprovalActionControls = isApprovalAction && hasValidConvexId && !isActionResolved;
   const canUseAckActionControls = isAckAction && hasValidConvexId && !isActionResolved;
   const showActionTaskFooter = activeTab === 'details' && (canUseApprovalActionControls || canUseAckActionControls);
   const showStandardTaskActions = activeTab === 'details'
-    && !isShareActionTask
+    && !isActionTask
     && (getAllowedStatuses(currentTask).length > 0 || (requiresTaskSignature && !hasTaskSignature && hasValidConvexId));
 
   const closeAssigneePicker = useCallback(() => {
@@ -1968,15 +1968,15 @@ export const TaskDetailScreen: React.FC = () => {
 
       {/* Badge row: status + priority as tinted pills */}
       <View style={styles.badgeRow}>
-        {!isShareActionTask && currentStatus !== '' && (() => {
+        {!isActionTask && currentStatus !== '' && (() => {
           const isWorking = currentStatusAction?.toUpperCase() === 'WORKING';
           const chipColor = statusColor(currentStatus, currentStatusColor);
           return (
             <TouchableOpacity
               onPress={() => {
-                if (!isShareActionTask) setStatusPickerVisible(true);
+                if (!isActionTask) setStatusPickerVisible(true);
               }}
-              disabled={isShareActionTask}
+              disabled={isActionTask}
               activeOpacity={0.7}
             >
               <CustomChip
@@ -2003,7 +2003,7 @@ export const TaskDetailScreen: React.FC = () => {
         )}
       </View>
 
-      {isShareActionTask && (
+      {isActionTask && (
         <View style={[styles.actionTaskCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
           <View style={styles.actionTaskHeader}>
             <MaterialCommunityIcons
@@ -2970,7 +2970,7 @@ export const TaskDetailScreen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
 
-              {!isShareActionTask && (
+              {!isActionTask && (
                 <TouchableOpacity
                   style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
                   onPress={() => {
@@ -3004,7 +3004,7 @@ export const TaskDetailScreen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
 
-              {!isShareActionTask && requiresTaskSignature && !hasTaskSignature && hasValidConvexId && (
+              {!isActionTask && requiresTaskSignature && !hasTaskSignature && hasValidConvexId && (
                 <TouchableOpacity
                   style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
                   onPress={() => {
