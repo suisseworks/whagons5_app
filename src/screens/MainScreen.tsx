@@ -290,7 +290,7 @@ export const MainScreen: React.FC = () => {
     }
     return map;
   }, [workspaceObjects]);
-  const { unreadCount: notificationCount, lastTapPayload, clearTapPayload } = useNotifications();
+  const { unreadCount: localNotificationCount, lastTapPayload, clearTapPayload } = useNotifications();
   const { user: authUser } = useAuth();
   const boardUnreadCount = useMemo(() => {
     return (convexNotifications ?? []).filter((notification: any) => {
@@ -301,6 +301,10 @@ export const MainScreen: React.FC = () => {
       return data.notification_kind === 'board_message' && Boolean(data.board_id);
     }).length;
   }, [convexNotifications]);
+  const notificationCount = useMemo(() => {
+    if (!convexNotifications) return localNotificationCount;
+    return convexNotifications.filter((notification: any) => !notification?.readAt).length;
+  }, [convexNotifications, localNotificationCount]);
   const { phase: voiceCapturePhase, voiceLevel, durationMs, startCapture, stopCapture } = useVoiceTaskCapture();
   const fabHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceLongPressActiveRef = useRef(false);

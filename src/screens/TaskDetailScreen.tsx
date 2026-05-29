@@ -106,6 +106,7 @@ import { ProgressiveImage } from '../components/ProgressiveImage';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
 import { VoiceMemoActionButton, VoiceMemoBubble, VoiceMemoDraftPreview, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 import * as DB from '../store/database';
+import { parseApprovalDecisionNote } from '../utils/approvalNotes';
 
 function isFinishedAction(action?: string | null): boolean {
   const normalized = String(action ?? '').toUpperCase();
@@ -698,7 +699,7 @@ export const TaskDetailScreen: React.FC = () => {
   const [taskHistoryExpanded, setTaskHistoryExpanded] = useState(false);
   const [signatureVisible, setSignatureVisible] = useState(false);
   const [signaturePurpose, setSignaturePurpose] = useState<'taskStatus' | 'approvalAction'>('taskStatus');
-  const [rejectActionVisible, setRejectActionVisible] = useState(false);
+  const [approvalCommentDecision, setApprovalCommentDecision] = useState<'approved' | 'rejected' | null>(null);
   const [actionDecision, setActionDecision] = useState<'approved' | 'rejected' | null>(task.approvalActionDecision ?? task.approval_action_decision ?? null);
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [pendingStatusAfterSignature, setPendingStatusAfterSignature] = useState<StatusOption | null>(null);
@@ -795,6 +796,16 @@ export const TaskDetailScreen: React.FC = () => {
   const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
 
   const convexTaskId = task.convexId ?? task.taskConvexId ?? null;
+  const activeWorkspaceContext = useMemo(() => {
+    const direct = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
+    if (direct) return direct;
+    const contexts = task.workspaceContexts ?? task.workspace_contexts ?? [];
+    return contexts.find((context: any) => context?.kind === 'approval')
+      ?? contexts.find((context: any) => context?.kind === 'acknowledgment')
+      ?? null;
+  }, [task.activeWorkspaceContext, task.active_workspace_context, task.workspaceContexts, task.workspace_contexts]);
+  const activeApprovalWorkspaceContext = activeWorkspaceContext?.kind === 'approval' ? activeWorkspaceContext : null;
+  const activeAckWorkspaceContext = activeWorkspaceContext?.kind === 'acknowledgment' ? activeWorkspaceContext : null;
   const requiresTaskSignature = task.requiresSignature === true;
   const taskCacheKey = useMemo(() => {
     if (!tenantId) return null;
@@ -810,7 +821,9 @@ export const TaskDetailScreen: React.FC = () => {
   const unassignUserMutation = useOfflineMutation(api.taskResources.unassignUser, 'taskResources.unassignUser');
   const createSignatureMutation = useOfflineMutation(api.taskResources.createSignature, 'taskResources.createSignature');
   const decideApprovalActionTask = useOfflineMutation((api as any).tasks.decideApprovalActionTask, 'tasks.decideApprovalActionTask');
+  const decideTaskWorkspaceApprovalContext = useOfflineMutation((api as any).tasks.decideTaskWorkspaceApprovalContext, 'tasks.decideTaskWorkspaceApprovalContext');
   const acknowledgeTaskAckActionTask = useOfflineMutation((api as any).tasks.acknowledgeTaskAckActionTask, 'tasks.acknowledgeTaskAckActionTask');
+  const acknowledgeTaskWorkspaceContext = useOfflineMutation((api as any).tasks.acknowledgeTaskWorkspaceContext, 'tasks.acknowledgeTaskWorkspaceContext');
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
@@ -820,8 +833,13 @@ export const TaskDetailScreen: React.FC = () => {
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
   ) as string | null | undefined;
-  const isApprovalAction = actionTaskKind === 'STATUS_TRACKING';
-  const isAckAction = actionTaskKind === 'ACKNOWLEDGMENT';
+  const effectiveActionTaskKind = activeAckWorkspaceContext
+    ? 'ACKNOWLEDGMENT'
+    : activeApprovalWorkspaceContext
+      ? 'STATUS_TRACKING'
+      : actionTaskKind;
+  const isApprovalAction = effectiveActionTaskKind === 'STATUS_TRACKING';
+  const isAckAction = effectiveActionTaskKind === 'ACKNOWLEDGMENT';
   const isActionTask = isApprovalAction || isAckAction;
   const approvalActionRequirement = useQuery(
     (api as any).tasks.getShareApprovalActionRequirement,
@@ -829,6 +847,12 @@ export const TaskDetailScreen: React.FC = () => {
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
   ) as { requireSignature?: boolean } | undefined;
+  const approvalActionState = useQuery(
+    (api as any).tasks.getShareApprovalActionState,
+    tenantId && hasValidConvexId && isApprovalAction
+      ? { tenantId, taskId: convexTaskId as any }
+      : 'skip'
+  ) as { decision?: 'pending' | 'approved' | 'rejected' | null } | null | undefined;
   const acknowledgmentActionState = useQuery(
     (api as any).tasks.getActionTaskAcknowledgmentState,
     tenantId && hasValidConvexId && isAckAction
@@ -1399,13 +1423,22 @@ export const TaskDetailScreen: React.FC = () => {
     if (!tenantId || !hasValidConvexId || !convexTaskId) return;
     setActionSubmitting(true);
     try {
-      const result = await decideApprovalActionTask({
-        tenantId,
-        taskId: convexTaskId as any,
-        decision,
-        ...(comment ? { comment } : {}),
-        ...(signatureStorageId ? { signatureStorageId: signatureStorageId as any } : {}),
-      });
+      const result = activeApprovalWorkspaceContext?._id
+        ? await decideTaskWorkspaceApprovalContext({
+          tenantId,
+          taskId: convexTaskId as any,
+          contextId: String(activeApprovalWorkspaceContext._id),
+          decision,
+          ...(comment ? { comment } : {}),
+          ...(signatureStorageId ? { signatureStorageId: signatureStorageId as any } : {}),
+        })
+        : await decideApprovalActionTask({
+          tenantId,
+          taskId: convexTaskId as any,
+          decision,
+          ...(comment ? { comment } : {}),
+          ...(signatureStorageId ? { signatureStorageId: signatureStorageId as any } : {}),
+        });
       setActionDecision(decision);
       applyReturnedStatus((result as any)?.statusId);
       toastRef.current?.show({
@@ -1418,16 +1451,22 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       setActionSubmitting(false);
     }
-  }, [tenantId, hasValidConvexId, convexTaskId, decideApprovalActionTask, applyReturnedStatus, t]);
+  }, [tenantId, hasValidConvexId, convexTaskId, activeApprovalWorkspaceContext, decideTaskWorkspaceApprovalContext, decideApprovalActionTask, applyReturnedStatus, t]);
 
   const submitAcknowledgmentAction = useCallback(async () => {
     if (!tenantId || !hasValidConvexId || !convexTaskId) return;
     setActionSubmitting(true);
     try {
-      const result = await acknowledgeTaskAckActionTask({
-        tenantId,
-        taskId: convexTaskId as any,
-      });
+      const result = activeAckWorkspaceContext?._id
+        ? await acknowledgeTaskWorkspaceContext({
+          tenantId,
+          taskId: convexTaskId as any,
+          contextId: String(activeAckWorkspaceContext._id),
+        })
+        : await acknowledgeTaskAckActionTask({
+          tenantId,
+          taskId: convexTaskId as any,
+        });
       applyReturnedStatus((result as any)?.statusId);
       if ((result as any)?.allRecipientsAcknowledged) setCurrentStatusAction('FINISHED');
       toastRef.current?.show({
@@ -1440,7 +1479,7 @@ export const TaskDetailScreen: React.FC = () => {
     } finally {
       setActionSubmitting(false);
     }
-  }, [tenantId, hasValidConvexId, convexTaskId, acknowledgeTaskAckActionTask, applyReturnedStatus, t]);
+  }, [tenantId, hasValidConvexId, convexTaskId, activeAckWorkspaceContext, acknowledgeTaskWorkspaceContext, acknowledgeTaskAckActionTask, applyReturnedStatus, t]);
 
   const handlePriorityChange = (priority: { id: any; name: string; color?: string | null }) => {
     changeTaskPriority(task.id || '', priority.id);
@@ -1450,8 +1489,11 @@ export const TaskDetailScreen: React.FC = () => {
     setPriorityPickerVisible(false);
   };
 
+  const effectiveActionDecision = actionDecision
+    ?? (approvalActionState?.decision !== 'pending' ? approvalActionState?.decision : null)
+    ?? null;
   const isAckActionResolved = isAckAction && acknowledgmentActionState?.acknowledged === true;
-  const isActionResolved = actionDecision != null || isAckActionResolved || (!isAckAction && isFinishedAction(currentStatusAction));
+  const isActionResolved = effectiveActionDecision != null || isAckActionResolved || (!isAckAction && isFinishedAction(currentStatusAction));
   const canUseApprovalActionControls = isApprovalAction && hasValidConvexId && !isActionResolved;
   const canUseAckActionControls = isAckAction && hasValidConvexId && !isActionResolved;
   const showActionTaskFooter = activeTab === 'details' && (canUseApprovalActionControls || canUseAckActionControls);
@@ -2009,16 +2051,16 @@ export const TaskDetailScreen: React.FC = () => {
             <MaterialCommunityIcons
               name={isApprovalAction ? 'shield-check' : 'eye-check'}
               size={20}
-              color={actionDecision === 'rejected' ? '#DC2626' : actionDecision === 'approved' || isAckActionResolved ? '#16A34A' : '#EA580C'}
+              color={effectiveActionDecision === 'rejected' ? '#DC2626' : effectiveActionDecision === 'approved' || isAckActionResolved ? '#16A34A' : '#EA580C'}
             />
             <View style={{ flex: 1 }}>
               <Text style={[styles.actionTaskTitle, { color: colors.text }]}>
                 {isApprovalAction ? t('taskDetail.approvalActionTitle') : t('taskDetail.ackActionTitle')}
               </Text>
               <Text style={[styles.actionTaskSubtitle, { color: tertiaryText }]}>
-                {actionDecision === 'rejected'
+                {effectiveActionDecision === 'rejected'
                   ? t('sharedTask.statusRejected')
-                  : actionDecision === 'approved'
+                  : effectiveActionDecision === 'approved'
                     ? t('sharedTask.statusApproved')
                     : isAckActionResolved
                       ? t('sharedTask.ackStatusAcknowledged')
@@ -2534,6 +2576,15 @@ export const TaskDetailScreen: React.FC = () => {
               : (noteUid != null
                   ? userMap.get(noteUid) || userMap.get(String(noteUid)) || userMap.get(Number(noteUid)) || `User #${noteUid}`
                   : 'Unknown user');
+            const approvalDecisionNote = parseApprovalDecisionNote(note.note);
+            const approvalRejected = approvalDecisionNote?.decision === 'rejected';
+            const approvalAccent = approvalRejected ? '#DC2626' : '#16A34A';
+            const approvalSurface = approvalRejected
+              ? (isDarkMode ? 'rgba(220, 38, 38, 0.16)' : '#FEF2F2')
+              : (isDarkMode ? 'rgba(22, 163, 74, 0.16)' : '#F0FDF4');
+            const approvalBorder = approvalRejected
+              ? (isDarkMode ? 'rgba(248, 113, 113, 0.32)' : '#FECACA')
+              : (isDarkMode ? 'rgba(52, 211, 153, 0.32)' : '#BBF7D0');
             return (
               <View key={note.uuid || note.id} style={styles.commentItem}>
                 {authorPicture ? (
@@ -2573,10 +2624,14 @@ export const TaskDetailScreen: React.FC = () => {
                   <View
                     style={[
                       styles.commentBubble,
+                      approvalDecisionNote && styles.approvalCommentBubble,
                       {
-                        backgroundColor: isDarkMode
-                          ? 'rgba(255,255,255,0.06)'
-                          : '#F5F5F7',
+                        backgroundColor: approvalDecisionNote
+                          ? approvalSurface
+                          : isDarkMode
+                            ? 'rgba(255,255,255,0.06)'
+                            : '#F5F5F7',
+                        borderColor: approvalDecisionNote ? approvalBorder : 'transparent',
                       },
                     ]}
                   >
@@ -2617,6 +2672,43 @@ export const TaskDetailScreen: React.FC = () => {
                             <MaterialIcons name="close" size={18} color={colors.textSecondary} />
                           </TouchableOpacity>
                         </View>
+                      </View>
+                    ) : approvalDecisionNote ? (
+                      <View style={styles.approvalCommentCard}>
+                        <View style={styles.approvalCommentHeader}>
+                          <View style={[styles.approvalCommentIcon, { backgroundColor: approvalAccent }]}>
+                            <MaterialCommunityIcons
+                              name={approvalRejected ? 'close' : 'shield-check-outline'}
+                              size={15}
+                              color="#FFFFFF"
+                            />
+                          </View>
+                          <View style={styles.approvalCommentHeaderText}>
+                            <Text style={[styles.approvalCommentTitle, { color: approvalAccent }]}>
+                              {approvalRejected ? t('component.taskCard.approvalRejected') : t('component.taskCard.approvalApproved')}
+                            </Text>
+                            {!!approvalDecisionNote.actorName && (
+                              <Text style={[styles.approvalCommentByline, { color: colors.textSecondary }]} numberOfLines={1}>
+                                {approvalRejected ? 'Rejected by' : 'Approved by'} {approvalDecisionNote.actorName}
+                              </Text>
+                            )}
+                          </View>
+                        </View>
+                        {!!approvalDecisionNote.comment && (
+                          <View
+                            style={[
+                              styles.approvalCommentTextBox,
+                              {
+                                backgroundColor: isDarkMode ? 'rgba(0,0,0,0.18)' : '#FFFFFF',
+                                borderColor: approvalBorder,
+                              },
+                            ]}
+                          >
+                            <Text style={[styles.commentText, { color: colors.text }]}>
+                              {approvalDecisionNote.comment}
+                            </Text>
+                          </View>
+                        )}
                       </View>
                     ) : !!note.note && (
                       <Text style={[styles.commentText, { color: colors.text }]}> 
@@ -2850,7 +2942,7 @@ export const TaskDetailScreen: React.FC = () => {
               <>
                 <TouchableOpacity
                   style={[styles.actionButton, styles.actionButtonHalf, styles.rejectActionButton]}
-                  onPress={() => setRejectActionVisible(true)}
+                  onPress={() => setApprovalCommentDecision('rejected')}
                   disabled={actionSubmitting}
                 >
                   <MaterialIcons name="close" size={16} color="#DC2626" />
@@ -2863,7 +2955,7 @@ export const TaskDetailScreen: React.FC = () => {
                       setSignaturePurpose('approvalAction');
                       setSignatureVisible(true);
                     } else {
-                      void submitApprovalActionDecision('approved');
+                      setApprovalCommentDecision('approved');
                     }
                   }}
                   disabled={actionSubmitting}
@@ -3280,11 +3372,19 @@ export const TaskDetailScreen: React.FC = () => {
       />
 
       <RejectCommentModal
-        visible={rejectActionVisible}
-        onClose={() => setRejectActionVisible(false)}
+        visible={approvalCommentDecision != null}
+        onClose={() => setApprovalCommentDecision(null)}
+        title={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.title') : undefined}
+        subtitle={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.subtitle') : undefined}
+        placeholder={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.placeholder') : undefined}
+        submitLabel={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.approveButton') : undefined}
+        submitIcon={approvalCommentDecision === 'approved' ? 'check' : 'close'}
+        submitColor={approvalCommentDecision === 'approved' ? '#16A34A' : '#DC2626'}
+        requireComment={approvalCommentDecision !== 'approved'}
         onSubmit={(comment) => {
-          setRejectActionVisible(false);
-          void submitApprovalActionDecision('rejected', undefined, comment);
+          const decision = approvalCommentDecision;
+          setApprovalCommentDecision(null);
+          if (decision) void submitApprovalActionDecision(decision, undefined, comment);
         }}
       />
 
@@ -4107,6 +4207,49 @@ const styles = StyleSheet.create({
     marginTop: 4,
     borderRadius: radius.md,
     padding: 12,
+    borderWidth: 0,
+  },
+  approvalCommentBubble: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 12,
+  },
+  approvalCommentCard: {
+    gap: 10,
+  },
+  approvalCommentHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+  },
+  approvalCommentIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  approvalCommentHeaderText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  approvalCommentTitle: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyBold,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  approvalCommentByline: {
+    marginTop: 2,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  approvalCommentTextBox: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   commentMenuButton: {
     marginLeft: 8,

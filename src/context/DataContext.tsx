@@ -531,10 +531,16 @@ interface FkLookups {
 
 /** Map a Convex task doc to the SyncedTask shape, resolving FK fields to pgIds */
 function mapTask(doc: any, fk: FkLookups): SyncedTask {
+  const activeWorkspaceContext = doc.activeWorkspaceContext ?? doc.active_workspace_context ?? null;
+  const contextWorkspaceId = activeWorkspaceContext?.workspaceId ?? activeWorkspaceContext?.workspace_id ?? null;
+  const sourceWorkspaceId = resolveFk(fk.workspaces, doc.workspaceId);
+  const overlayWorkspaceId = contextWorkspaceId ? resolveFk(fk.workspaces, contextWorkspaceId) : sourceWorkspaceId;
+
   return {
     ...doc,
     id: doc.pgId ?? doc._id,
-    workspace_id: resolveFk(fk.workspaces, doc.workspaceId),
+    source_workspace_id: sourceWorkspaceId,
+    workspace_id: overlayWorkspaceId,
     category_id: resolveFk(fk.categories, doc.categoryId),
     status_id: resolveFk(fk.statuses, doc.statusId),
     priority_id: resolveFk(fk.priorities, doc.priorityId),

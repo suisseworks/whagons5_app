@@ -726,6 +726,12 @@
       "cancelButton": "Cancel",
       "rejectButton": "Reject"
     },
+    "approveCommentModal": {
+      "title": "Approve Communication",
+      "subtitle": "Confirm approval and optionally add a note.",
+      "placeholder": "Add a note for Marketing...",
+      "approveButton": "Approve"
+    },
     "taskCard": {
       "approvalPending": "Waiting for approval",
       "approvalApproved": "Approved",
