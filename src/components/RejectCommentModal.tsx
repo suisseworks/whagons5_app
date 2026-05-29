@@ -18,19 +18,37 @@ interface RejectCommentModalProps {
   visible: boolean;
   onClose: () => void;
   onSubmit: (comment: string) => void;
+  title?: string;
+  subtitle?: string;
+  placeholder?: string;
+  submitLabel?: string;
+  submitIcon?: React.ComponentProps<typeof MaterialIcons>['name'];
+  submitColor?: string;
+  requireComment?: boolean;
 }
 
-export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible, onClose, onSubmit }) => {
+export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({
+  visible,
+  onClose,
+  onSubmit,
+  title,
+  subtitle,
+  placeholder,
+  submitLabel,
+  submitIcon = 'close',
+  submitColor = '#DC2626',
+  requireComment = true,
+}) => {
   const { colors, isDarkMode } = useTheme();
   const { t } = useLanguage();
   const [comment, setComment] = useState('');
 
   const handleSubmit = useCallback(() => {
     const trimmed = comment.trim();
-    if (!trimmed) return;
+    if (requireComment && !trimmed) return;
     onSubmit(trimmed);
     setComment('');
-  }, [comment, onSubmit]);
+  }, [comment, onSubmit, requireComment]);
 
   const handleClose = useCallback(() => {
     setComment('');
@@ -45,14 +63,14 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
       >
         <View style={[styles.container, { backgroundColor: colors.surface }]}>
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.text }]}>{t('component.rejectCommentModal.title')}</Text>
+            <Text style={[styles.title, { color: colors.text }]}>{title || t('component.rejectCommentModal.title')}</Text>
             <TouchableOpacity onPress={handleClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <MaterialIcons name="close" size={24} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
           <Text style={[styles.subtitle, { color: isDarkMode ? 'rgba(255,255,255,0.5)' : '#6B7280' }]}>
-            {t('component.rejectCommentModal.subtitle')}
+            {subtitle || t('component.rejectCommentModal.subtitle')}
           </Text>
 
           <TextInput
@@ -64,7 +82,7 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
                 backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#FAFAFA',
               },
             ]}
-            placeholder={t('component.rejectCommentModal.placeholder')}
+            placeholder={placeholder || t('component.rejectCommentModal.placeholder')}
             placeholderTextColor={isDarkMode ? 'rgba(255,255,255,0.3)' : '#9CA3AF'}
             multiline
             numberOfLines={4}
@@ -84,13 +102,13 @@ export const RejectCommentModal: React.FC<RejectCommentModalProps> = ({ visible,
             <TouchableOpacity
               style={[
                 styles.rejectBtn,
-                { backgroundColor: comment.trim() ? '#DC2626' : '#9CA3AF' },
+                { backgroundColor: !requireComment || comment.trim() ? submitColor : '#9CA3AF' },
               ]}
               onPress={handleSubmit}
-              disabled={!comment.trim()}
+              disabled={requireComment && !comment.trim()}
             >
-              <MaterialIcons name="close" size={18} color="#FFFFFF" />
-              <Text style={styles.rejectText}>{t('component.rejectCommentModal.rejectButton')}</Text>
+              <MaterialIcons name={submitIcon} size={18} color="#FFFFFF" />
+              <Text style={styles.rejectText}>{submitLabel || t('component.rejectCommentModal.rejectButton')}</Text>
             </TouchableOpacity>
           </View>
         </View>

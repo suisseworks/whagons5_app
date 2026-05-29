@@ -99,6 +99,15 @@ interface NotificationContextType {
 const STORAGE_KEY_PREFS = 'wh_notification_prefs';
 const STORAGE_KEY_NOTIFICATIONS = 'wh_notifications';
 
+function getServerNotificationId(data?: Record<string, unknown> | null): string | null {
+  const value = data?.notification_id ?? data?.notificationId;
+  return value == null || value === '' ? null : String(value);
+}
+
+function prependUniqueNotification(prev: AppNotification[], notification: AppNotification): AppNotification[] {
+  return [notification, ...prev.filter((item) => item.id !== notification.id)].slice(0, 100);
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -288,7 +297,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         setLastTapPayload(payload);
 
         // Also add to notifications list
-        if (payload.type) {
+        if (payload.type && !getServerNotificationId(payload as Record<string, unknown>)) {
           const meta = getNotificationMeta(payload.type);
           const notif: AppNotification = {
             id: String(Date.now()),
@@ -301,7 +310,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
             type: payload.type,
             data: payload as Record<string, string>,
           };
-          setNotifications(prev => [notif, ...prev]);
+          setNotifications(prev => prependUniqueNotification(prev, notif));
         }
       });
       cleanupRefs.current.push(unsubTap);
@@ -393,6 +402,8 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
 
       unsubscribe = onMessage(messaging, (remoteMessage: any) => {
         const { notification, data } = remoteMessage;
+        if (getServerNotificationId(data)) return;
+
         const type = data?.type as string | undefined;
         const meta = getNotificationMeta(type);
 
@@ -408,7 +419,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
           data: data as Record<string, string>,
         };
 
-        setNotifications(prev => [notif, ...prev.slice(0, 99)]);
+        setNotifications(prev => prependUniqueNotification(prev, notif));
       });
     } catch {
       // FCM not available (e.g., dev without Google Play Services)

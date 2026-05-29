@@ -19,6 +19,17 @@ export interface TaskCommentVoiceMemo {
   listened?: boolean;
 }
 
+export interface TaskWorkspaceContextItem {
+  _id: string;
+  kind?: 'approval' | 'acknowledgment' | string;
+  workspaceId?: string | number | null;
+  workspace_id?: string | number | null;
+  targetUserId?: string | number | null;
+  targetTeamId?: string | number | null;
+  taskAckId?: string | number | null;
+  sourceActionTaskId?: string | number | null;
+}
+
 export interface TaskItem {
   id?: string;
   /** Convex document _id (needed for Convex queries like notes, logs, etc.) */
@@ -81,6 +92,10 @@ export interface TaskItem {
   /** Decision recorded on approval action tasks */
   approvalActionDecision?: 'approved' | 'rejected' | null;
   approval_action_decision?: 'approved' | 'rejected' | null;
+  activeWorkspaceContext?: TaskWorkspaceContextItem | null;
+  active_workspace_context?: TaskWorkspaceContextItem | null;
+  workspaceContexts?: TaskWorkspaceContextItem[];
+  workspace_contexts?: TaskWorkspaceContextItem[];
   /** Number of comments/notes on this task */
   commentCount?: number;
   /** Text from the latest comment/note, if present */

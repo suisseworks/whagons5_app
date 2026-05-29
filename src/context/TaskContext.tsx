@@ -217,10 +217,38 @@ function mapTaskToItem(
     requiresSignature: (task as any).requiresSignature === true || (task as any).requires_signature === true,
     approvalActionDecision: (task as any).approvalActionDecision ?? (task as any).approval_action_decision ?? null,
     approval_action_decision: (task as any).approval_action_decision ?? (task as any).approvalActionDecision ?? null,
+    activeWorkspaceContext: (task as any).activeWorkspaceContext ?? (task as any).active_workspace_context ?? null,
+    active_workspace_context: (task as any).active_workspace_context ?? (task as any).activeWorkspaceContext ?? null,
+    workspaceContexts: (task as any).workspaceContexts ?? (task as any).workspace_contexts ?? [],
+    workspace_contexts: (task as any).workspace_contexts ?? (task as any).workspaceContexts ?? [],
     commentCount: commentSummary?.count ?? 0,
     lastCommentText: commentSummary?.lastText ?? null,
     lastCommentVoiceMemo: commentSummary?.lastVoiceMemo ?? null,
     lastCommentUnread: commentSummary?.lastUnread === true,
+  };
+}
+
+function taskWithActiveWorkspaceContext(task: TaskItem, workspace: any): TaskItem {
+  const contexts = task.workspaceContexts ?? task.workspace_contexts ?? [];
+  if (!Array.isArray(contexts) || contexts.length === 0) return task;
+
+  const workspaceKeys = new Set(
+    [workspace?.id, workspace?._id, workspace?.pgId, workspace?.pg_id]
+      .filter((value) => value != null && value !== '')
+      .map(String),
+  );
+  if (workspaceKeys.size === 0) return task;
+
+  const activeContext = contexts.find((context: any) => {
+    const contextWorkspaceId = context?.workspaceId ?? context?.workspace_id;
+    return contextWorkspaceId != null && workspaceKeys.has(String(contextWorkspaceId));
+  });
+  if (!activeContext) return task;
+
+  return {
+    ...task,
+    activeWorkspaceContext: activeContext,
+    active_workspace_context: activeContext,
   };
 }
 
@@ -1243,6 +1271,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return ws?.id ?? null;
   }, [data.workspaces, selectedWorkspace]);
 
+  const selectedWorkspaceObject = useMemo(() => {
+    if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') return null;
+    return data.workspaces.find((w) => w.name === selectedWorkspace) ?? null;
+  }, [data.workspaces, selectedWorkspace]);
+
   const canUseIndexedTaskList = useMemo(() => (
     selectedWorkspace !== 'Shared'
     && filters.categoryIds.length === 0
@@ -1300,11 +1333,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const workspaceKey = sqlFilterWorkspaceId == null ? undefined : String(sqlFilterWorkspaceId);
 
     if (workspaceKey && statuses.length === 1) {
-      return indexedTaskLists.byWorkspaceStatus.get(workspaceKey)?.get(statuses[0]) ?? EMPTY_TASKS;
+      const tasks = indexedTaskLists.byWorkspaceStatus.get(workspaceKey)?.get(statuses[0]) ?? EMPTY_TASKS;
+      return selectedWorkspaceObject ? tasks.map((task) => taskWithActiveWorkspaceContext(task, selectedWorkspaceObject)) : tasks;
     }
 
     if (workspaceKey && statuses.length === 0) {
-      return indexedTaskLists.byWorkspace.get(workspaceKey) ?? EMPTY_TASKS;
+      const tasks = indexedTaskLists.byWorkspace.get(workspaceKey) ?? EMPTY_TASKS;
+      return selectedWorkspaceObject ? tasks.map((task) => taskWithActiveWorkspaceContext(task, selectedWorkspaceObject)) : tasks;
     }
 
     if (!workspaceKey && statuses.length === 1) {
@@ -1318,15 +1353,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (workspaceKey) {
       const statusMap = indexedTaskLists.byWorkspaceStatus.get(workspaceKey);
       if (!statusMap) return EMPTY_TASKS;
-      return statuses
+      const tasks = statuses
         .flatMap((status) => statusMap.get(status) ?? EMPTY_TASKS)
         .sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
+      return selectedWorkspaceObject ? tasks.map((task) => taskWithActiveWorkspaceContext(task, selectedWorkspaceObject)) : tasks;
     }
 
     return statuses
       .flatMap((status) => indexedTaskLists.byStatus.get(status) ?? EMPTY_TASKS)
       .sort((a, b) => Number(b.id ?? 0) - Number(a.id ?? 0));
-  }, [filters.statuses, indexedTaskLists, sqlFilterWorkspaceId]);
+  }, [filters.statuses, indexedTaskLists, selectedWorkspaceObject, sqlFilterWorkspaceId]);
 
   const sqlFilterKey = useMemo(() => {
     if (!shouldUseSqlTaskList) return '';
@@ -1361,9 +1397,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setSqlFilteredState(null);
           return;
         }
-        const mapped = rows.map((task) =>
-          mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate),
-        );
+        const mapped = rows.map((task) => {
+          const item = mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, formatTaskDate);
+          return selectedWorkspaceObject ? taskWithActiveWorkspaceContext(item, selectedWorkspaceObject) : item;
+        });
         setSqlFilteredState({ key: sqlFilterKey, tasks: mapped, total });
       })
       .catch(() => {
@@ -1385,6 +1422,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     spotMap,
     sqlFilterKey,
     sqlFilterWorkspaceId,
+    selectedWorkspaceObject,
     statusMap,
     shouldUseSqlTaskList,
     tagMap,
@@ -1429,7 +1467,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsIdStr = String(ws.id);
-        result = workspaceVisibleMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+        result = workspaceVisibleMappedTasks
+          .filter((t) => String(t.workspaceId) === wsIdStr)
+          .map((t) => taskWithActiveWorkspaceContext(t, ws));
         if (result.length === 0 && allMappedTasks.length > 0) {
           const sampleIds = workspaceVisibleMappedTasks.slice(0, 5).map((t) => `${t.workspaceId}(${typeof t.workspaceId})`);
           console.warn(`[TaskContext] Workspace "${selectedWorkspace}" (id=${ws.id}, type=${typeof ws.id}) matched 0/${workspaceVisibleMappedTasks.length} tasks. Sample task wsIds: [${sampleIds.join(', ')}]`);
@@ -1503,7 +1543,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
         const wsIdStr = String(ws.id);
-        result = workspaceVisibleMappedTasks.filter((t) => String(t.workspaceId) === wsIdStr);
+        result = workspaceVisibleMappedTasks
+          .filter((t) => String(t.workspaceId) === wsIdStr)
+          .map((t) => taskWithActiveWorkspaceContext(t, ws));
       } else {
         result = workspaceVisibleMappedTasks;
       }

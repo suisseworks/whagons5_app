@@ -16,6 +16,7 @@ import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { fontFamilies, radius, shadows } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
 import { api } from '../../../convex/_generated/api';
+import { getApprovalDecisionNoteSummary, parseApprovalDecisionNote } from '../utils/approvalNotes';
 
 function hexToRgba(hex: string, alpha: number): string {
   const c = hex.replace('#', '');
@@ -263,27 +264,75 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
     (api as any).tasks.getActionTaskKind,
     tenantId && task.convexId ? { tenantId, taskId: task.convexId as any } : 'skip',
   ) as string | null | undefined;
+  const activeWorkspaceContext = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
+  const activeWorkspaceContextKind = String(activeWorkspaceContext?.kind ?? '').toLowerCase();
+  const effectiveActionTaskKind = activeWorkspaceContextKind === 'acknowledgment'
+    ? 'ACKNOWLEDGMENT'
+    : activeWorkspaceContextKind === 'approval'
+      ? 'STATUS_TRACKING'
+      : actionTaskKind;
+  const isAckActionTask = effectiveActionTaskKind === 'ACKNOWLEDGMENT';
+  const isApprovalActionTask = effectiveActionTaskKind === 'STATUS_TRACKING';
+  const approvalActionState = useQuery(
+    (api as any).tasks.getShareApprovalActionState,
+    tenantId && task.convexId && isApprovalActionTask
+      ? { tenantId, taskId: task.convexId as any }
+      : 'skip',
+  ) as { decision?: 'pending' | 'approved' | 'rejected' | null } | null | undefined;
+  const acknowledgmentActionState = useQuery(
+    (api as any).tasks.getActionTaskAcknowledgmentState,
+    tenantId && task.convexId && isAckActionTask
+      ? { tenantId, taskId: task.convexId as any }
+      : 'skip',
+  ) as { acknowledged?: boolean; allAcknowledged?: boolean } | null | undefined;
   const borderColor = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const tertiaryText = isDarkMode ? 'rgba(255, 255, 255, 0.45)' : '#9CA3AF';
   const flagHex = task.flagColor ? (FLAG_HEX[task.flagColor] ?? task.flagColor) : null;
   const statusAction = task.statusAction?.trim().toUpperCase() ?? null;
   const statusType = classifyStatusAction(statusAction) ?? classifyStatus(task.status);
-  const actionTask = actionTaskKind === 'ACKNOWLEDGMENT' || actionTaskKind === 'STATUS_TRACKING';
+  const actionTask = isAckActionTask || isApprovalActionTask;
+  const isAckActionResolved = isAckActionTask && acknowledgmentActionState?.acknowledged === true;
+  const approvalActionDecision = isApprovalActionTask ? (task.approvalActionDecision
+    ?? task.approval_action_decision
+    ?? (approvalActionState?.decision !== 'pending' ? approvalActionState?.decision : null)
+    ?? null) : null;
   const working = Boolean(task.id && isTaskWorking(task.id));
   const isCreator = authUser?.id != null && task.createdBy != null && String(authUser.id) === String(task.createdBy);
   const hasSeen = isCreator && task.firstViewedAt != null;
   const commentCount = task.commentCount ?? 0;
   const lastCommentText = task.lastCommentText?.trim() ?? '';
+  const approvalCommentPreview = parseApprovalDecisionNote(lastCommentText);
+  const lastCommentDisplayText = approvalCommentPreview
+    ? getApprovalDecisionNoteSummary(lastCommentText, {
+        approved: t('component.taskCard.approvalApproved'),
+        rejected: t('component.taskCard.approvalRejected'),
+        by: 'by',
+      })
+    : lastCommentText;
   const hasUnreadComment = task.lastCommentUnread === true;
   const commentAccent = isDarkMode ? '#34D399' : '#16A34A';
   const commentBadgeBg = isDarkMode ? 'rgba(52, 211, 153, 0.14)' : 'rgba(22, 163, 74, 0.12)';
-  const approvalState = task.approvalStatus === 'pending'
+  const approvalState = !isAckActionTask && task.approvalStatus === 'pending'
     ? {
         label: t('component.taskCard.approvalPending'),
         icon: 'clock-outline' as const,
         color: '#EA580C',
         backgroundColor: '#FFF7ED',
       }
+    : approvalActionDecision === 'approved'
+      ? {
+          label: t('component.taskCard.approvalApproved'),
+          icon: 'check-circle-outline' as const,
+          color: '#16A34A',
+          backgroundColor: '#F0FDF4',
+        }
+      : approvalActionDecision === 'rejected'
+        ? {
+            label: t('component.taskCard.approvalRejected'),
+            icon: 'close-circle-outline' as const,
+            color: '#DC2626',
+            backgroundColor: '#FEF2F2',
+          }
     : task.approvalStatus === 'approved'
       ? {
           label: t('component.taskCard.approvalApproved'),
@@ -417,12 +466,22 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
 
       {/* Row 2: Status badge + Location + Approval pill */}
       <View style={styles.metaRow}>
-        {approvalState ? (
+        {isAckActionResolved ? (
+          <View style={[styles.approvalPill, { backgroundColor: '#F0FDF4' }]}>
+            <MaterialCommunityIcons name="check-circle-outline" size={11} color="#16A34A" />
+            <Text style={[styles.approvalPillText, { color: '#16A34A' }]}>{t('sharedTask.ackStatusAcknowledged')}</Text>
+          </View>
+        ) : isAckActionTask ? (
+          <View style={[styles.actionPromptPill, styles.ackPromptPill]}>
+            <MaterialIcons name="visibility" size={11} color="#047857" />
+            <Text style={[styles.actionPromptText, { color: '#047857' }]}>{t('sharedTask.acknowledgeButton')}</Text>
+          </View>
+        ) : approvalState ? (
           <View style={[styles.approvalPill, { backgroundColor: approvalState.backgroundColor }]}> 
             <MaterialCommunityIcons name={approvalState.icon} size={11} color={approvalState.color} />
             <Text style={[styles.approvalPillText, { color: approvalState.color }]}>{approvalState.label}</Text>
           </View>
-        ) : actionTaskKind === 'STATUS_TRACKING' ? (
+        ) : isApprovalActionTask && approvalActionState?.decision !== 'approved' && approvalActionState?.decision !== 'rejected' ? (
           <View style={styles.actionPromptGroup}>
             <View style={[styles.actionPromptPill, styles.approvePromptPill]}>
               <MaterialCommunityIcons name="check-circle-outline" size={11} color="#047857" />
@@ -432,11 +491,6 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
               <MaterialCommunityIcons name="close-circle-outline" size={11} color="#DC2626" />
               <Text style={[styles.actionPromptText, { color: '#DC2626' }]}>{t('sharedTask.rejectButton')}</Text>
             </View>
-          </View>
-        ) : actionTaskKind === 'ACKNOWLEDGMENT' ? (
-          <View style={[styles.actionPromptPill, styles.ackPromptPill]}>
-            <MaterialIcons name="visibility" size={11} color="#047857" />
-            <Text style={[styles.actionPromptText, { color: '#047857' }]}>{t('sharedTask.acknowledgeButton')}</Text>
           </View>
         ) : !actionTask ? (
           <CustomChip
@@ -497,19 +551,21 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
             </Text>
             {hasUnreadComment && <View style={[styles.unreadDot, { backgroundColor: commentAccent }]} />}
           </View>
-          {!!lastCommentText && (
+          {!!lastCommentDisplayText && (
             <Text
               style={[
                 styles.lastCommentText,
                 {
-                  color: hasUnreadComment ? colors.text : tertiaryText,
+                  color: approvalCommentPreview
+                    ? (approvalCommentPreview.decision === 'approved' ? commentAccent : '#DC2626')
+                    : hasUnreadComment ? colors.text : tertiaryText,
                   fontFamily: hasUnreadComment ? fontFamilies.bodyBold : fontFamilies.bodySemibold,
                 },
               ]}
               numberOfLines={1}
               ellipsizeMode="tail"
             >
-              {lastCommentText}
+              {lastCommentDisplayText}
             </Text>
           )}
           {!lastCommentText && task.lastCommentVoiceMemo && (

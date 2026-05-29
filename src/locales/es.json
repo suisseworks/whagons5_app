@@ -726,6 +726,12 @@
       "cancelButton": "Cancelar",
       "rejectButton": "Rechazar"
     },
+    "approveCommentModal": {
+      "title": "Aprobar Comunicado",
+      "subtitle": "Confirma la aprobacion y agrega una nota opcional.",
+      "placeholder": "Agrega una nota para Mercadeo...",
+      "approveButton": "Aprobar"
+    },
     "taskCard": {
       "approvalPending": "En espera de aprobación",
       "approvalApproved": "Aprobado",

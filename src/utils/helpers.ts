@@ -201,6 +201,10 @@ type NotificationNavigationInput = {
   task_pg_id?: string | number;
   taskConvexId?: string;
   task_convex_id?: string;
+  contextId?: string;
+  context_id?: string;
+  workspaceContextId?: string;
+  workspace_context_id?: string;
   chatId?: string | number;
   chat_id?: string | number;
   boardPgId?: string | number;
@@ -259,6 +263,26 @@ function findTaskByTitle(tasks: TaskItem[], rawTitle?: string | null): TaskItem 
   return tasks.find((candidate) => candidate.title.trim() === title);
 }
 
+function taskWithNotificationWorkspaceContext(
+  task: TaskItem,
+  data: Record<string, any>,
+  type?: string,
+): TaskItem {
+  const contextId = data.contextId || data.context_id || data.workspaceContextId || data.workspace_context_id;
+  if (!contextId || task.activeWorkspaceContext || task.active_workspace_context) return task;
+  const contextKind = type === 'acknowledgment_requested' ? 'acknowledgment' : 'approval';
+  const context = {
+    _id: String(contextId),
+    kind: contextKind,
+    workspaceId: data.actionWorkspaceId || data.action_workspace_id || data.workspaceId || data.workspace_id || null,
+  };
+  return {
+    ...task,
+    activeWorkspaceContext: context,
+    active_workspace_context: context,
+  };
+}
+
 export function resolveNotificationNavigation(
   input: NotificationNavigationInput,
   tasks: TaskItem[],
@@ -270,6 +294,7 @@ export function resolveNotificationNavigation(
   const targetUrl = input.target_url || data.target_url || '';
   const targetsSharedTask = typeof targetUrl === 'string' && /(?:^|\/)shared(?:-with-me)?(?:\?|$|\/)/.test(targetUrl);
   const targetsApproval = type === 'approval' || (typeof type === 'string' && type.startsWith('approval_'));
+  const targetsWorkspaceContext = typeof targetUrl === 'string' && targetUrl.includes('/workspace/') && /[?&]context=/.test(targetUrl);
 
   const taskIds = [
     data.taskId,
@@ -287,16 +312,17 @@ export function resolveNotificationNavigation(
   ].filter((value): value is string | number => value != null && value !== '');
 
   for (const taskId of taskIds) {
-    const task = findTaskByNotificationId(tasks, taskId);
+    const foundTask = findTaskByNotificationId(tasks, taskId);
+    const task = foundTask ? taskWithNotificationWorkspaceContext(foundTask, data, type) : undefined;
     if (task) {
-      if (targetsSharedTask || targetsApproval || type === 'task_shared' || task.shareId || task.approvalStatus) {
+      if (targetsSharedTask || (targetsApproval && !targetsWorkspaceContext) || type === 'task_shared' || task.shareId || task.approvalStatus) {
         return { screen: 'SharedTaskDetail', params: { task } };
       }
       return { screen: 'TaskDetail', params: { task } };
     }
   }
 
-  if (targetsSharedTask || targetsApproval || type === 'task_shared') {
+  if (targetsSharedTask || (targetsApproval && !targetsWorkspaceContext) || type === 'task_shared') {
     return { screen: 'Main', params: { tab: 0, workspace: 'Shared' } };
   }
 
@@ -316,9 +342,10 @@ export function resolveNotificationNavigation(
     ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
 
     for (const taskName of taskNameCandidates) {
-      const task = findTaskByTitle(tasks, taskName);
+      const foundTask = findTaskByTitle(tasks, taskName);
+      const task = foundTask ? taskWithNotificationWorkspaceContext(foundTask, data, type) : undefined;
       if (task) {
-        if (targetsSharedTask || targetsApproval || type === 'task_shared' || task.shareId || task.approvalStatus) {
+        if (targetsSharedTask || (targetsApproval && !targetsWorkspaceContext) || type === 'task_shared' || task.shareId || task.approvalStatus) {
           return { screen: 'SharedTaskDetail', params: { task } };
         }
         return { screen: 'TaskDetail', params: { task } };
