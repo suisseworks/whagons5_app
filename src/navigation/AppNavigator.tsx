@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { InteractionManager, Platform, StatusBar, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { InteractionManager, Linking, Platform, StatusBar, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { NavigationContainer, DefaultTheme, DarkTheme, Theme, LinkingOptions, getStateFromPath as defaultGetStateFromPath, useNavigationContainerRef, CommonActions } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
@@ -17,6 +17,8 @@ import { NoTenantsScreen } from '../screens/NoTenantsScreen';
 import { MainScreen } from '../screens/MainScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { TaskShareLinkScreen } from '../screens/TaskShareLinkScreen';
+import { NfcTapScreen } from '../screens/NfcTapScreen';
+import { NfcProgramTagScreen } from '../screens/NfcProgramTagScreen';
 import { TaskDetailScreen } from '../screens/TaskDetailScreen';
 import { SharedTaskDetailScreen } from '../screens/SharedTaskDetailScreen';
 import { CreateTaskScreen } from '../screens/CreateTaskScreen';
@@ -53,6 +55,9 @@ export const AppNavigator: React.FC = () => {
   const backOnlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
   const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim();
+  const nfcBaseDomain = (process.env.EXPO_PUBLIC_NFC_BASE_DOMAIN?.trim() || 'whagons.com')
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '');
 
   useEffect(() => {
     if (!isOnline) {
@@ -147,6 +152,9 @@ export const AppNavigator: React.FC = () => {
     const shareCandidates = [shareBaseUrl, convexSiteUrl].filter(
       (value): value is string => Boolean(value),
     );
+    if (nfcBaseDomain) {
+      prefixes.push(`https://${nfcBaseDomain}`, `https://app.${nfcBaseDomain}`, `https://*.${nfcBaseDomain}`);
+    }
 
     for (const candidate of shareCandidates) {
       try {
@@ -157,8 +165,46 @@ export const AppNavigator: React.FC = () => {
       } catch {}
     }
 
+    const normalizeIncomingUrl = (url: string) => {
+      try {
+        const parsed = new URL(url);
+        const isNfcTap = parsed.pathname.startsWith('/nfc/tap/');
+        const isNfcProgram = parsed.pathname.startsWith('/nfc/program/');
+        if (!isNfcTap && !isNfcProgram) return url;
+
+        const pathId = parsed.pathname.split('/').filter(Boolean).at(-1);
+        if (!pathId) return url;
+
+        const suffix = `.${nfcBaseDomain}`;
+        const tenantId = parsed.hostname.endsWith(suffix)
+          ? parsed.hostname.slice(0, -suffix.length)
+          : null;
+        const normalizedTenant = tenantId && tenantId !== 'app' && tenantId !== 'www' ? tenantId : null;
+        const params = new URLSearchParams();
+        if (normalizedTenant) params.set('tenantId', normalizedTenant);
+        if (isNfcProgram) {
+          const programUrl = parsed.searchParams.get('url');
+          if (programUrl) params.set('url', programUrl);
+        }
+        const query = params.toString() ? `?${params.toString()}` : '';
+        return `whagons://nfc/${isNfcTap ? 'tap' : 'program'}/${encodeURIComponent(pathId)}${query}`;
+      } catch {
+        return url;
+      }
+    };
+
     return {
       prefixes,
+      async getInitialURL() {
+        const initialUrl = await Linking.getInitialURL();
+        return initialUrl ? normalizeIncomingUrl(initialUrl) : null;
+      },
+      subscribe(listener) {
+        const subscription = Linking.addEventListener('url', ({ url }) => {
+          listener(normalizeIncomingUrl(url));
+        });
+        return () => subscription.remove();
+      },
       getStateFromPath(path, options) {
         try {
           if (path.startsWith('share/task')) {
@@ -180,10 +226,25 @@ export const AppNavigator: React.FC = () => {
               token: (value: string) => decodeURIComponent(value),
             },
           },
+          NfcTap: {
+            path: 'nfc/tap/:uuid',
+            parse: {
+              uuid: (value: string) => decodeURIComponent(value),
+              tenantId: (value: string) => decodeURIComponent(value),
+            },
+          },
+          NfcProgramTag: {
+            path: 'nfc/program/:tagId',
+            parse: {
+              tagId: (value: string) => decodeURIComponent(value),
+              url: (value: string) => decodeURIComponent(value),
+              tenantId: (value: string) => decodeURIComponent(value),
+            },
+          },
         },
       },
     };
-  }, [convexSiteUrl, shareBaseUrl]);
+  }, [convexSiteUrl, nfcBaseDomain, shareBaseUrl]);
 
   return (
     <NavigationContainer
@@ -209,6 +270,8 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="Main" component={MainScreen} />
         <Stack.Screen name="Profile" component={ProfileScreen} />
         <Stack.Screen name="TaskShareLink" component={TaskShareLinkScreen} />
+        <Stack.Screen name="NfcTap" component={NfcTapScreen} />
+        <Stack.Screen name="NfcProgramTag" component={NfcProgramTagScreen} />
         <Stack.Screen name="TaskDetail" component={TaskDetailScreen} />
         <Stack.Screen name="SharedTaskDetail" component={SharedTaskDetailScreen} />
         <Stack.Screen name="CreateTask" component={CreateTaskScreen} />
