@@ -20,9 +20,15 @@
       "bundleIdentifier": "com.whagons.v5",
       "usesAppleSignIn": true,
       "googleServicesFile": "./GoogleService-Info.plist",
+      "associatedDomains": [
+        "applinks:whagons.com",
+        "applinks:app.whagons.com",
+        "applinks:*.whagons.com"
+      ],
       "infoPlist": {
         "NSCameraUsageDescription": "Allow Whagons to access your camera for video calls and barcode scanning.",
-        "NSMicrophoneUsageDescription": "Allow Whagons to use your microphone for voice calls, video calls, and voice task drafts."
+        "NSMicrophoneUsageDescription": "Allow Whagons to use your microphone for voice calls, video calls, and voice task drafts.",
+        "NFCReaderUsageDescription": "Allow Whagons to program and read NFC task tags."
       }
     },
     "android": {
@@ -39,7 +45,50 @@
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO",
-        "MODIFY_AUDIO_SETTINGS"
+        "MODIFY_AUDIO_SETTINGS",
+        "NFC"
+      ],
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
+              "host": "whagons.com",
+              "pathPrefix": "/nfc/program"
+            },
+            {
+              "scheme": "https",
+              "host": "app.whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
+              "host": "app.whagons.com",
+              "pathPrefix": "/nfc/program"
+            },
+            {
+              "scheme": "https",
+              "host": "*.whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
+              "host": "*.whagons.com",
+              "pathPrefix": "/nfc/program"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
       ]
     },
     "web": {
@@ -51,6 +100,7 @@
       "./node_modules/@react-native-firebase/auth/app.plugin.js",
       "./node_modules/@react-native-firebase/messaging/app.plugin.js",
       "@react-native-google-signin/google-signin",
+      "react-native-nfc-manager",
       "expo-apple-authentication",
       [
         "expo-font",

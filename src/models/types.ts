@@ -314,6 +314,8 @@ export type RootStackParamList = {
   Main: { tab?: number; conversationId?: string | number; workspace?: 'Shared' | 'Everything' } | undefined;
   Profile: undefined;
   TaskShareLink: { token: string };
+  NfcTap: { uuid: string; tenantId?: string };
+  NfcProgramTag: { tagId: string; url: string; tenantId?: string };
   TaskDetail: { task: TaskItem };
   SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;
