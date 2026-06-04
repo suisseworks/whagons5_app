@@ -1,6 +1,7 @@
 .PHONY: help android-run android-apk-debug android-apk-release android-apk-dev-backend android-clean \
        ios-run ios-prebuild ios-build-sim ios-archive ios-upload ios-clean ios-screenshots \
        play-listing-assets upload-play-listing-assets \
+       compatibility-inventory compatibility-check \
        release release-prod release-prod-android release-ios-latest release-prod-mac release-notes-preview version
 
 # Detect OS for sed compatibility
@@ -14,6 +15,8 @@ endif
 REMOTE_REPO := $(shell git remote get-url origin)
 OPENROUTER_MODEL ?= moonshotai/kimi-k2.5
 IMAGEMAGICK ?= $(shell command -v magick 2>/dev/null || command -v convert 2>/dev/null)
+CLIENT_ROOT ?= ..
+APP_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || node -p "'v' + require('./package.json').version")
 
 # ---- iOS build vars ----
 IOS_WORKSPACE ?= ios/Whagons.xcworkspace
@@ -38,6 +41,8 @@ help:
 	@echo "  make release-ios-latest    Mac-only: sync local iOS version, then upload to App Store Connect"
 	@echo "  make release-prod VERSION=2.0.0  Production release with explicit version"
 	@echo "  make release-notes-preview Safe: generate release notes only into /tmp"
+	@echo "  make compatibility-inventory Generate Convex call inventory for the current app worktree"
+	@echo "  make compatibility-check     Check Convex call inventory and critical runtime coverage"
 	@echo "  make version               Show current version info"
 	@echo ""
 	@echo "  make android-run           Run app on Android via Expo (dev)"
@@ -85,6 +90,12 @@ upload-play-listing-assets: play-listing-assets
 	./whagons-uploader --service-account ../play-store-service-account.json upload-listing-image --language en-US --type icon --file ../assets/play-store/icon.png && \
 	./whagons-uploader --service-account ../play-store-service-account.json upload-listing-image --language en-US --type featureGraphic --file ../assets/play-store/feature-graphic.png && \
 	cd ..
+
+compatibility-inventory:
+	cd $(CLIENT_ROOT) && pnpm run compatibility:inventory -- --worktree-tag "$(APP_TAG)"
+
+compatibility-check:
+	cd $(CLIENT_ROOT) && pnpm run compatibility:check -- --worktree-tag "$(APP_TAG)"
 
 # ===========================================================================
 #  iOS builds
@@ -220,10 +231,11 @@ release-notes-preview:
 #    3. Query Play Store for latest versionCode, increment, update build.gradle
 #    4. Sync versionName across files
 #    5. Stamp git hash into version.ts
-#    6. Generate AI release notes through OpenRouter and bundle them into the app
-#    7. Build release AAB/APK with the new versionCode
-#    8. Upload AAB to Google Play Console
-#    9. Commit, tag, create GitHub release, publish app release notes to Convex
+#    6. Generate and check Convex compatibility inventory
+#    7. Generate AI release notes through OpenRouter and bundle them into the app
+#    8. Build release AAB/APK with the new versionCode
+#    9. Upload AAB to Google Play Console
+#    10. Commit, tag, create GitHub release, publish app release notes to Convex
 # ===========================================================================
 release:
 	@set -e && \
@@ -281,21 +293,24 @@ release:
 	tag_name="v$$version" && \
 	release_notes_file="/tmp/whagons-release-notes-$$version.md" && \
 	release_tag_file="/tmp/whagons-release-tag-$$version.txt" && \
-	echo "=== Step 6: Generate release notes ===" && \
+	echo "=== Step 6: Generate Convex compatibility inventory ===" && \
+	(cd .. && pnpm run compatibility:inventory -- --worktree-tag "$$tag_name") && \
+	(cd .. && pnpm run compatibility:check -- --worktree-tag "$$tag_name") && \
+	echo "=== Step 7: Generate release notes ===" && \
 	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
 	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
 	cat "$$release_notes_file" >> "$$release_tag_file" && \
 	\
-	echo "=== Step 7: Build AAB and APK ===" && \
+	echo "=== Step 8: Build AAB and APK ===" && \
 	cd android && ./gradlew --no-daemon bundleRelease assembleRelease && cd .. && \
 	release_apk="android/app/build/outputs/apk/release/app-release.apk" && \
 	release_asset_name="Whagons-$$version-build-$$next_code.apk" && \
 	if [ ! -f "$$release_apk" ]; then echo "Error: missing release APK at $$release_apk"; exit 1; fi && \
 	\
-	echo "=== Step 8: Upload to Google Play Console ===" && \
+	echo "=== Step 9: Upload to Google Play Console ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab && cd .. && \
 	\
-	echo "=== Step 9: Commit, tag, push, and publish release notes ===" && \
+	echo "=== Step 10: Commit, tag, push, and publish release notes ===" && \
 	git add . && \
 	git commit -m "Release $$release_name" && \
 	git tag -a "$$tag_name" -F "$$release_tag_file" && \
@@ -370,21 +385,24 @@ release-prod-android:
 	tag_name="v$$version" && \
 	release_notes_file="/tmp/whagons-release-notes-$$version.md" && \
 	release_tag_file="/tmp/whagons-release-tag-$$version.txt" && \
-	echo "=== Step 6: Generate release notes ===" && \
+	echo "=== Step 6: Generate Convex compatibility inventory ===" && \
+	(cd .. && pnpm run compatibility:inventory -- --worktree-tag "$$tag_name") && \
+	(cd .. && pnpm run compatibility:check -- --worktree-tag "$$tag_name") && \
+	echo "=== Step 7: Generate release notes ===" && \
 	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
 	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
 	cat "$$release_notes_file" >> "$$release_tag_file" && \
 	\
-	echo "=== Step 7: Build AAB and APK ===" && \
+	echo "=== Step 8: Build AAB and APK ===" && \
 	cd android && ./gradlew --no-daemon bundleRelease assembleRelease && cd .. && \
 	release_apk="android/app/build/outputs/apk/release/app-release.apk" && \
 	release_asset_name="Whagons-$$version-build-$$next_code.apk" && \
 	if [ ! -f "$$release_apk" ]; then echo "Error: missing release APK at $$release_apk"; exit 1; fi && \
 	\
-	echo "=== Step 8: Upload to Google Play Console (PRODUCTION) ===" && \
+	echo "=== Step 9: Upload to Google Play Console (PRODUCTION) ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab --track production --publish && cd .. && \
 	\
-	echo "=== Step 9: Commit, tag, push, and publish release notes ===" && \
+	echo "=== Step 10: Commit, tag, push, and publish release notes ===" && \
 	git add . && \
 	git commit -m "Release $$release_name" && \
 	git tag -a "$$tag_name" -F "$$release_tag_file" && \
