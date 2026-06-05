@@ -154,6 +154,18 @@ type MessagePart =
   | { type: 'video'; url: string; label: string }
   | { type: 'file'; url: string; label: string; storageId?: string };
 
+type ViewerMediaItem = {
+  type: 'image' | 'video';
+  url?: string;
+  storageId?: string;
+  label?: string;
+};
+
+type ViewerMediaState = {
+  items: ViewerMediaItem[];
+  index: number;
+};
+
 /** Extract convex-file: storageId or {{convex-file:storageId}} from a URL */
 function parseConvexFileUrl(url: string): string | null {
   // convex-file:kg2caqet26wp4qtfgv4z9sn70n837kma
@@ -552,6 +564,81 @@ const ConvexFileImage = memo(({
   );
 });
 
+const ConvexFileGalleryTile = memo(({
+  storageId,
+  style,
+  children,
+  onPress,
+}: {
+  storageId: string;
+  style?: any;
+  children?: React.ReactNode;
+  onPress?: () => void;
+}) => {
+  const { tenantId } = useTenant();
+  const cached = storageUrlCache.get(storageId);
+  const rawUrl = useQuery(
+    api.files.getFileUrl,
+    cached || !tenantId ? 'skip' : { tenantId, storageId: storageId as any },
+  );
+  const url = cached ?? (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
+
+  if (url && !cached) storageUrlCache.set(storageId, url);
+
+  return (
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress} style={style}>
+      {url ? (
+        <ProgressiveImage uri={url} width={360} height={360} mode="fill" style={StyleSheet.absoluteFill} contentFit="cover" cachePolicy="disk" transition={200} />
+      ) : (
+        <View style={[StyleSheet.absoluteFill, styles.galleryImageLoading]}>
+          <ActivityIndicator size="small" />
+        </View>
+      )}
+      {children}
+    </TouchableOpacity>
+  );
+});
+
+const ConvexFileViewerImage = memo(({
+  storageId,
+  width,
+  height,
+}: {
+  storageId: string;
+  width: number;
+  height: number;
+}) => {
+  const { tenantId } = useTenant();
+  const cached = storageUrlCache.get(storageId);
+  const rawUrl = useQuery(
+    api.files.getFileUrl,
+    cached || !tenantId ? 'skip' : { tenantId, storageId: storageId as any },
+  );
+  const url = cached ?? (rawUrl ? fixConvexStorageUrl(rawUrl) : null);
+
+  if (url && !cached) storageUrlCache.set(storageId, url);
+
+  if (!url) {
+    return (
+      <View style={[styles.viewerImageStage, { width, height }]}>
+        <ActivityIndicator size="small" color="#FFFFFF" />
+      </View>
+    );
+  }
+
+  return (
+    <ProgressiveImage
+      uri={url}
+      width={Math.round(width)}
+      height={Math.round(height)}
+      mode="fit"
+      style={{ width, height }}
+      contentFit="contain"
+      cachePolicy="disk"
+    />
+  );
+});
+
 const ConvexFileAudio = memo(({
   storageId,
   isMe,
@@ -641,7 +728,7 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   const cvxAddReaction = useOfflineMutation(api.chat.addReaction, 'chat.addReaction');
   const cvxRemoveReaction = useOfflineMutation(api.chat.removeReaction, 'chat.removeReaction');
   const { pickAndUpload, uploadFile, uploading: uploadingFile, attachmentPickerProps } = useConvexUpload();
-  const [viewerMedia, setViewerMedia] = useState<{ url: string; type: 'image' | 'video' } | null>(null);
+  const [viewerMedia, setViewerMedia] = useState<ViewerMediaState | null>(null);
   const toastRef = useRef<ToastRef>(null);
 
   const availableWorkspaces = useMemo(
@@ -1139,53 +1226,52 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
 
     if (attachments.length === 0) return;
 
-    // Send each attachment as a markdown-style link message
-    for (const a of attachments) {
-      const text = a.fileType.startsWith('image/')
+    const text = attachments.map((a) => (
+      a.fileType.startsWith('image/')
         ? `![${a.fileName}](convex-file:${a.storageId})`
-        : `[${a.fileName}](convex-file:${a.storageId})`;
+        : `[${a.fileName}](convex-file:${a.storageId})`
+    )).join('\n');
 
-      const pendingDm = !isWorkspaceChat && activeConversationId
-        ? buildPendingDmMessage(activeConversationId, text)
-        : null;
-      const pendingWs = isWorkspaceChat && spaceWsId
-        ? buildPendingSpaceMessage(spaceWsId, text)
-        : null;
+    const pendingDm = !isWorkspaceChat && activeConversationId
+      ? buildPendingDmMessage(activeConversationId, text)
+      : null;
+    const pendingWs = isWorkspaceChat && spaceWsId
+      ? buildPendingSpaceMessage(spaceWsId, text)
+      : null;
 
+    if (pendingDm) {
+      setPendingDmMessages((prev) => [pendingDm, ...prev]);
+    }
+    if (pendingWs) {
+      setPendingSpaceMessages((prev) => [pendingWs, ...prev]);
+    }
+
+    try {
+      if (isWorkspaceChat) {
+        const ws = availableWorkspaces.find((w) => String(w.id) === String(spaceWsId));
+        const convexWsId = (ws as any)?._id;
+        if (!convexWsId) throw new Error('Workspace not found');
+
+        await cvxSendWorkspaceChat({
+          tenantId,
+          workspaceId: convexWsId as any,
+          message: text,
+        });
+      } else {
+        const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
+        const convexConvId = (conv as any)?._id;
+        if (!convexConvId) throw new Error('Conversation not found');
+
+        await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
+      }
+    } catch {
       if (pendingDm) {
-        setPendingDmMessages((prev) => [pendingDm, ...prev]);
+        setPendingDmMessages((prev) => prev.filter((m) => m.id !== pendingDm.id));
       }
       if (pendingWs) {
-        setPendingSpaceMessages((prev) => [pendingWs, ...prev]);
+        setPendingSpaceMessages((prev) => prev.filter((m) => m.id !== pendingWs.id));
       }
-
-      try {
-        if (isWorkspaceChat) {
-          const ws = availableWorkspaces.find((w) => String(w.id) === String(spaceWsId));
-          const convexWsId = (ws as any)?._id;
-          if (!convexWsId) throw new Error('Workspace not found');
-
-          await cvxSendWorkspaceChat({
-            tenantId,
-            workspaceId: convexWsId as any,
-            message: text,
-          });
-        } else {
-          const conv = data.conversations.find((c) => String(c.id) === String(activeConversationId));
-          const convexConvId = (conv as any)?._id;
-          if (!convexConvId) throw new Error('Conversation not found');
-
-          await cvxSendMessage({ tenantId, conversationId: convexConvId as any, message: text });
-        }
-      } catch {
-        if (pendingDm) {
-          setPendingDmMessages((prev) => prev.filter((m) => m.id !== pendingDm.id));
-        }
-        if (pendingWs) {
-          setPendingSpaceMessages((prev) => prev.filter((m) => m.id !== pendingWs.id));
-        }
-        Alert.alert('Error', t('colab.failedToSendFile', { fileName: a.fileName }));
-      }
+      Alert.alert('Error', t('colab.failedToSendFile', { fileName: attachments[0]?.fileName ?? '' }));
     }
   }, [
     activeConversationId,
@@ -1663,19 +1749,80 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
             ) : (
               <View>
                 {/* Media content rendered outside Pressable so taps work */}
-                {(() => {
-                  const parts = messageParts;
-                  const mediaParts = parts.filter((p) => p.type === 'image' || p.type === 'video' || p.type === 'audio');
-                  if (mediaParts.length === 0) return null;
-                  return (
-                    <View style={[
-                      styles.messageBubble,
-                      { padding: 0, overflow: 'hidden', backgroundColor: 'transparent', borderWidth: 0 },
-                    ]}>
-                      {mediaParts.map((part, idx) => {
-                        if (part.type === 'audio' && part.storageId) {
-                          return (
-                            <ConvexFileAudio
+	                {(() => {
+	                  const parts = messageParts;
+	                  const mediaParts = parts.filter((p) => p.type === 'image' || p.type === 'video' || p.type === 'audio');
+	                  const imageParts = mediaParts.filter((p): p is Extract<MessagePart, { type: 'image' }> => p.type === 'image');
+	                  const nonImageMediaParts = mediaParts.filter((p) => p.type !== 'image');
+	                  if (mediaParts.length === 0) return null;
+                    const imageViewerItems = imageParts.map((part) => ({
+                      type: 'image' as const,
+                      url: part.storageId ? undefined : part.url,
+                      storageId: part.storageId,
+                      label: part.label,
+                    }));
+                    const galleryWidth = Math.min(screenWidth * 0.74, 316);
+                    const galleryGap = 4;
+                    const galleryTileSize = (galleryWidth - galleryGap) / 2;
+	                  return (
+	                    <View style={[
+	                      styles.messageBubble,
+	                      { padding: 0, overflow: 'hidden', backgroundColor: 'transparent', borderWidth: 0 },
+	                    ]}>
+                        {imageParts.length > 1 && (
+                          <View style={[styles.imageGalleryGrid, { width: galleryWidth }]}>
+                            {imageParts.slice(0, 4).map((part, idx) => {
+                              const hiddenCount = imageParts.length - 4;
+                              const showOverflow = idx === 3 && hiddenCount > 0;
+                              const tileStyle = [
+                                styles.imageGalleryTile,
+                                { width: galleryTileSize, height: galleryTileSize },
+                              ];
+                              const overlay = showOverflow ? (
+                                <View style={styles.imageGalleryOverflow}>
+                                  <Text style={styles.imageGalleryOverflowText}>+{hiddenCount}</Text>
+                                </View>
+                              ) : null;
+
+                              if (part.storageId) {
+                                return (
+                                  <ConvexFileGalleryTile
+                                    key={`${part.storageId}-${idx}`}
+                                    storageId={part.storageId}
+                                    style={tileStyle}
+                                    onPress={() => setViewerMedia({ items: imageViewerItems, index: idx })}
+                                  >
+                                    {overlay}
+                                  </ConvexFileGalleryTile>
+                                );
+                              }
+
+                              return (
+                                <Pressable
+                                  key={`${part.url}-${idx}`}
+                                  onPress={() => setViewerMedia({ items: imageViewerItems, index: idx })}
+                                  style={tileStyle}
+                                >
+                                  <ProgressiveImage
+                                    uri={part.url}
+                                    width={Math.round(galleryTileSize)}
+                                    height={Math.round(galleryTileSize)}
+                                    mode="fill"
+                                    style={StyleSheet.absoluteFill}
+                                    contentFit="cover"
+                                    cachePolicy="disk"
+                                    transition={200}
+                                  />
+                                  {overlay}
+                                </Pressable>
+                              );
+                            })}
+                          </View>
+                        )}
+	                      {nonImageMediaParts.map((part, idx) => {
+	                        if (part.type === 'audio' && part.storageId) {
+	                          return (
+	                            <ConvexFileAudio
                               key={idx}
                               storageId={part.storageId}
                               isMe={isMe}
@@ -1696,29 +1843,46 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                               incomingTextColor={colors.textSecondary}
                               timeLabel=""
                             />
-                          );
-                        }
-                        if (part.type === 'image' && part.storageId) {
-                          return (
-                            <ConvexFileImage
-                              key={idx}
+	                          );
+	                        }
+                          if (part.type === 'video') {
+                            return (
+                              <Pressable key={idx} onPress={() => setViewerMedia({ items: [{ type: 'video', url: part.url, label: part.label }], index: 0 })}>
+                                <View
+                                  style={[
+                                    styles.messageVideoThumb,
+                                    { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.52, 210) },
+                                  ]}
+                                >
+                                  <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
+                                  <Text style={styles.messageVideoLabel} numberOfLines={1}>{part.label || t('colab.videoLabel')}</Text>
+                                </View>
+                              </Pressable>
+                            );
+                          }
+	                        return null;
+	                      })}
+                        {imageParts.length === 1 && imageParts.map((part, idx) => {
+	                        if (part.storageId) {
+	                          return (
+	                            <ConvexFileImage
+	                              key={idx}
                               storageId={part.storageId}
-                              style={[
-                                styles.messageImage,
-                                { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.82, 320) },
-                              ]}
-                              onPress={(url) => setViewerMedia({ url, type: 'image' })}
-                            />
-                          );
-                        }
-                        if (part.type === 'image') {
-                          const mediaWidth = Math.min(screenWidth * 0.68, 280);
-                          const mediaHeight = Math.min(screenWidth * 0.82, 320);
-                          return (
-                            <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'image' })}>
-                              <ProgressiveImage
-                                uri={part.url}
-                                width={mediaWidth}
+	                              style={[
+	                                styles.messageImage,
+	                                { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.82, 320) },
+	                              ]}
+	                              onPress={() => setViewerMedia({ items: imageViewerItems, index: idx })}
+	                            />
+	                          );
+	                        }
+	                          const mediaWidth = Math.min(screenWidth * 0.68, 280);
+	                          const mediaHeight = Math.min(screenWidth * 0.82, 320);
+	                          return (
+	                            <Pressable key={idx} onPress={() => setViewerMedia({ items: imageViewerItems, index: idx })}>
+	                              <ProgressiveImage
+	                                uri={part.url}
+	                                width={mediaWidth}
                                 height={mediaHeight}
                                 mode="fill"
                                 style={[
@@ -1729,28 +1893,11 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
                                 cachePolicy="disk"
                                 transition={200}
                               />
-                            </Pressable>
-                          );
-                        }
-                        if (part.type === 'video') {
-                          return (
-                            <Pressable key={idx} onPress={() => setViewerMedia({ url: part.url, type: 'video' })}>
-                              <View
-                                style={[
-                                  styles.messageVideoThumb,
-                                  { width: Math.min(screenWidth * 0.68, 280), height: Math.min(screenWidth * 0.52, 210) },
-                                ]}
-                              >
-                                <MaterialIcons name="play-circle-outline" size={40} color="#FFFFFF" />
-                                <Text style={styles.messageVideoLabel} numberOfLines={1}>{part.label || t('colab.videoLabel')}</Text>
-                              </View>
-                            </Pressable>
-                          );
-                        }
-                        return null;
-                      })}
-                    </View>
-                  );
+	                            </Pressable>
+	                          );
+	                      })}
+	                    </View>
+	                  );
                 })()}
                 {/* Text content wrapped in Pressable for long-press actions */}
                 {(() => {
@@ -2827,37 +2974,64 @@ export const ColabScreen: React.FC<ColabScreenProps> = ({ onChatViewChange, init
   // ---------------------------------------------------------------------------
 
   // Determine what to render based on chatView
-  const imageViewerModal = (
-    <Modal
-      visible={!!viewerMedia}
-      transparent
-      animationType="fade"
-      onRequestClose={() => setViewerMedia(null)}
-    >
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
-        <TouchableOpacity
-          style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 }}
-          onPress={() => setViewerMedia(null)}
-        >
-          <MaterialIcons name="close" size={28} color="#FFFFFF" />
-        </TouchableOpacity>
-        {viewerMedia?.type === 'image' && (
-          <ProgressiveImage
-            uri={viewerMedia.url}
-            width={Math.round(screenWidth * 0.95)}
-            height={Math.round(screenHeight * 0.8)}
-            mode="fit"
-            style={{ width: '100%', height: '80%' }}
-            contentFit="contain"
-            cachePolicy="disk"
-          />
-        )}
-        {viewerMedia?.type === 'video' && (
-          <InlineVideoPlayer url={viewerMedia.url} />
-        )}
-      </View>
-    </Modal>
-  );
+	  const imageViewerModal = (
+	    <Modal
+	      visible={!!viewerMedia}
+	      transparent
+	      animationType="fade"
+	      onRequestClose={() => setViewerMedia(null)}
+	    >
+	      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+	        <TouchableOpacity
+	          style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 }}
+	          onPress={() => setViewerMedia(null)}
+	        >
+	          <MaterialIcons name="close" size={28} color="#FFFFFF" />
+	        </TouchableOpacity>
+          {viewerMedia && viewerMedia.items.length > 1 && (
+            <View style={styles.viewerCounter}>
+              <Text style={styles.viewerCounterText}>{viewerMedia.index + 1} / {viewerMedia.items.length}</Text>
+            </View>
+          )}
+	        {viewerMedia && (
+            <FlatList
+              key={`viewer-${viewerMedia.items.length}-${viewerMedia.index}`}
+              data={viewerMedia.items}
+              horizontal
+              pagingEnabled
+              initialScrollIndex={viewerMedia.index}
+              showsHorizontalScrollIndicator={false}
+              getItemLayout={(_, index) => ({ length: screenWidth, offset: screenWidth * index, index })}
+              onMomentumScrollEnd={(event) => {
+                const nextIndex = Math.round(event.nativeEvent.contentOffset.x / Math.max(1, screenWidth));
+                setViewerMedia((current) => current ? { ...current, index: nextIndex } : current);
+              }}
+              renderItem={({ item }) => (
+                <View style={[styles.viewerPage, { width: screenWidth }]}>
+                  {item.type === 'image' && item.storageId && (
+                    <ConvexFileViewerImage storageId={item.storageId} width={screenWidth * 0.95} height={screenHeight * 0.8} />
+                  )}
+                  {item.type === 'image' && item.url && (
+                    <ProgressiveImage
+                      uri={item.url}
+                      width={Math.round(screenWidth * 0.95)}
+                      height={Math.round(screenHeight * 0.8)}
+                      mode="fit"
+                      style={{ width: screenWidth * 0.95, height: screenHeight * 0.8 }}
+                      contentFit="contain"
+                      cachePolicy="disk"
+                    />
+                  )}
+                  {item.type === 'video' && item.url && (
+                    <InlineVideoPlayer url={item.url} />
+                  )}
+                </View>
+              )}
+            />
+	        )}
+	      </View>
+	    </Modal>
+	  );
 
   if (chatView.type === 'conversation') {
     return (
@@ -3145,6 +3319,54 @@ const styles = StyleSheet.create({
     height: 180,
     borderRadius: radius.md,
     marginVertical: 4,
+  },
+  imageGalleryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginVertical: 4,
+  },
+  imageGalleryTile: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: radius.sm,
+    overflow: 'hidden',
+  },
+  galleryImageLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imageGalleryOverflow: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.46)',
+    justifyContent: 'center',
+  },
+  imageGalleryOverflowText: {
+    color: '#FFFFFF',
+    fontFamily: fontFamilies.bodyBold,
+    fontSize: 36,
+  },
+  viewerPage: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerImageStage: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  viewerCounter: {
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    position: 'absolute',
+    top: 56,
+    zIndex: 10,
+  },
+  viewerCounterText: {
+    color: '#FFFFFF',
+    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 13,
   },
   messageVideoThumb: {
     width: 220,

@@ -156,9 +156,17 @@ const SelectorModal: React.FC<SelectorModalProps> = ({
                       <View style={[modalStyles.dot, { backgroundColor: item.color }]} />
                     )}
                     <View style={{ flex: 1 }}>
-                      <Text style={[modalStyles.itemText, { color: colors.text }, isSelected && { fontFamily: fontFamilies.bodySemibold }]}> 
+                      <Text style={[modalStyles.itemText, { color: colors.text }, isSelected && { fontFamily: fontFamilies.bodySemibold }]}>
                         {item.name}
                       </Text>
+                      {item.subtitle ? (
+                        <Text
+                          style={[modalStyles.itemSubtitle, { color: colors.textSecondary }]}
+                          numberOfLines={1}
+                        >
+                          {item.subtitle}
+                        </Text>
+                      ) : null}
                     </View>
                     {isSelected && <MaterialIcons name="check" size={20} color={primaryColor} />}
                   </TouchableOpacity>
@@ -187,6 +195,29 @@ function formatFileSize(bytes: number): string {
 }
 
 // Helper: get icon for file type
+const categoryMatchesRef = (category: any, categoryRef: any): boolean =>
+  category != null && categoryRef != null && (
+    String(category._id) === String(categoryRef)
+    || String(category.id) === String(categoryRef)
+    || String(category.pgId) === String(categoryRef)
+  );
+
+const getCategoryTeamId = (category: any) => category?.team_id ?? category?.teamId ?? null;
+const getCategoryWorkspaceId = (category: any) => category?.workspace_id ?? category?.workspaceId ?? null;
+
+const parseReportingTeamIds = (category: any): string[] => {
+  let reportingTeamIds = category?.reportingTeamIds ?? category?.reporting_team_ids;
+  if (!reportingTeamIds) return [];
+  if (typeof reportingTeamIds === 'string') {
+    try {
+      reportingTeamIds = JSON.parse(reportingTeamIds);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(reportingTeamIds) ? reportingTeamIds.map((id: any) => String(id)) : [];
+};
+
 function getFileIcon(fileType: string): string {
   if (fileType.startsWith('image/')) return 'image';
   if (fileType.startsWith('video/')) return 'videocam';
@@ -202,7 +233,8 @@ function getFileIcon(fileType: string): string {
 export const CreateTaskScreen: React.FC = () => {
   const navigation = useNavigation();
   const { colors, primaryColor, isDarkMode } = useTheme();
-  const { createTask, selectedWorkspace, workspaceObjects, statuses } = useTasks();
+  const { createTask, selectedWorkspace, statuses } = useTasks();
+  const isEverythingCreate = selectedWorkspace === 'Everything';
   const { data, userTeams } = useData();
   const { user } = useAuth();
   const { tenantId } = useTenant();
@@ -229,7 +261,6 @@ export const CreateTaskScreen: React.FC = () => {
 
   // Template state
   const [selectedTemplate, setSelectedTemplate] = useState<{ _id: string; name: string } | null>(null);
-  const [templateModalVisible, setTemplateModalVisible] = useState(false);
 
   // Assignee, spot, tag state
   const [selectedAssignees, setSelectedAssignees] = useState<SelectedEntity[]>([]);
@@ -244,16 +275,15 @@ export const CreateTaskScreen: React.FC = () => {
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'done' | 'off' | 'denied'>('idle');
 
   // Modal visibility
-  const [workspaceModalVisible, setWorkspaceModalVisible] = useState(
-    selectedWorkspace === 'Everything'
-  );
+  const [workspaceModalVisible, setWorkspaceModalVisible] = useState(false);
+  const [templateModalVisible, setTemplateModalVisible] = useState(false);
 
   // Capture GPS on mount (if setting is enabled)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const enabled = await AsyncStorage.getItem(GPS_CAPTURE_STORAGE_KEY);
-      if (enabled === 'false') {
+      if (enabled !== 'true') {
         setGpsStatus('off');
         return;
       }
@@ -368,6 +398,77 @@ export const CreateTaskScreen: React.FC = () => {
     return new Set(workspaceCategories.map((c: any) => String(c.id)));
   }, [workspaceCategories]);
 
+  const findWorkspaceByCategory = useCallback((category: any) => {
+    const workspaceId = getCategoryWorkspaceId(category);
+    if (workspaceId == null || workspaceId === '') return null;
+    return data.workspaces.find((workspace: any) =>
+      String(workspace._id) === String(workspaceId)
+      || String(workspace.id) === String(workspaceId)
+      || String(workspace.pgId) === String(workspaceId)
+    ) ?? null;
+  }, [data.workspaces]);
+
+  const everythingAccessibleCategoryIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const category of data.categories) {
+      const workspace = findWorkspaceByCategory(category);
+      if (workspace?.type && workspace.type !== 'DEFAULT') continue;
+
+      const categoryTeamId = getCategoryTeamId(category);
+      const belongsToUserTeam = categoryTeamId != null
+        && userTeamIds.some((teamId) => String(teamId) === String(categoryTeamId));
+      const isReportableToUserTeam = parseReportingTeamIds(category)
+        .some((teamId) => userTeamIds.some((userTeamId) => String(userTeamId) === teamId));
+
+      if (!belongsToUserTeam && !isReportableToUserTeam) continue;
+
+      if (category._id != null) ids.add(String(category._id));
+      if (category.id != null) ids.add(String(category.id));
+      if (category.pgId != null) ids.add(String(category.pgId));
+    }
+    return ids;
+  }, [data.categories, findWorkspaceByCategory, userTeamIds]);
+
+  const everythingTemplates = useMemo(() => {
+    if (!isEverythingCreate || everythingAccessibleCategoryIds.size === 0) return [];
+
+    const filtered = data.templates.filter((template: any) => {
+      if (template?.enabled === false || template?.deletedAt) return false;
+      const templateCategoryId = template.category_id ?? template.categoryId;
+      return templateCategoryId != null && everythingAccessibleCategoryIds.has(String(templateCategoryId));
+    });
+
+    const visible = filtered.filter((template: any) => {
+      if (!template.is_private && template.isPrivate !== true) return true;
+      const templateCategoryId = template.category_id ?? template.categoryId;
+      const category = data.categories.find((cat: any) => categoryMatchesRef(cat, templateCategoryId));
+      const categoryTeamId = category ? getCategoryTeamId(category) : null;
+      return categoryTeamId != null
+        && userTeamIds.some((teamId) => String(teamId) === String(categoryTeamId));
+    });
+
+    return [...visible].sort((a: any, b: any) => {
+      const aCategory = data.categories.find((cat: any) => categoryMatchesRef(cat, a.category_id ?? a.categoryId));
+      const bCategory = data.categories.find((cat: any) => categoryMatchesRef(cat, b.category_id ?? b.categoryId));
+      const aWorkspace = aCategory ? findWorkspaceByCategory(aCategory) : null;
+      const bWorkspace = bCategory ? findWorkspaceByCategory(bCategory) : null;
+      const workspaceCompare = String(aWorkspace?.name ?? '').localeCompare(
+        String(bWorkspace?.name ?? ''),
+        undefined,
+        { sensitivity: 'base' },
+      );
+      if (workspaceCompare !== 0) return workspaceCompare;
+      return String(a?.name ?? '').localeCompare(String(b?.name ?? ''), undefined, { sensitivity: 'base' });
+    });
+  }, [
+    isEverythingCreate,
+    everythingAccessibleCategoryIds,
+    data.templates,
+    data.categories,
+    findWorkspaceByCategory,
+    userTeamIds,
+  ]);
+
   // Templates for the current workspace's category
   const categoryTemplates = useMemo(() => {
     if (workspaceCategoryIds.size === 0) return [];
@@ -376,7 +477,50 @@ export const CreateTaskScreen: React.FC = () => {
     );
   }, [data.templates, workspaceCategoryIds]);
 
-  const hasTemplates = categoryTemplates.length > 0;
+  const activeTemplates = isEverythingCreate ? everythingTemplates : categoryTemplates;
+  const hasTemplates = activeTemplates.length > 0;
+
+  const templatePickerItems = useMemo((): SelectorItem[] => {
+    return activeTemplates.map((template: any) => {
+      const templateCategoryId = template.category_id ?? template.categoryId;
+      const category = data.categories.find((cat: any) => categoryMatchesRef(cat, templateCategoryId));
+      const workspace = category ? findWorkspaceByCategory(category) : null;
+      const badges: string[] = [];
+      if (template.form_id || template.formId || template.summary?.has_form) {
+        badges.push(t('taskDialog.hasForm'));
+      }
+      if (template.approval_id || template.approvalId || template.summary?.has_approval) {
+        badges.push(t('taskDialog.approvalRequired'));
+      }
+      const subtitleParts = [workspace?.name, ...badges].filter(Boolean);
+
+      return {
+        _id: String(template._id),
+        name: String(template.name ?? ''),
+        color: workspace?.color ?? category?.color ?? null,
+        subtitle: subtitleParts.length > 0 ? subtitleParts.join(' · ') : undefined,
+        searchText: [workspace?.name, category?.name, ...badges].filter(Boolean).join(' '),
+      };
+    });
+  }, [activeTemplates, data.categories, findWorkspaceByCategory, t]);
+
+  const selectedTemplateRecord = useMemo(() => {
+    if (!selectedTemplate?._id) return null;
+    return data.templates.find((row: any) => String(row._id) === String(selectedTemplate._id)) ?? null;
+  }, [selectedTemplate, data.templates]);
+
+  const selectedTemplateCategoryConvexId = useMemo(() => {
+    if (!selectedTemplateRecord) return null;
+    const templateCategoryId = selectedTemplateRecord.category_id ?? selectedTemplateRecord.categoryId;
+    if (templateCategoryId == null) return null;
+    const category = data.categories.find((row: any) => categoryMatchesRef(row, templateCategoryId));
+    return category?._id != null ? String(category._id) : null;
+  }, [selectedTemplateRecord, data.categories]);
+
+  useEffect(() => {
+    if (!isEverythingCreate || everythingTemplates.length === 0) return;
+    setTemplateModalVisible(true);
+  }, [isEverythingCreate, everythingTemplates.length]);
 
   // Auto-focus title on mount (only when no templates)
   useEffect(() => {
@@ -385,10 +529,12 @@ export const CreateTaskScreen: React.FC = () => {
     return () => clearTimeout(timer);
   }, [hasTemplates]);
 
-  // Reset selected template when workspace/category changes
+  // Reset selected template when workspace/category changes (workspace-specific create only).
+  // In Everything mode, workspace is set from the template pick; clearing here would undo the first selection.
   useEffect(() => {
+    if (isEverythingCreate) return;
     setSelectedTemplate(null);
-  }, [workspaceConvexId]);
+  }, [workspaceConvexId, isEverythingCreate]);
 
   const initialStatusConvexId = useMemo(() => {
     if (workspaceCategoryIds.size > 0) {
@@ -417,18 +563,55 @@ export const CreateTaskScreen: React.FC = () => {
       );
     });
 
-    return (scopedPriorities.length > 0 ? scopedPriorities : data.priorities).map((priority: any) => ({
+    const basePriorities = scopedPriorities.length > 0 ? scopedPriorities : data.priorities;
+    const byId = new Map<string, any>();
+    for (const priority of basePriorities) {
+      if (priority?._id != null) byId.set(String(priority._id), priority);
+    }
+
+    const templatePriorityRef = selectedTemplateRecord?.priority_id ?? selectedTemplateRecord?.priorityId;
+    if (templatePriorityRef != null) {
+      const templatePriority = data.priorities.find((priority: any) =>
+        String(priority._id) === String(templatePriorityRef) ||
+        String(priority.id) === String(templatePriorityRef) ||
+        String(priority.pgId) === String(templatePriorityRef)
+      );
+      if (templatePriority?._id != null) {
+        byId.set(String(templatePriority._id), templatePriority);
+      }
+    }
+
+    return Array.from(byId.values()).map((priority: any) => ({
       _id: String(priority._id),
       name: String(priority.name ?? ''),
       color: priority.color ?? '#9CA3AF',
     }));
-  }, [data.priorities, workspaceCategoryIds, workspaceCategoryPgIds]);
+  }, [data.priorities, workspaceCategoryIds, workspaceCategoryPgIds, selectedTemplateRecord]);
 
   const selectedPriority = useMemo(() => {
     return priorityOptions.find((option) => option._id === selectedPriorityConvexId) ?? null;
   }, [priorityOptions, selectedPriorityConvexId]);
 
   useEffect(() => {
+    const templateKey = selectedTemplateRecord?._id != null ? String(selectedTemplateRecord._id) : null;
+    if (!templateKey) return;
+
+    const templatePriorityRef = selectedTemplateRecord?.priority_id ?? selectedTemplateRecord?.priorityId;
+    if (templatePriorityRef == null) return;
+
+    const templatePriority = data.priorities.find((priority: any) =>
+      String(priority._id) === String(templatePriorityRef) ||
+      String(priority.id) === String(templatePriorityRef) ||
+      String(priority.pgId) === String(templatePriorityRef)
+    );
+    if (templatePriority?._id != null) {
+      setSelectedPriorityConvexId(String(templatePriority._id));
+    }
+  }, [selectedTemplateRecord, data.priorities]);
+
+  useEffect(() => {
+    if (selectedTemplateRecord) return;
+
     setSelectedPriorityConvexId((current) => {
       if (current && priorityOptions.some((option) => option._id === current)) {
         return current;
@@ -441,7 +624,7 @@ export const CreateTaskScreen: React.FC = () => {
 
       return preferred?._id ?? priorityOptions[0]?._id ?? null;
     });
-  }, [priorityOptions]);
+  }, [priorityOptions, selectedTemplateRecord]);
 
   const workspaceItems = useMemo(() => {
     return data.workspaces.map((w: any) => ({
@@ -452,10 +635,11 @@ export const CreateTaskScreen: React.FC = () => {
   }, [data.workspaces]);
 
   useEffect(() => {
+    if (isEverythingCreate) return;
     if (currentWorkspace || chosenWorkspaceId || workspaceItems.length !== 1) return;
     setChosenWorkspaceId(workspaceItems[0]._id);
     setWorkspaceModalVisible(false);
-  }, [currentWorkspace, chosenWorkspaceId, workspaceItems]);
+  }, [currentWorkspace, chosenWorkspaceId, workspaceItems, isEverythingCreate]);
 
   const assigneePickerUsers = useMemo<UserPickerItem[]>(() => {
     return data.users.reduce<UserPickerItem[]>((acc, rawUser: any) => {
@@ -518,6 +702,22 @@ export const CreateTaskScreen: React.FC = () => {
     setChosenWorkspaceId(ws._id);
     setWorkspaceModalVisible(false);
   }, []);
+
+  const handleTemplateSelect = useCallback((item: SelectorItem) => {
+    const template = activeTemplates.find((row: any) => String(row._id) === String(item._id));
+    setSelectedTemplate({ _id: item._id, name: item.name });
+
+    if (isEverythingCreate && template) {
+      const templateCategoryId = template.category_id ?? template.categoryId;
+      const category = data.categories.find((row: any) => categoryMatchesRef(row, templateCategoryId));
+      const workspace = category ? findWorkspaceByCategory(category) : null;
+      if (workspace?._id) {
+        setChosenWorkspaceId(String(workspace._id));
+      }
+    }
+
+    setTemplateModalVisible(false);
+  }, [activeTemplates, isEverythingCreate, data.categories, findWorkspaceByCategory]);
 
   // ---------------------------------------------------------------------------
   // Toggle helpers for multi-select
@@ -689,7 +889,8 @@ export const CreateTaskScreen: React.FC = () => {
         name: finalName,
         description: description.trim() || undefined,
         workspaceConvexId,
-        categoryConvexId: workspaceCategories.length === 1 ? (workspaceCategories[0] as any)._id : currentWorkspace?.categoryId ?? undefined,
+        categoryConvexId: selectedTemplateCategoryConvexId
+          ?? (workspaceCategories.length === 1 ? (workspaceCategories[0] as any)._id : currentWorkspace?.categoryId ?? undefined),
         templateConvexId: selectedTemplate?._id,
         statusConvexId: initialStatusConvexId ?? undefined,
         priorityConvexId: selectedPriorityConvexId ?? undefined,
@@ -742,7 +943,7 @@ export const CreateTaskScreen: React.FC = () => {
     taskName, description, workspaceConvexId, createTask, navigation,
     initialStatusConvexId, selectedPriorityConvexId, attachments, hasUploadingFiles,
     workspaceCategories, currentWorkspace, capturedLocation,
-    hasTemplates, selectedTemplate, selectedSpot, selectedAssignees, canAssignTasks, t,
+    hasTemplates, selectedTemplate, selectedTemplateCategoryConvexId, selectedSpot, selectedAssignees, canAssignTasks, t,
     tenantId, createDocumentMutation, createDocumentAssociationMutation,
     selectedTags,
   ]);
@@ -793,29 +994,30 @@ export const CreateTaskScreen: React.FC = () => {
           bottomOffset={96}
           disableScrollOnKeyboardHide
         >
-          {/* Workspace Selector */}
-          <TouchableOpacity
-            style={[styles.workspaceBadge, { backgroundColor: `${workspaceColor}18`, borderColor: `${workspaceColor}30` }]}
-            onPress={() => setWorkspaceModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.workspaceIcon, { backgroundColor: workspaceColor }]}>
-              {currentWorkspace?.icon ? (
-                (() => {
-                  const parsed = parseWorkspaceIcon(currentWorkspace.icon);
-                  return <FaIcon name={parsed.name} size={12} color="#FFFFFF" solid={parsed.solid} brand={parsed.brand} />;
-                })()
-              ) : (
-                <Text style={styles.workspaceIconText}>
-                  {currentWorkspace?.name?.charAt(0)?.toUpperCase() || 'W'}
-                </Text>
-              )}
-            </View>
-            <Text style={[styles.workspaceBadgeText, { color: colors.text }]}>
-              {currentWorkspace?.name ?? t('createTask.selectWorkspace')}
-            </Text>
-            <MaterialIcons name="keyboard-arrow-down" size={18} color={colors.textSecondary} />
-          </TouchableOpacity>
+          {!isEverythingCreate ? (
+            <TouchableOpacity
+              style={[styles.workspaceBadge, { backgroundColor: `${workspaceColor}18`, borderColor: `${workspaceColor}30` }]}
+              onPress={() => setWorkspaceModalVisible(true)}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.workspaceIcon, { backgroundColor: workspaceColor }]}>
+                {currentWorkspace?.icon ? (
+                  (() => {
+                    const parsed = parseWorkspaceIcon(currentWorkspace.icon);
+                    return <FaIcon name={parsed.name} size={12} color="#FFFFFF" solid={parsed.solid} brand={parsed.brand} />;
+                  })()
+                ) : (
+                  <Text style={styles.workspaceIconText}>
+                    {currentWorkspace?.name?.charAt(0)?.toUpperCase() || 'W'}
+                  </Text>
+                )}
+              </View>
+              <Text style={[styles.workspaceBadgeText, { color: colors.text }]}>
+                {currentWorkspace?.name ?? t('createTask.selectWorkspace')}
+              </Text>
+              <MaterialIcons name="keyboard-arrow-down" size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+          ) : null}
 
           {/* Task Title or Template Selector */}
           {hasTemplates ? (
@@ -1209,32 +1411,36 @@ export const CreateTaskScreen: React.FC = () => {
       />
 
       {/* Workspace Modal */}
-      <SelectorModal
-        visible={workspaceModalVisible}
-        title={t('createTask.selectWorkspaceModalTitle')}
-        items={workspaceItems}
-        selectedId={currentWorkspace?._id}
-        onSelect={handleWorkspaceSelect}
-        onClose={() => {
-          setWorkspaceModalVisible(false);
-          if (!currentWorkspace) navigation.goBack();
-        }}
-        colors={colors}
-        isDarkMode={isDarkMode}
-        primaryColor={primaryColor}
-      />
+      {!isEverythingCreate ? (
+        <SelectorModal
+          visible={workspaceModalVisible}
+          title={t('createTask.selectWorkspaceModalTitle')}
+          items={workspaceItems}
+          selectedId={currentWorkspace?._id}
+          onSelect={handleWorkspaceSelect}
+          onClose={() => {
+            setWorkspaceModalVisible(false);
+            if (!currentWorkspace) navigation.goBack();
+          }}
+          colors={colors}
+          isDarkMode={isDarkMode}
+          primaryColor={primaryColor}
+        />
+      ) : null}
 
       {/* Template Modal */}
       <SelectorModal
         visible={templateModalVisible}
         title={t('createTask.selectTemplateModalTitle')}
-        items={categoryTemplates.map((tmpl: any) => ({ _id: tmpl._id, name: tmpl.name, color: null }))}
+        items={templatePickerItems}
         selectedId={selectedTemplate?._id}
-        onSelect={(item) => {
-          setSelectedTemplate(item);
+        onSelect={handleTemplateSelect}
+        onClose={() => {
           setTemplateModalVisible(false);
+          if (isEverythingCreate && !selectedTemplate) {
+            navigation.goBack();
+          }
         }}
-        onClose={() => setTemplateModalVisible(false)}
         searchable
         colors={colors}
         isDarkMode={isDarkMode}
@@ -1612,6 +1818,11 @@ const modalStyles = StyleSheet.create({
   itemText: {
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  itemSubtitle: {
+    fontSize: fontSizes.xs,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 2,
   },
   emptyText: {
     fontSize: fontSizes.sm,

@@ -169,7 +169,7 @@ const PickerModal: React.FC<PickerModalProps> = ({
 
 async function getOptionalCapturedLocation() {
   const enabled = await AsyncStorage.getItem(GPS_CAPTURE_STORAGE_KEY);
-  if (enabled === 'false') return undefined;
+  if (enabled !== 'true') return undefined;
 
   const permission = await Location.requestForegroundPermissionsAsync();
   if (permission.status !== 'granted') return undefined;

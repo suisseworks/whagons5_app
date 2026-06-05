@@ -8,7 +8,9 @@ import {
   ActivityIndicator,
   Alert,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import RenderHtml from 'react-native-render-html';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -66,6 +68,23 @@ export const SharedTaskDetailScreen: React.FC = () => {
     ? { tenantId, taskId: taskConvexId as Id<'tasks'> }
     : 'skip' as const;
   const taskShares = useQuery(api.taskResources.listTaskShares, taskSharesArgs);
+  const acknowledgmentProgress = useQuery(
+    api.taskResources.getTaskAcknowledgmentProgressForTask,
+    tenantId && taskConvexId
+      ? { tenantId, taskId: taskConvexId as Id<'tasks'> }
+      : 'skip',
+  ) as {
+    acknowledgmentTracked?: boolean;
+    ackTotal?: number;
+    ackDone?: number;
+    ackRecipients?: Array<{
+      userId?: string;
+      userName?: string | null;
+      acknowledged?: boolean;
+      acknowledgedAt?: number;
+      acknowledgedByUserName?: string | null;
+    }>;
+  } | null | undefined;
 
   // Build lookup maps
   const { userMap, approvalMap, roleMap, teamMap } = useMemo(() => {
@@ -236,6 +255,30 @@ export const SharedTaskDetailScreen: React.FC = () => {
     return { total, done, shares };
   }, [taskShares, task.ackTotal, task.ackDone, optimisticAcknowledgedShareIds, currentUserAccess]);
 
+  const effectiveAcknowledgment = useMemo(() => {
+    if (
+      acknowledgmentProgress?.acknowledgmentTracked
+      && (acknowledgmentProgress.ackTotal ?? 0) > 0
+    ) {
+      return {
+        total: acknowledgmentProgress.ackTotal ?? 0,
+        done: acknowledgmentProgress.ackDone ?? 0,
+        recipients: acknowledgmentProgress.ackRecipients ?? [],
+      };
+    }
+    if (ackData.total > 0) {
+      return {
+        total: ackData.total,
+        done: ackData.done,
+        recipients: ackData.shares.flatMap((share: any) => share.ackRecipients ?? []),
+      };
+    }
+    return { total: 0, done: 0, recipients: [] as any[] };
+  }, [acknowledgmentProgress, ackData]);
+
+  const showAcknowledgmentSection = effectiveAcknowledgment.total > 0
+    && (derived === 'approved' || !approvalId);
+
   // Can current user acknowledge?
   const myPendingShareId = useMemo(() => {
     if (!taskShares || !authUser) return null;
@@ -332,6 +375,11 @@ export const SharedTaskDetailScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['top']}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 52 : 0}
+      >
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: borderColor }]}>
         <TouchableOpacity
@@ -408,55 +456,55 @@ export const SharedTaskDetailScreen: React.FC = () => {
         )}
 
         {/* Acknowledgment Section */}
-        {ackData.total > 0 && (
+        {showAcknowledgmentSection && (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('sharedTask.sectionAcknowledgments')}</Text>
               <View style={[styles.ackProgressBadge, {
-                backgroundColor: ackData.done === ackData.total ? '#F0FDF4' : '#FFF7ED',
+                backgroundColor: effectiveAcknowledgment.done === effectiveAcknowledgment.total ? '#F0FDF4' : '#FFF7ED',
               }]}>
                 <Text style={[styles.ackProgressText, {
-                  color: ackData.done === ackData.total ? '#16A34A' : '#EA580C',
+                  color: effectiveAcknowledgment.done === effectiveAcknowledgment.total ? '#16A34A' : '#EA580C',
                 }]}>
-                  {ackData.done}/{ackData.total}
+                  {effectiveAcknowledgment.done}/{effectiveAcknowledgment.total}
                 </Text>
               </View>
             </View>
-            {ackData.shares.map((share: any) => {
-              const teamName = share.sharedToTeamId
-                ? (teamMap[String(share.sharedToTeamId)]?.name || t('sharedTask.fallbackTeam'))
+            {effectiveAcknowledgment.recipients.map((recipient: any) => {
+              const acknowledged = recipient.acknowledged === true;
+              const ackTime = recipient.acknowledgedAt
+                ? new Date(recipient.acknowledgedAt).toLocaleString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })
                 : null;
-              const userName = share.sharedToUserId
-                ? (userMap[String(share.sharedToUserId)]?.name || t('sharedTask.fallbackUser'))
-                : null;
-              const label = teamName || userName || t('sharedTask.fallbackUnknown');
-              const recipients = Array.isArray(share.ackRecipients) ? share.ackRecipients : [];
-              const allRecipientsAcked = (share.ackTotal ?? 0) > 0 && share.ackDone >= share.ackTotal;
-              const currentUserAcked = !!share.currentUserAcknowledged;
-              const showGreenCheck = allRecipientsAcked || currentUserAcked;
               return (
-                <View key={share._id} style={styles.ackGroup}>
-                  <View style={styles.ackRow}>
-                    <MaterialCommunityIcons
-                      name={showGreenCheck ? 'check-circle' : 'clock-outline'}
-                      size={18}
-                      color={showGreenCheck ? '#16A34A' : '#EA580C'}
-                    />
-                    <Text style={[styles.ackLabel, { color: colors.text }]}>{label}</Text>
-                    <Text style={[styles.ackStatus, { color: showGreenCheck ? '#16A34A' : tertiaryText }]}> 
-                      {share.ackDone ?? 0}/{share.ackTotal ?? recipients.length}
+                <View key={String(recipient.userId)} style={styles.ackRecipientRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.ackRecipientName, { color: colors.text }]} numberOfLines={1}>
+                      {recipient.userName || t('sharedTask.fallbackUser')}
                     </Text>
+                    {acknowledged && (recipient.acknowledgedByUserName || ackTime) ? (
+                      <View style={{ marginTop: 2, gap: 1 }}>
+                        {recipient.acknowledgedByUserName ? (
+                          <Text style={[styles.ackRecipientMeta, { color: tertiaryText }]}>
+                            {t('sharedTask.ackByLabel')}: {recipient.acknowledgedByUserName}
+                          </Text>
+                        ) : null}
+                        {ackTime ? (
+                          <Text style={[styles.ackRecipientMeta, { color: tertiaryText }]}>
+                            {t('sharedTask.ackTimeLabel')}: {ackTime}
+                          </Text>
+                        ) : null}
+                      </View>
+                    ) : null}
                   </View>
-                  {recipients.map((recipient: any) => (
-                    <View key={String(recipient.userId)} style={styles.ackRecipientRow}>
-                      <Text style={[styles.ackRecipientName, { color: colors.text }]} numberOfLines={1}>
-                        {recipient.userName || t('sharedTask.fallbackUser')}
-                      </Text>
-                      <Text style={[styles.ackRecipientStatus, { color: recipient.acknowledged ? '#16A34A' : tertiaryText }]}>
-                        {recipient.acknowledged ? t('sharedTask.ackStatusAcknowledged') : t('sharedTask.ackStatusPending')}
-                      </Text>
-                    </View>
-                  ))}
+                  <Text style={[styles.ackRecipientStatus, { color: acknowledged ? '#16A34A' : tertiaryText }]}>
+                    {acknowledged ? t('sharedTask.ackStatusAcknowledged') : t('sharedTask.ackStatusPending')}
+                  </Text>
                 </View>
               );
             })}
@@ -485,8 +533,8 @@ export const SharedTaskDetailScreen: React.FC = () => {
       </ScrollView>
 
       {/* Sticky Footer: Approve/Reject */}
-      {canAct && (
-        <View style={[styles.footer, { backgroundColor: colors.surface, borderTopColor: borderColor, paddingBottom: 28 + insets.bottom }]}> 
+      {canAct && !signatureVisible && !rejectVisible && (
+        <View style={[styles.footer, { backgroundColor: colors.surface, borderTopColor: borderColor, paddingBottom: Math.max(insets.bottom, 12) }]}> 
           <TouchableOpacity
             style={[styles.rejectFooterBtn, { borderColor: isDarkMode ? 'rgba(255,255,255,0.15)' : '#E5E7EB' }]}
             onPress={handleReject}
@@ -515,12 +563,14 @@ export const SharedTaskDetailScreen: React.FC = () => {
         </View>
       )}
 
+      </KeyboardAvoidingView>
+
       <SignatureModal
         visible={signatureVisible}
         onClose={() => setSignatureVisible(false)}
-        onSigned={({ storageId }) => {
+        onSigned={({ storageId, comment }) => {
           setSignatureVisible(false);
-          submitDecision('approved', storageId);
+          submitDecision('approved', storageId, comment);
         }}
       />
 
@@ -638,6 +688,7 @@ const approverStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  flex: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -723,6 +774,10 @@ const styles = StyleSheet.create({
   ackRecipientName: {
     flex: 1,
     fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  ackRecipientMeta: {
+    fontSize: 11,
     fontFamily: fontFamilies.bodyRegular,
   },
   ackRecipientStatus: {

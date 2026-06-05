@@ -595,8 +595,16 @@ function mapStatusTransition(doc: any, fk: FkLookups): SyncedStatusTransition {
   };
 }
 
-function mapTemplate(doc: any): SyncedTemplate {
-  return { ...doc, id: doc.pgId ?? doc._id, form_id: doc.formId ?? null };
+function mapTemplate(doc: any, fk: FkLookups): SyncedTemplate {
+  return {
+    ...doc,
+    _id: doc._id,
+    id: doc.pgId ?? doc._id,
+    category_id: resolveFk(fk.categories, doc.categoryId),
+    priority_id: resolveFk(fk.priorities, doc.priorityId),
+    form_id: resolveFk(fk.forms, doc.formId) ?? doc.formId ?? null,
+    approval_id: resolveFk(fk.approvals, doc.approvalId) ?? doc.approvalId ?? null,
+  };
 }
 
 function mapForm(doc: any): SyncedForm {
@@ -1033,7 +1041,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       users: refData ? refData.users.map(mapUser) : EMPTY,
       teams: refData ? mapIds(refData.teams) : EMPTY,
       tags: refData ? mapIds(refData.tags) : EMPTY,
-      templates: refData ? refData.templates.map(mapTemplate) : EMPTY,
+      templates: refData ? refData.templates.map((d: any) => mapTemplate(d, fk)) : EMPTY,
       forms: refData ? refData.forms?.map(mapForm) ?? EMPTY : EMPTY,
       formVersions: refData ? refData.formVersions?.map(mapFormVersion) ?? EMPTY : EMPTY,
       taskForms: refData ? refData.taskForms?.map((d: any) => mapTaskForm(d, fk)) ?? EMPTY : EMPTY,

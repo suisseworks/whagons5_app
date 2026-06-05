@@ -15,6 +15,7 @@ import React, {
   useCallback,
   ReactNode,
 } from 'react';
+import type { FunctionReference } from 'convex/server';
 import { useNetwork } from './NetworkContext';
 import { convex } from '../providers/ConvexClientProvider';
 import { api } from '../../../convex/_generated/api';
@@ -26,18 +27,32 @@ import { useTenant } from '../hooks/useTenant';
 // Map apiPath strings back to Convex function references for replay
 // ---------------------------------------------------------------------------
 
-function resolveApiRef(apiPath: string): any {
-  const parts = apiPath.split('.');
-  let ref: any = api;
-  for (const p of parts) {
-    ref = ref?.[p];
-    if (!ref) return null;
+const convexFunctionName = Symbol.for('functionName');
+
+function errorMessage(error: unknown, fallback = ''): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? fallback);
   }
-  return ref;
+  return fallback || String(error ?? '');
+}
+
+function isConvexMutationReference(value: unknown): value is FunctionReference<'mutation'> {
+  return Boolean(value && typeof value === 'object' && convexFunctionName in value);
+}
+
+function resolveApiRef(apiPath: string): FunctionReference<'mutation'> | null {
+  const parts = apiPath.split('.');
+  let ref: unknown = api;
+  for (const p of parts) {
+    if (!ref || typeof ref !== 'object' || !(p in ref)) return null;
+    ref = (ref as Record<string, unknown>)[p];
+  }
+  return isConvexMutationReference(ref) ? ref : null;
 }
 
 function isStateConflictError(error: unknown): boolean {
-  const message = String((error as any)?.message ?? '').toLowerCase();
+  const message = errorMessage(error).toLowerCase();
   if (!message) return false;
   return (
     message.includes('invalid status') ||
@@ -173,7 +188,7 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
   }, []);
 
   const isRetriableError = useCallback((error: unknown): boolean => {
-    const message = String((error as any)?.message ?? '').toLowerCase();
+    const message = errorMessage(error).toLowerCase();
     if (!message) return true;
 
     if (
@@ -284,10 +299,10 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
             throw new Error('Invalid mutation arguments');
           }
           args = parsed as Record<string, unknown>;
-        } catch (err: any) {
-          const errorMessage = String(err?.message ?? 'Invalid mutation arguments');
-          await DB.markMutationFailed(mutation.id, attempts, errorMessage);
-          await DB.archiveMutation({ ...mutation, attempts }, 'failed', mutation.pushed_at, errorMessage);
+        } catch (err) {
+          const message = errorMessage(err, 'Invalid mutation arguments');
+          await DB.markMutationFailed(mutation.id, attempts, message);
+          await DB.archiveMutation({ ...mutation, attempts }, 'failed', mutation.pushed_at, message);
           continue;
         }
 
@@ -311,9 +326,9 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
           );
           if (shouldStopReplay()) return;
           await DB.removeMutation(mutation.id);
-        } catch (err: any) {
+        } catch (err) {
           if (shouldStopReplay()) return;
-          const errMessage = String(err?.message ?? 'Replay failed');
+          const errMessage = errorMessage(err, 'Replay failed');
           const shouldRetry = attempts < REPLAY_MAX_ATTEMPTS && isRetriableError(err);
 
           if (shouldRetry) {

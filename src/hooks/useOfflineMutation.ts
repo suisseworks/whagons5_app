@@ -12,6 +12,12 @@
 
 import { useCallback } from 'react';
 import { useMutation } from 'convex/react';
+import type {
+  FunctionArgs,
+  FunctionReference,
+  FunctionReturnType,
+  OptionalRestArgs,
+} from 'convex/server';
 import { useNetwork } from '../context/NetworkContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import * as DB from '../store/database';
@@ -23,7 +29,7 @@ function generateQueueId(): string {
 }
 
 function isConnectivityError(error: unknown): boolean {
-  const message = String((error as any)?.message ?? '').toLowerCase();
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   return (
     message.includes('network') ||
     message.includes('timed out') ||
@@ -34,12 +40,17 @@ function isConnectivityError(error: unknown): boolean {
   );
 }
 
+type OfflineQueuedResult = {
+  _offlineQueued: true;
+  _queueId: string;
+};
+
 /**
  * @param mutationRef  The Convex API reference (e.g. api.tasks.create)
  * @param apiPath      A string key for replay identification (e.g. 'tasks.create')
  */
-export function useOfflineMutation<Args extends Record<string, any>>(
-  mutationRef: any,
+export function useOfflineMutation<Mutation extends FunctionReference<'mutation'>>(
+  mutationRef: Mutation,
   apiPath: string,
 ) {
   const mutate = useMutation(mutationRef);
@@ -48,16 +59,18 @@ export function useOfflineMutation<Args extends Record<string, any>>(
   const { tenantId } = useTenant();
 
   const execute = useCallback(
-    async (args: Args): Promise<any> => {
+    async (...mutationArgs: OptionalRestArgs<Mutation>): Promise<FunctionReturnType<Mutation> | OfflineQueuedResult> => {
+      const args = (mutationArgs[0] ?? {}) as FunctionArgs<Mutation>;
+      const argsRecord = args as Record<string, unknown>;
       const actionAt = Date.now();
-      const argsTenantId = typeof (args as any)?.tenantId === 'string'
-        ? String((args as any).tenantId)
+      const argsTenantId = typeof argsRecord.tenantId === 'string'
+        ? argsRecord.tenantId
         : null;
       const effectiveTenantId = tenantId ?? argsTenantId;
 
       if (isOnline) {
         try {
-          return await mutate(args);
+          return await mutate(...mutationArgs);
         } catch (error) {
           if (!effectiveTenantId || !isConnectivityError(error)) {
             throw error;

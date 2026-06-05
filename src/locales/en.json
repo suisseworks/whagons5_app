@@ -191,6 +191,10 @@
     "selectLocationModalTitle": "Select Location",
     "selectTagsModalTitle": "Select Tags"
   },
+  "taskDialog": {
+    "hasForm": "Form",
+    "approvalRequired": "Approval"
+  },
   "voiceTaskReview": {
     "headerTitle": "Review task draft",
     "draftNotFound": "Draft not found.",
@@ -357,7 +361,9 @@
     "approverStatusPending": "Pending",
     "fallbackTeam": "Team",
     "fallbackUser": "User",
-    "fallbackUnknown": "Unknown"
+    "fallbackUnknown": "Unknown",
+    "ackByLabel": "By",
+    "ackTimeLabel": "Time"
   },
   "colab": {
     "tabWorkspaces": "Workspaces",
@@ -731,6 +737,12 @@
       "subtitle": "Confirm approval and optionally add a note.",
       "placeholder": "Add a note for Marketing...",
       "approveButton": "Approve"
+    },
+    "ackCommentModal": {
+      "title": "Confirm receipt",
+      "subtitle": "Confirm you received and reviewed this communication. You can add an optional note.",
+      "placeholder": "Add a note for the sender...",
+      "acknowledgeButton": "Acknowledge"
     },
     "taskCard": {
       "approvalPending": "Waiting for approval",

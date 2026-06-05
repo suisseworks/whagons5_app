@@ -107,6 +107,12 @@ import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSh
 import { VoiceMemoActionButton, VoiceMemoBubble, VoiceMemoDraftPreview, VoiceMemoRecordingBar } from '../components/VoiceMemoControls';
 import * as DB from '../store/database';
 import { parseApprovalDecisionNote } from '../utils/approvalNotes';
+import {
+  buildApproverDetails,
+  computeApprovalStatusForTask,
+  type ApproverDetail,
+} from '../utils/approvalStatus';
+import type { Id } from '../../../convex/_generated/dataModel';
 
 function isFinishedAction(action?: string | null): boolean {
   const normalized = String(action ?? '').toUpperCase();
@@ -574,7 +580,13 @@ export const TaskDetailScreen: React.FC = () => {
   const { user: authUser, subdomain: authSubdomain } = useAuth();
   const { tenantId } = useTenant();
   const canAssignTasks = usePermission('assign-tasks');
-  const { data } = useData();
+  const {
+    data,
+    approvals: approvalsList,
+    approvalApprovers,
+    taskApprovalInstances,
+    roles,
+  } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const secondarySurface = isDarkMode ? '#242424' : '#F5F5F7';
   const tertiaryText = isDarkMode ? 'rgba(255,255,255,0.45)' : '#73726C';
@@ -700,6 +712,7 @@ export const TaskDetailScreen: React.FC = () => {
   const [signatureVisible, setSignatureVisible] = useState(false);
   const [signaturePurpose, setSignaturePurpose] = useState<'taskStatus' | 'approvalAction'>('taskStatus');
   const [approvalCommentDecision, setApprovalCommentDecision] = useState<'approved' | 'rejected' | null>(null);
+  const [ackCommentVisible, setAckCommentVisible] = useState(false);
   const [actionDecision, setActionDecision] = useState<'approved' | 'rejected' | null>(task.approvalActionDecision ?? task.approval_action_decision ?? null);
   const [actionSubmitting, setActionSubmitting] = useState(false);
   const [pendingStatusAfterSignature, setPendingStatusAfterSignature] = useState<StatusOption | null>(null);
@@ -820,15 +833,15 @@ export const TaskDetailScreen: React.FC = () => {
   const assignUserMutation = useOfflineMutation(api.taskResources.assignUser, 'taskResources.assignUser');
   const unassignUserMutation = useOfflineMutation(api.taskResources.unassignUser, 'taskResources.unassignUser');
   const createSignatureMutation = useOfflineMutation(api.taskResources.createSignature, 'taskResources.createSignature');
-  const decideApprovalActionTask = useOfflineMutation((api as any).tasks.decideApprovalActionTask, 'tasks.decideApprovalActionTask');
-  const decideTaskWorkspaceApprovalContext = useOfflineMutation((api as any).tasks.decideTaskWorkspaceApprovalContext, 'tasks.decideTaskWorkspaceApprovalContext');
-  const acknowledgeTaskAckActionTask = useOfflineMutation((api as any).tasks.acknowledgeTaskAckActionTask, 'tasks.acknowledgeTaskAckActionTask');
-  const acknowledgeTaskWorkspaceContext = useOfflineMutation((api as any).tasks.acknowledgeTaskWorkspaceContext, 'tasks.acknowledgeTaskWorkspaceContext');
+  const decideApprovalActionTask = useOfflineMutation(api.tasks.decideApprovalActionTask, 'tasks.decideApprovalActionTask');
+  const decideTaskWorkspaceApprovalContext = useOfflineMutation(api.tasks.decideTaskWorkspaceApprovalContext, 'tasks.decideTaskWorkspaceApprovalContext');
+  const acknowledgeTaskAckActionTask = useOfflineMutation(api.tasks.acknowledgeTaskAckActionTask, 'tasks.acknowledgeTaskAckActionTask');
+  const acknowledgeTaskWorkspaceContext = useOfflineMutation(api.tasks.acknowledgeTaskWorkspaceContext, 'tasks.acknowledgeTaskWorkspaceContext');
   const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
   const actionTaskKind = useQuery(
-    (api as any).tasks.getActionTaskKind,
+    api.tasks.getActionTaskKind,
     tenantId && hasValidConvexId
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
@@ -842,23 +855,115 @@ export const TaskDetailScreen: React.FC = () => {
   const isAckAction = effectiveActionTaskKind === 'ACKNOWLEDGMENT';
   const isActionTask = isApprovalAction || isAckAction;
   const approvalActionRequirement = useQuery(
-    (api as any).tasks.getShareApprovalActionRequirement,
+    api.tasks.getShareApprovalActionRequirement,
     tenantId && hasValidConvexId && isApprovalAction
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
   ) as { requireSignature?: boolean } | undefined;
   const approvalActionState = useQuery(
-    (api as any).tasks.getShareApprovalActionState,
+    api.tasks.getShareApprovalActionState,
     tenantId && hasValidConvexId && isApprovalAction
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
   ) as { decision?: 'pending' | 'approved' | 'rejected' | null } | null | undefined;
   const acknowledgmentActionState = useQuery(
-    (api as any).tasks.getActionTaskAcknowledgmentState,
+    api.tasks.getActionTaskAcknowledgmentState,
     tenantId && hasValidConvexId && isAckAction
       ? { tenantId, taskId: convexTaskId as any }
       : 'skip'
   ) as { acknowledged?: boolean; allAcknowledged?: boolean } | null | undefined;
+
+  const syncedSourceTask = useMemo(() => (
+    data.tasks.find((candidate) => String(candidate.id) === String(task.id))
+    ?? data.tasks.find((candidate) => task.convexId && String((candidate as any)._id ?? '') === String(task.convexId))
+  ), [data.tasks, task.id, task.convexId]);
+
+  const sourceApprovalId = useMemo(() => {
+    const fromTask = task.approvalId ?? (syncedSourceTask as any)?.approvalId ?? (syncedSourceTask as any)?.approval_id ?? null;
+    return fromTask != null ? fromTask : null;
+  }, [task.approvalId, syncedSourceTask]);
+
+  const approvalLookupMaps = useMemo(() => {
+    const buildRecord = (items: any[]): Record<string, any> => {
+      const record: Record<string, any> = {};
+      for (const item of items) {
+        if (item._id != null) record[String(item._id)] = item;
+        if (item.id != null) record[String(item.id)] = item;
+      }
+      return record;
+    };
+    return {
+      approvalMap: buildRecord(approvalsList),
+      userRecordMap: buildRecord(data.users),
+      roleMap: buildRecord(roles),
+      teamMap: buildRecord(data.teams),
+    };
+  }, [approvalsList, data.users, data.teams, roles]);
+
+  const derivedSourceApprovalStatus = useMemo(() => {
+    if (!sourceApprovalId) return null;
+    const approval = approvalLookupMaps.approvalMap[String(sourceApprovalId)];
+    return computeApprovalStatusForTask({
+      taskId: String(task.id),
+      taskConvexId: convexTaskId ?? undefined,
+      approvalId: sourceApprovalId,
+      approval,
+      taskApprovalInstances: taskApprovalInstances as any[],
+    });
+  }, [sourceApprovalId, approvalLookupMaps.approvalMap, task.id, convexTaskId, taskApprovalInstances]);
+
+  const sourceApproverDetails: ApproverDetail[] = useMemo(() => {
+    if (!sourceApprovalId || isActionTask) return [];
+    return buildApproverDetails(
+      sourceApprovalId,
+      task.id ?? '',
+      taskApprovalInstances as any[],
+      approvalApprovers as any[],
+      approvalLookupMaps.userRecordMap,
+      approvalLookupMaps.roleMap,
+      approvalLookupMaps.teamMap,
+      convexTaskId ?? undefined,
+    );
+  }, [
+    sourceApprovalId,
+    isActionTask,
+    task.id,
+    taskApprovalInstances,
+    approvalApprovers,
+    approvalLookupMaps,
+    convexTaskId,
+  ]);
+
+  const shouldLoadSourceAcknowledgmentProgress = Boolean(
+    tenantId
+    && hasValidConvexId
+    && !isActionTask
+    && (derivedSourceApprovalStatus === 'approved' || !sourceApprovalId),
+  );
+
+  const sourceAcknowledgmentProgress = useQuery(
+    api.taskResources.getTaskAcknowledgmentProgressForTask,
+    shouldLoadSourceAcknowledgmentProgress
+      ? { tenantId: tenantId!, taskId: convexTaskId as Id<'tasks'> }
+      : 'skip',
+  ) as {
+    acknowledgmentTracked?: boolean;
+    ackTotal?: number;
+    ackDone?: number;
+    ackRecipients?: Array<{
+      userId?: string;
+      userName?: string | null;
+      acknowledged?: boolean;
+      acknowledgedAt?: number;
+      acknowledgedByUserName?: string | null;
+    }>;
+  } | null | undefined;
+
+  const showSourceAcknowledgmentSection = Boolean(
+    sourceAcknowledgmentProgress?.acknowledgmentTracked
+    && (sourceAcknowledgmentProgress.ackTotal ?? 0) > 0,
+  );
+
   const approvalActionRequiresSignature = approvalActionRequirement?.requireSignature === true || task.requiresSignature === true;
   const shouldLoadTaskHistory = Boolean(tenantId && hasValidConvexId && task.spotId);
   const taskDocumentAssociations = useQuery(
@@ -1453,20 +1558,22 @@ export const TaskDetailScreen: React.FC = () => {
     }
   }, [tenantId, hasValidConvexId, convexTaskId, activeApprovalWorkspaceContext, decideTaskWorkspaceApprovalContext, decideApprovalActionTask, applyReturnedStatus, t]);
 
-  const submitAcknowledgmentAction = useCallback(async () => {
+  const submitAcknowledgmentAction = useCallback(async (comment?: string) => {
     if (!tenantId || !hasValidConvexId || !convexTaskId) return;
     setActionSubmitting(true);
     try {
+      const trimmedComment = comment?.trim();
+      const ackArgs = {
+        tenantId,
+        taskId: convexTaskId as any,
+        ...(trimmedComment ? { comment: trimmedComment } : {}),
+      };
       const result = activeAckWorkspaceContext?._id
         ? await acknowledgeTaskWorkspaceContext({
-          tenantId,
-          taskId: convexTaskId as any,
+          ...ackArgs,
           contextId: String(activeAckWorkspaceContext._id),
         })
-        : await acknowledgeTaskAckActionTask({
-          tenantId,
-          taskId: convexTaskId as any,
-        });
+        : await acknowledgeTaskAckActionTask(ackArgs);
       applyReturnedStatus((result as any)?.statusId);
       if ((result as any)?.allRecipientsAcknowledged) setCurrentStatusAction('FINISHED');
       toastRef.current?.show({
@@ -2091,6 +2198,93 @@ export const TaskDetailScreen: React.FC = () => {
           </Text>
         </View>
       </View>
+
+      {!isActionTask && sourceApproverDetails.length > 0 && (
+        <View style={[styles.communicationCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
+          <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 8 }]}>
+            {t('sharedTask.sectionApprovers')}
+          </Text>
+          {sourceApproverDetails.map((detail) => {
+            const statusIcon = detail.status === 'approved' ? 'check-circle' as const
+              : detail.status === 'rejected' ? 'close-circle' as const
+              : 'clock-outline' as const;
+            const statusLabel = detail.status === 'approved' ? t('sharedTask.statusApproved')
+              : detail.status === 'rejected' ? t('sharedTask.statusRejected')
+              : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
+              : t('sharedTask.ackStatusPending');
+            return (
+              <View key={String(detail.id)} style={[styles.communicationRow, { borderBottomColor: cardBorder }]}>
+                <MaterialCommunityIcons name={statusIcon} size={18} color={detail.statusColor} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.communicationName, { color: colors.text }]}>{detail.name}</Text>
+                  <Text style={[styles.communicationStatus, { color: detail.statusColor }]}>{statusLabel}</Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {!isActionTask && showSourceAcknowledgmentSection && (
+        <View style={[styles.communicationCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
+          <View style={styles.communicationSectionHeader}>
+            <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 0 }]}>
+              {t('sharedTask.sectionAcknowledgments')}
+            </Text>
+            <View style={[styles.ackProgressBadge, {
+              backgroundColor: sourceAcknowledgmentProgress!.ackDone === sourceAcknowledgmentProgress!.ackTotal
+                ? '#F0FDF4'
+                : '#FFF7ED',
+            }]}>
+              <Text style={[styles.ackProgressText, {
+                color: sourceAcknowledgmentProgress!.ackDone === sourceAcknowledgmentProgress!.ackTotal
+                  ? '#16A34A'
+                  : '#EA580C',
+              }]}>
+                {sourceAcknowledgmentProgress!.ackDone}/{sourceAcknowledgmentProgress!.ackTotal}
+              </Text>
+            </View>
+          </View>
+          {(sourceAcknowledgmentProgress?.ackRecipients ?? []).map((recipient) => {
+            const acknowledged = recipient.acknowledged === true;
+            const ackTime = recipient.acknowledgedAt
+              ? new Date(recipient.acknowledgedAt).toLocaleString(undefined, {
+                month: 'short',
+                day: 'numeric',
+                year: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+              })
+              : null;
+            return (
+              <View key={String(recipient.userId)} style={[styles.ackRecipientBlock, { borderBottomColor: cardBorder }]}>
+                <View style={styles.communicationRow}>
+                  <Text style={[styles.communicationName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+                    {recipient.userName || t('sharedTask.fallbackUser')}
+                  </Text>
+                  <Text style={[styles.communicationStatus, { color: acknowledged ? '#16A34A' : '#EA580C' }]}>
+                    {acknowledged ? t('sharedTask.ackStatusAcknowledged') : t('sharedTask.ackStatusPending')}
+                  </Text>
+                </View>
+                {acknowledged && (recipient.acknowledgedByUserName || ackTime) ? (
+                  <View style={styles.ackRecipientMeta}>
+                    {recipient.acknowledgedByUserName ? (
+                      <Text style={[styles.ackRecipientMetaText, { color: tertiaryText }]}>
+                        {t('sharedTask.ackByLabel')}: {recipient.acknowledgedByUserName}
+                      </Text>
+                    ) : null}
+                    {ackTime ? (
+                      <Text style={[styles.ackRecipientMetaText, { color: tertiaryText }]}>
+                        {t('sharedTask.ackTimeLabel')}: {ackTime}
+                      </Text>
+                    ) : null}
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {latestTaskSignature && (
         <>
@@ -2936,7 +3130,7 @@ export const TaskDetailScreen: React.FC = () => {
           )}
         </Animated.View>
 
-        {showActionTaskFooter && (
+        {showActionTaskFooter && !signatureVisible && approvalCommentDecision == null && !ackCommentVisible && (
           <View style={styles.actionButtonsContainer}>
             {canUseApprovalActionControls ? (
               <>
@@ -2969,7 +3163,7 @@ export const TaskDetailScreen: React.FC = () => {
             ) : (
               <TouchableOpacity
                 style={[styles.actionButton, { backgroundColor: '#16A34A', opacity: actionSubmitting ? 0.7 : 1 }]}
-                onPress={() => void submitAcknowledgmentAction()}
+                onPress={() => setAckCommentVisible(true)}
                 disabled={actionSubmitting}
               >
                 {actionSubmitting ? <ActivityIndicator size="small" color="#FFFFFF" /> : <MaterialIcons name="visibility" size={16} color="#FFFFFF" />}
@@ -3014,7 +3208,62 @@ export const TaskDetailScreen: React.FC = () => {
             )}
           </View>
         )}
+
       </KeyboardAvoidingView>
+
+      <RejectCommentModal
+        visible={approvalCommentDecision != null}
+        onClose={() => setApprovalCommentDecision(null)}
+        title={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.title') : undefined}
+        subtitle={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.subtitle') : undefined}
+        placeholder={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.placeholder') : undefined}
+        submitLabel={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.approveButton') : undefined}
+        submitIcon={approvalCommentDecision === 'approved' ? 'check' : 'close'}
+        submitColor={approvalCommentDecision === 'approved' ? '#16A34A' : '#DC2626'}
+        requireComment={approvalCommentDecision !== 'approved'}
+        onSubmit={(comment) => {
+          const decision = approvalCommentDecision;
+          setApprovalCommentDecision(null);
+          if (decision) void submitApprovalActionDecision(decision, undefined, comment);
+        }}
+      />
+
+      <RejectCommentModal
+        visible={ackCommentVisible}
+        onClose={() => setAckCommentVisible(false)}
+        title={t('component.ackCommentModal.title')}
+        subtitle={t('component.ackCommentModal.subtitle')}
+        placeholder={t('component.ackCommentModal.placeholder')}
+        submitLabel={t('component.ackCommentModal.acknowledgeButton')}
+        submitIcon="visibility"
+        submitColor="#16A34A"
+        requireComment={false}
+        onSubmit={(comment) => {
+          setAckCommentVisible(false);
+          void submitAcknowledgmentAction(comment);
+        }}
+      />
+
+      <SignatureModal
+        visible={signatureVisible}
+        title={signaturePurpose === 'approvalAction' ? t('sharedTask.approveAndSignButton') : t('taskDetail.signTask')}
+        subtitle={signaturePurpose === 'approvalAction' ? t('taskDetail.approvalActionSignatureSubtitle') : t('component.signatureModal.signTaskSubtitle')}
+        taskLabel={`#${task.id ?? ''} - ${task.title}`}
+        onClose={() => {
+          setSignatureVisible(false);
+          setPendingStatusAfterSignature(null);
+          setSignaturePurpose('taskStatus');
+        }}
+        onSigned={(payload) => {
+          if (signaturePurpose === 'approvalAction') {
+            setSignatureVisible(false);
+            setSignaturePurpose('taskStatus');
+            void submitApprovalActionDecision('approved', payload.storageId, payload.comment);
+          } else {
+            void handleTaskSigned(payload);
+          }
+        }}
+      />
 
       <Modal
         visible={taskActionsVisible}
@@ -3350,44 +3599,6 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       </Modal>
 
-      <SignatureModal
-        visible={signatureVisible}
-        title={signaturePurpose === 'approvalAction' ? t('sharedTask.approveAndSignButton') : t('taskDetail.signTask')}
-        subtitle={signaturePurpose === 'approvalAction' ? t('taskDetail.approvalActionSignatureSubtitle') : t('component.signatureModal.signTaskSubtitle')}
-        taskLabel={`#${task.id ?? ''} - ${task.title}`}
-        onClose={() => {
-          setSignatureVisible(false);
-          setPendingStatusAfterSignature(null);
-          setSignaturePurpose('taskStatus');
-        }}
-        onSigned={(payload) => {
-          if (signaturePurpose === 'approvalAction') {
-            setSignatureVisible(false);
-            setSignaturePurpose('taskStatus');
-            void submitApprovalActionDecision('approved', payload.storageId, payload.comment);
-          } else {
-            void handleTaskSigned(payload);
-          }
-        }}
-      />
-
-      <RejectCommentModal
-        visible={approvalCommentDecision != null}
-        onClose={() => setApprovalCommentDecision(null)}
-        title={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.title') : undefined}
-        subtitle={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.subtitle') : undefined}
-        placeholder={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.placeholder') : undefined}
-        submitLabel={approvalCommentDecision === 'approved' ? t('component.approveCommentModal.approveButton') : undefined}
-        submitIcon={approvalCommentDecision === 'approved' ? 'check' : 'close'}
-        submitColor={approvalCommentDecision === 'approved' ? '#16A34A' : '#DC2626'}
-        requireComment={approvalCommentDecision !== 'approved'}
-        onSubmit={(comment) => {
-          const decision = approvalCommentDecision;
-          setApprovalCommentDecision(null);
-          if (decision) void submitApprovalActionDecision(decision, undefined, comment);
-        }}
-      />
-
       <Modal
         visible={!!commentActionNote}
         transparent
@@ -3690,6 +3901,55 @@ const styles = StyleSheet.create({
   actionTaskHelp: {
     marginTop: 8,
     fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  communicationCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  communicationSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  communicationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  communicationName: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  communicationStatus: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  ackProgressBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  ackProgressText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  ackRecipientBlock: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 4,
+  },
+  ackRecipientMeta: {
+    paddingLeft: 0,
+    paddingBottom: 6,
+    gap: 2,
+  },
+  ackRecipientMetaText: {
+    fontSize: 11,
     fontFamily: fontFamilies.bodyRegular,
   },
   metaCellLabel: {

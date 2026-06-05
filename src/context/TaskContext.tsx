@@ -232,11 +232,7 @@ function taskWithActiveWorkspaceContext(task: TaskItem, workspace: any): TaskIte
   const contexts = task.workspaceContexts ?? task.workspace_contexts ?? [];
   if (!Array.isArray(contexts) || contexts.length === 0) return task;
 
-  const workspaceKeys = new Set(
-    [workspace?.id, workspace?._id, workspace?.pgId, workspace?.pg_id]
-      .filter((value) => value != null && value !== '')
-      .map(String),
-  );
+  const workspaceKeys = workspaceKeySetForWorkspace(workspace);
   if (workspaceKeys.size === 0) return task;
 
   const activeContext = contexts.find((context: any) => {
@@ -250,6 +246,56 @@ function taskWithActiveWorkspaceContext(task: TaskItem, workspace: any): TaskIte
     activeWorkspaceContext: activeContext,
     active_workspace_context: activeContext,
   };
+}
+
+function workspaceKeySetForWorkspace(workspace: any): Set<string> {
+  return new Set(
+    [workspace?.id, workspace?._id, workspace?.pgId, workspace?.pg_id]
+      .filter((value) => value != null && value !== '')
+      .map(String),
+  );
+}
+
+function taskWorkspaceKeys(task: TaskItem): string[] {
+  const keys = new Set<string>();
+  const addKey = (value: unknown) => {
+    if (value != null && value !== '') keys.add(String(value));
+  };
+
+  addKey(task.workspaceId);
+  addKey((task as any).workspace_id);
+  addKey((task as any).sourceWorkspaceId);
+  addKey((task as any).source_workspace_id);
+
+  const activeContext = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
+  addKey(activeContext?.workspaceId);
+  addKey(activeContext?.workspace_id);
+
+  const contexts = task.workspaceContexts ?? task.workspace_contexts ?? [];
+  if (Array.isArray(contexts)) {
+    for (const context of contexts) {
+      addKey(context?.workspaceId);
+      addKey(context?.workspace_id);
+    }
+  }
+
+  return [...keys];
+}
+
+function taskMatchesWorkspace(task: TaskItem, workspace: any): boolean {
+  const workspaceKeys = workspaceKeySetForWorkspace(workspace);
+  if (workspaceKeys.size === 0) return false;
+  return taskWorkspaceKeys(task).some((key) => workspaceKeys.has(key));
+}
+
+function taskWorkspaceIndexKeys(task: TaskItem, workspaces: any[]): string[] {
+  const keys: string[] = [];
+  for (const workspace of workspaces) {
+    if (!taskMatchesWorkspace(task, workspace)) continue;
+    const workspaceId = workspace?.id;
+    if (workspaceId != null && workspaceId !== '') keys.push(String(workspaceId));
+  }
+  return keys;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +409,7 @@ interface TaskContextType {
   selectedWorkspace: string;
   workspaces: string[];
   workspaceObjects: SyncedWorkspace[];
+  workspaceTaskCounts: Map<string | number, number>;
   sharedCount: number;
   statuses: StatusOption[];
   categories: CategoryOption[];
@@ -986,10 +1033,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         continue;
       }
 
+      const activeWorkspaceContext = rawTask.activeWorkspaceContext ?? rawTask.active_workspace_context ?? null;
+      const contextWorkspaceId = activeWorkspaceContext?.workspaceId ?? activeWorkspaceContext?.workspace_id ?? null;
+      const sourceWorkspaceId = resolveId(data.workspaces, rawTask.workspaceId ?? rawTask.workspace_id);
+      const overlayWorkspaceId = contextWorkspaceId ? resolveId(data.workspaces, contextWorkspaceId) : sourceWorkspaceId;
+
       const syncedTask: SyncedTask = {
         ...rawTask,
         id: taskId,
-        workspace_id: resolveId(data.workspaces, rawTask.workspaceId ?? rawTask.workspace_id),
+        source_workspace_id: sourceWorkspaceId,
+        workspace_id: overlayWorkspaceId,
         category_id: resolveId(data.categories, rawTask.categoryId ?? rawTask.category_id),
         status_id: resolveId(data.statuses, rawTask.statusId ?? rawTask.status_id),
         priority_id: resolveId(data.priorities, rawTask.priorityId ?? rawTask.priority_id),
@@ -1256,6 +1309,30 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [allMappedTasks, isSharedOnlyTask],
   );
 
+  const workspaceTaskCounts = useMemo(() => {
+    const counts = new Map<string | number, number>();
+
+    for (const workspace of workspaceObjects) {
+      const workspaceId = workspace?.id;
+      if (workspaceId == null || workspaceId === '') continue;
+
+      let count = 0;
+      for (const task of workspaceVisibleMappedTasks) {
+        if (taskMatchesWorkspace(task, workspace)) count++;
+      }
+
+      counts.set(workspaceId, count);
+      counts.set(String(workspaceId), count);
+
+      const convexId = (workspace as any)?._id;
+      if (convexId != null && convexId !== '') {
+        counts.set(String(convexId), count);
+      }
+    }
+
+    return counts;
+  }, [workspaceObjects, workspaceVisibleMappedTasks]);
+
   // ---------------------------------------------------------------------------
   // Filter + paginate
   // ---------------------------------------------------------------------------
@@ -1298,10 +1375,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const byWorkspaceStatus = new Map<string, Map<string, TaskItem[]>>();
 
     for (const task of sortedAll) {
-      const workspaceKey = task.workspaceId == null ? '' : String(task.workspaceId);
+      const workspaceKeys = taskWorkspaceIndexKeys(task, data.workspaces);
       const statusKey = task.status;
 
-      if (workspaceKey) {
+      for (const workspaceKey of workspaceKeys) {
         const workspaceList = byWorkspace.get(workspaceKey) ?? [];
         workspaceList.push(task);
         byWorkspace.set(workspaceKey, workspaceList);
@@ -1311,7 +1388,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       statusList.push(task);
       byStatus.set(statusKey, statusList);
 
-      if (workspaceKey) {
+      for (const workspaceKey of workspaceKeys) {
         let statusMap = byWorkspaceStatus.get(workspaceKey);
         if (!statusMap) {
           statusMap = new Map<string, TaskItem[]>();
@@ -1324,7 +1401,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return { sortedAll, byWorkspace, byStatus, byWorkspaceStatus };
-  }, [canUseIndexedTaskList, shouldUseSqlTaskList, workspaceVisibleMappedTasks]);
+  }, [canUseIndexedTaskList, data.workspaces, shouldUseSqlTaskList, workspaceVisibleMappedTasks]);
 
   const activeIndexedTasks = useMemo(() => {
     if (!indexedTaskLists) return null;
@@ -1466,13 +1543,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } else {
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
-        const wsIdStr = String(ws.id);
         result = workspaceVisibleMappedTasks
-          .filter((t) => String(t.workspaceId) === wsIdStr)
+          .filter((t) => taskMatchesWorkspace(t, ws))
           .map((t) => taskWithActiveWorkspaceContext(t, ws));
         if (result.length === 0 && allMappedTasks.length > 0) {
-          const sampleIds = workspaceVisibleMappedTasks.slice(0, 5).map((t) => `${t.workspaceId}(${typeof t.workspaceId})`);
-          console.warn(`[TaskContext] Workspace "${selectedWorkspace}" (id=${ws.id}, type=${typeof ws.id}) matched 0/${workspaceVisibleMappedTasks.length} tasks. Sample task wsIds: [${sampleIds.join(', ')}]`);
+          const sampleIds = workspaceVisibleMappedTasks.slice(0, 5).map((t) => taskWorkspaceKeys(t).join('|') || 'none');
+          console.warn(`[TaskContext] Workspace "${selectedWorkspace}" (id=${ws.id}, type=${typeof ws.id}) matched 0/${workspaceVisibleMappedTasks.length} tasks. Sample task workspace keys: [${sampleIds.join(', ')}]`);
         }
       } else {
         result = workspaceVisibleMappedTasks;
@@ -1542,9 +1618,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } else if (selectedWorkspace !== 'Everything') {
       const ws = data.workspaces.find((w) => w.name === selectedWorkspace);
       if (ws) {
-        const wsIdStr = String(ws.id);
         result = workspaceVisibleMappedTasks
-          .filter((t) => String(t.workspaceId) === wsIdStr)
+          .filter((t) => taskMatchesWorkspace(t, ws))
           .map((t) => taskWithActiveWorkspaceContext(t, ws));
       } else {
         result = workspaceVisibleMappedTasks;
@@ -1875,6 +1950,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (args.latitude != null) mutationArgs.latitude = args.latitude;
     if (args.longitude != null) mutationArgs.longitude = args.longitude;
     if (args.userConvexIds?.length) mutationArgs.assigneeUserIds = args.userConvexIds;
+
+    const template = args.templateConvexId
+      ? data.templates.find((t: any) => String((t as any)._id) === String(args.templateConvexId))
+      : null;
+    if (template) {
+      const templateClass = (template as any).template_class ?? (template as any).templateClass;
+      if (templateClass === 'announcement') {
+        mutationArgs.slaId = null;
+      }
+    }
 
     const result = await createTaskOfflineMutation(mutationArgs as any);
     if ((result as any)?._offlineQueued) {
@@ -2326,6 +2411,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       selectedWorkspace,
       workspaces,
       workspaceObjects,
+      workspaceTaskCounts,
       sharedCount,
       statuses,
       categories,
@@ -2372,6 +2458,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       selectedWorkspace,
       workspaces,
       workspaceObjects,
+      workspaceTaskCounts,
       sharedCount,
       statuses,
       categories,

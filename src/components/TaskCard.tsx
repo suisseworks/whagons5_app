@@ -261,7 +261,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const { tagInfoMap, isTaskWorking } = useTasks();
   const { user: authUser } = useAuth();
   const actionTaskKind = useQuery(
-    (api as any).tasks.getActionTaskKind,
+    api.tasks.getActionTaskKind,
     tenantId && task.convexId ? { tenantId, taskId: task.convexId as any } : 'skip',
   ) as string | null | undefined;
   const activeWorkspaceContext = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
@@ -274,13 +274,13 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const isAckActionTask = effectiveActionTaskKind === 'ACKNOWLEDGMENT';
   const isApprovalActionTask = effectiveActionTaskKind === 'STATUS_TRACKING';
   const approvalActionState = useQuery(
-    (api as any).tasks.getShareApprovalActionState,
+    api.tasks.getShareApprovalActionState,
     tenantId && task.convexId && isApprovalActionTask
       ? { tenantId, taskId: task.convexId as any }
       : 'skip',
   ) as { decision?: 'pending' | 'approved' | 'rejected' | null } | null | undefined;
   const acknowledgmentActionState = useQuery(
-    (api as any).tasks.getActionTaskAcknowledgmentState,
+    api.tasks.getActionTaskAcknowledgmentState,
     tenantId && task.convexId && isAckActionTask
       ? { tenantId, taskId: task.convexId as any }
       : 'skip',

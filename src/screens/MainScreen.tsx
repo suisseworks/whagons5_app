@@ -201,6 +201,7 @@ export const MainScreen: React.FC = () => {
     selectedWorkspace,
     workspaces,
     workspaceObjects,
+    workspaceTaskCounts,
     sharedCount,
     finalStatus,
     getAllowedStatuses,
@@ -604,9 +605,10 @@ export const MainScreen: React.FC = () => {
       ? undefined
       : (selectedWorkspaceConvexId ? scopedTaskSummaryCounts : allTaskSummaryCounts);
     const source = unfilteredTasks;
+    const useLocalCounts = source.length > 0;
     const counts = new Map<string, { count: number; color: string }>();
 
-    if (summary?.byStatus) {
+    if (!useLocalCounts && summary?.byStatus) {
       for (const entry of Object.values(summary.byStatus as Record<string, { name: string; color: string | null; count: number }>)) {
         counts.set(entry.name.toLowerCase(), { count: entry.count, color: entry.color || '#9CA3AF' });
       }
@@ -623,7 +625,7 @@ export const MainScreen: React.FC = () => {
     }
 
     const chips: { label: string; statusKey: string; color: string; count: number }[] = [
-      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: summary?.total ?? source.length },
+      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: useLocalCounts ? source.length : (summary?.total ?? source.length) },
     ];
     const seen = new Set<string>();
     for (const s of availableStatuses) {
@@ -1081,31 +1083,22 @@ export const MainScreen: React.FC = () => {
     );
   };
 
-  // Task counts per workspace for the workspace list. Use the backend aggregate
-  // counter so badges are not capped by the mobile task-row fetch limit.
   const taskCountsByWorkspace = useMemo(() => {
     const counts = new Map<string | number, number>();
 
-    if (allTaskSummaryCounts?.byWorkspace) {
-      for (const ws of workspaceObjects) {
-        const convexId = (ws as any)._id;
-        const count = convexId ? allTaskSummaryCounts.byWorkspace[String(convexId)] : undefined;
-        if (typeof count === 'number') {
-          counts.set(ws.id, count);
-          if (convexId) counts.set(String(convexId), count);
-        }
-      }
-      return counts;
+    for (const ws of workspaceObjects) {
+      const convexId = (ws as any)._id;
+      const summaryCount = convexId ? allTaskSummaryCounts?.byWorkspace?.[String(convexId)] : undefined;
+      const visibleCount = workspaceTaskCounts.get(ws.id);
+      const count = typeof visibleCount === 'number' && visibleCount > 0
+        ? visibleCount
+        : (typeof summaryCount === 'number' ? summaryCount : 0);
+      counts.set(ws.id, count);
+      if (convexId) counts.set(String(convexId), count);
     }
 
-    for (const t of data.tasks) {
-      const wsId = (t as any).workspace_id;
-      if (wsId != null) {
-        counts.set(wsId, (counts.get(wsId) || 0) + 1);
-      }
-    }
     return counts;
-  }, [data.tasks, allTaskSummaryCounts, workspaceObjects]);
+  }, [allTaskSummaryCounts, workspaceObjects, workspaceTaskCounts]);
 
   const renderWorkspacesList = () => {
     const wsItems = workspaceObjects;

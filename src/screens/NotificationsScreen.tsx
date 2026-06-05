@@ -22,6 +22,7 @@ import { formatTimestamp, resolveNotificationNavigation } from '../utils/helpers
 import { RootStackParamList } from '../models/types';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { sanitizeNotificationMessage } from '../utils/notificationText';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,7 +80,7 @@ export const NotificationsScreen: React.FC = () => {
       return {
         id: n._id,
         title: n.title ?? '',
-        message: n.message ?? '',
+        message: sanitizeNotificationMessage(n.message ?? ''),
         timestamp: new Date(n._creationTime),
         isRead: !!n.readAt,
         icon: meta.icon,

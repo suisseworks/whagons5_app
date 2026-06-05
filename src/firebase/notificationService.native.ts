@@ -32,6 +32,7 @@ import {
   getChannelIdForTone,
   getIosSoundForTone,
 } from '../utils/notificationTones';
+import { sanitizeNotificationMessage } from '../utils/notificationText';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -262,7 +263,7 @@ export function setupForegroundMessageHandler(): () => void {
     try {
       await notifee.displayNotification({
         title: notification?.title || data?.title as string || 'Whagons',
-        body: notification?.body || data?.body as string || '',
+        body: sanitizeNotificationMessage(notification?.body || data?.body as string || ''),
         data: data as Record<string, string> | undefined,
         android: {
           channelId,
@@ -316,7 +317,7 @@ export function registerBackgroundMessageHandler(): void {
       try {
         await notifee.displayNotification({
           title: data?.title as string || 'Whagons',
-          body: data?.body as string || '',
+          body: sanitizeNotificationMessage(data?.body as string || ''),
           data: data as Record<string, string> | undefined,
           android: {
             channelId,

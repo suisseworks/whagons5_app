@@ -38,6 +38,7 @@ import {
   NotificationTapPayload,
 } from '../firebase/notificationService';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { sanitizeNotificationMessage } from '../utils/notificationText';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -302,7 +303,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
           const notif: AppNotification = {
             id: String(Date.now()),
             title: (payload as any).title || 'Notification',
-            message: (payload as any).body || '',
+            message: sanitizeNotificationMessage((payload as any).body || ''),
             timestamp: new Date(),
             isRead: false,
             icon: meta.icon,
@@ -410,7 +411,7 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         const notif: AppNotification = {
           id: remoteMessage.messageId || String(Date.now()),
           title: notification?.title || data?.title || 'Notification',
-          message: notification?.body || data?.body || '',
+          message: sanitizeNotificationMessage(notification?.body || data?.body || ''),
           timestamp: new Date(),
           isRead: false,
           icon: meta.icon,

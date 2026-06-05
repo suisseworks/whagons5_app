@@ -191,6 +191,10 @@
     "selectLocationModalTitle": "Seleccionar Ubicación",
     "selectTagsModalTitle": "Seleccionar Etiquetas"
   },
+  "taskDialog": {
+    "hasForm": "Formulario",
+    "approvalRequired": "Aprobación"
+  },
   "voiceTaskReview": {
     "headerTitle": "Revisar borrador de tarea",
     "draftNotFound": "No se encontro el borrador.",
@@ -357,7 +361,9 @@
     "approverStatusPending": "Pendiente",
     "fallbackTeam": "Equipo",
     "fallbackUser": "Usuario",
-    "fallbackUnknown": "Desconocido"
+    "fallbackUnknown": "Desconocido",
+    "ackByLabel": "Por",
+    "ackTimeLabel": "Hora"
   },
   "colab": {
     "tabWorkspaces": "Espacios",
@@ -731,6 +737,12 @@
       "subtitle": "Confirma la aprobacion y agrega una nota opcional.",
       "placeholder": "Agrega una nota para Mercadeo...",
       "approveButton": "Aprobar"
+    },
+    "ackCommentModal": {
+      "title": "Confirmar recibo",
+      "subtitle": "Confirma que recibiste y revisaste este comunicado. Puedes agregar una nota opcional.",
+      "placeholder": "Agrega una nota para el remitente...",
+      "acknowledgeButton": "Acusar"
     },
     "taskCard": {
       "approvalPending": "En espera de aprobación",

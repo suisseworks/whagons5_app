@@ -17,6 +17,8 @@ OPENROUTER_MODEL ?= moonshotai/kimi-k2.5
 IMAGEMAGICK ?= $(shell command -v magick 2>/dev/null || command -v convert 2>/dev/null)
 CLIENT_ROOT ?= ..
 APP_TAG ?= $(shell git describe --tags --exact-match 2>/dev/null || node -p "'v' + require('./package.json').version")
+ANDROID_JAVA_HOME ?= $(shell if [ -d "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home" ]; then echo "/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home"; elif command -v /usr/libexec/java_home >/dev/null 2>&1; then /usr/libexec/java_home -v 17 2>/dev/null || true; fi)
+GRADLE_JAVA_ENV = $(if $(ANDROID_JAVA_HOME),JAVA_HOME="$(ANDROID_JAVA_HOME)" PATH="$(ANDROID_JAVA_HOME)/bin:$$PATH",)
 
 # ---- iOS build vars ----
 IOS_WORKSPACE ?= ios/Whagons.xcworkspace
@@ -36,8 +38,8 @@ help:
 	@echo ""
 	@echo "  make release               Android release: auto-bump patch, build, upload, tag + GitHub APK asset"
 	@echo "  make release VERSION=2.0.0 Same Android release with explicit version"
-	@echo "  make release-prod          Android-only production release"
-	@echo "  make release-prod-android  Android-only production release"
+	@echo "  make release-prod          Android-only production release with prod/dev GitHub APK assets"
+	@echo "  make release-prod-android  Android-only production release with prod/dev GitHub APK assets"
 	@echo "  make release-ios-latest    Mac-only: sync local iOS version, then upload to App Store Connect"
 	@echo "  make release-prod VERSION=2.0.0  Production release with explicit version"
 	@echo "  make release-notes-preview Safe: generate release notes only into /tmp"
@@ -64,16 +66,16 @@ help:
 #  Android builds
 # ===========================================================================
 android-run:
-	npx expo run:android
+	$(GRADLE_JAVA_ENV) npx expo run:android
 
 android-apk-debug: android-clean
-	cd android && ./gradlew assembleDebug
+	cd android && $(GRADLE_JAVA_ENV) ./gradlew assembleDebug
 
 android-apk-release: android-clean
-	cd android && ./gradlew assembleRelease
+	cd android && $(GRADLE_JAVA_ENV) ./gradlew assembleRelease
 
 android-apk-dev-backend: android-clean
-	set -a && . ./.env.dev-backend && set +a && export EXPO_NO_DOTENV=1 && cd android && ./gradlew --no-daemon assembleRelease
+	set -a && . ./.env.dev-backend && set +a && export EXPO_NO_DOTENV=1 && cd android && $(GRADLE_JAVA_ENV) ./gradlew --no-daemon assembleRelease
 
 android-clean:
 	rm -rf android/app/.cxx android/app/build android/build android/.gradle
@@ -297,7 +299,12 @@ release:
 	(cd .. && pnpm run compatibility:inventory -- --worktree-tag "$$tag_name") && \
 	(cd .. && pnpm run compatibility:check -- --worktree-tag "$$tag_name") && \
 	echo "=== Step 7: Generate release notes ===" && \
-	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
+	if [ "$(SKIP_RELEASE_NOTES_REGEN)" = "1" ]; then \
+		if [ ! -f "$$release_notes_file" ]; then echo "Error: SKIP_RELEASE_NOTES_REGEN=1 but cached notes file is missing: $$release_notes_file"; exit 1; fi; \
+		echo "  reusing cached release notes: $$release_notes_file"; \
+	else \
+		PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts; \
+	fi && \
 	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
 	cat "$$release_notes_file" >> "$$release_tag_file" && \
 	\
@@ -389,26 +396,49 @@ release-prod-android:
 	(cd .. && pnpm run compatibility:inventory -- --worktree-tag "$$tag_name") && \
 	(cd .. && pnpm run compatibility:check -- --worktree-tag "$$tag_name") && \
 	echo "=== Step 7: Generate release notes ===" && \
-	PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts && \
+	if [ "$(SKIP_RELEASE_NOTES_REGEN)" = "1" ]; then \
+		if [ ! -f "$$release_notes_file" ]; then echo "Error: SKIP_RELEASE_NOTES_REGEN=1 but cached notes file is missing: $$release_notes_file"; exit 1; fi; \
+		echo "  reusing cached release notes: $$release_notes_file"; \
+	else \
+		PREVIOUS_TAG="$$latest_tag" RELEASE_VERSION="$$version" RELEASE_NAME="$$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" OPENROUTER_MODEL="$(OPENROUTER_MODEL)" npx tsx scripts/generate-release-notes.ts; \
+	fi && \
 	printf "Release %s\n\n" "$$release_name" > "$$release_tag_file" && \
 	cat "$$release_notes_file" >> "$$release_tag_file" && \
 	\
-	echo "=== Step 8: Build AAB and APK ===" && \
+	echo "=== Step 8: Build production AAB and APK ===" && \
 	cd android && ./gradlew --no-daemon bundleRelease assembleRelease && cd .. && \
 	release_apk="android/app/build/outputs/apk/release/app-release.apk" && \
-	release_asset_name="Whagons-$$version-build-$$next_code.apk" && \
+	prod_apk="/tmp/whagons-prod-$$version-build-$$next_code.apk" && \
+	dev_apk="/tmp/whagons-dev-$$version-build-$$next_code.apk" && \
+	prod_asset_name="Whagons-$$version-build-$$next_code-prod.apk" && \
+	dev_asset_name="Whagons-$$version-build-$$next_code-dev.apk" && \
 	if [ ! -f "$$release_apk" ]; then echo "Error: missing release APK at $$release_apk"; exit 1; fi && \
+	cp "$$release_apk" "$$prod_apk" && \
 	\
 	echo "=== Step 9: Upload to Google Play Console (PRODUCTION) ===" && \
 	cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json upload --bundle ../android/app/build/outputs/bundle/release/app-release.aab --track production --publish && cd .. && \
 	\
-	echo "=== Step 10: Commit, tag, push, and publish release notes ===" && \
+	echo "=== Step 10: Build dev APK asset ===" && \
+	dev_env_file="$${DEV_APK_ENV_FILE:-.env.dev-backend}" && \
+	if [ ! -f "$$dev_env_file" ]; then dev_env_file=".env"; fi && \
+	if [ ! -f "$$dev_env_file" ]; then echo "Error: missing dev APK env file. Set DEV_APK_ENV_FILE or add .env."; exit 1; fi && \
+	dev_env_source="$$dev_env_file" && \
+	case "$$dev_env_source" in /*|*/*) ;; *) dev_env_source="./$$dev_env_source";; esac && \
+	echo "  using $$dev_env_file" && \
+	rm -rf android/app/.cxx android/app/build android/build android/.gradle && \
+	(unset EXPO_PUBLIC_API_URL EXPO_PUBLIC_API_PROTOCOL EXPO_PUBLIC_RTE_URL EXPO_PUBLIC_RTE_PROTOCOL EXPO_PUBLIC_CONVEX_URL EXPO_PUBLIC_TASK_SHARE_BASE_URL EXPO_PUBLIC_CONVEX_SITE_URL EXPO_PUBLIC_NFC_BASE_DOMAIN EXPO_PUBLIC_IMGPROXY_URL EXPO_PUBLIC_GOOGLE_MAPS_API_KEY GOOGLE_MAPS_API_KEY CONVEX_URL && \
+		if [ -f .env.local ]; then set -a && . ./.env.local && set +a; fi && \
+		set -a && . "$$dev_env_source" && set +a && export EXPO_NO_DOTENV=1 && cd android && ./gradlew --no-daemon assembleRelease) && \
+	if [ ! -f "$$release_apk" ]; then echo "Error: missing dev APK at $$release_apk"; exit 1; fi && \
+	cp "$$release_apk" "$$dev_apk" && \
+	\
+	echo "=== Step 11: Commit, tag, push, and publish release notes ===" && \
 	git add . && \
 	git commit -m "Release $$release_name" && \
 	git tag -a "$$tag_name" -F "$$release_tag_file" && \
 	git push $(REMOTE_REPO) main && \
 	git push $(REMOTE_REPO) --tags && \
-	gh release create "$$tag_name" "$$release_apk#$$release_asset_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
+	gh release create "$$tag_name" "$$prod_apk#$$prod_asset_name" "$$dev_apk#$$dev_asset_name" --title "Release $$release_name" --notes-file "$$release_notes_file" && \
 	RELEASE_VERSION="$$version" RELEASE_TAG="$$tag_name" RELEASE_TITLE="Release $$release_name" RELEASE_NOTES_FILE="$$release_notes_file" RELEASE_BUILD_NUMBER="$$next_code" RELEASE_GIT_HASH="$$git_hash" RELEASE_GITHUB_URL="$$(gh release view "$$tag_name" --json url --jq .url)" RELEASE_PUBLISHED_AT="$$(node -e 'console.log(Date.now())')" node scripts/publish-release-notes.mjs && \
 	echo "" && \
 	echo "Done: $$release_name published to PRODUCTION on Play Console and tagged on GitHub."

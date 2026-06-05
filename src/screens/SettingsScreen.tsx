@@ -95,7 +95,7 @@ export const SettingsScreen: React.FC = () => {
   const { forceResync } = useData();
   const { pendingCount, failedCount } = useMutationQueue();
   const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
-  const submitBugReport = useMutation((api as any).bugReports.submit);
+  const submitBugReport = useMutation(api.bugReports.submit);
   const releaseNotesBody = getReleaseNotesBodyForLanguage(bundledReleaseNotes, language);
   const releaseNotesMarkdown = releaseNotesBody?.trim() || t('settings.releaseNotesEmpty');
   const currentThemeLabel = themeMetadata.find((theme) => theme.id === themeName)?.name || t('settings.theme');
@@ -109,7 +109,7 @@ export const SettingsScreen: React.FC = () => {
   const [passwordResetSubmitting, setPasswordResetSubmitting] = useState(false);
   const [appDetailsModalVisible, setAppDetailsModalVisible] = useState(false);
   const [releaseNotesModalVisible, setReleaseNotesModalVisible] = useState(false);
-  const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(true);
+  const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(false);
   const [hideSharedWithMe, setHideSharedWithMe] = useState(false);
 
   useEffect(() => {
