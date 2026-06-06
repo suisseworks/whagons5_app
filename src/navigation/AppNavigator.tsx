@@ -19,6 +19,7 @@ import { ProfileScreen } from '../screens/ProfileScreen';
 import { TaskShareLinkScreen } from '../screens/TaskShareLinkScreen';
 import { NfcTapScreen } from '../screens/NfcTapScreen';
 import { NfcProgramTagScreen } from '../screens/NfcProgramTagScreen';
+import { NfcManagerScreen } from '../screens/NfcManagerScreen';
 import { TaskDetailScreen } from '../screens/TaskDetailScreen';
 import { SharedTaskDetailScreen } from '../screens/SharedTaskDetailScreen';
 import { CreateTaskScreen } from '../screens/CreateTaskScreen';
@@ -272,6 +273,7 @@ export const AppNavigator: React.FC = () => {
         <Stack.Screen name="TaskShareLink" component={TaskShareLinkScreen} />
         <Stack.Screen name="NfcTap" component={NfcTapScreen} />
         <Stack.Screen name="NfcProgramTag" component={NfcProgramTagScreen} />
+        <Stack.Screen name="NfcManager" component={NfcManagerScreen} />
         <Stack.Screen name="TaskDetail" component={TaskDetailScreen} />
         <Stack.Screen name="SharedTaskDetail" component={SharedTaskDetailScreen} />
         <Stack.Screen name="CreateTask" component={CreateTaskScreen} />

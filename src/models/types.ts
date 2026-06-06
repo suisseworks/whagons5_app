@@ -162,12 +162,12 @@ export interface TaskModel {
 // Gamification types
 export interface LeaderboardEntry {
   rank: number;
-  user_id: number;
+  user_id: number | string;
   total_points: number;
   weekly_points: number;
   monthly_points: number;
   user: {
-    id: number;
+    id: number | string;
     name: string;
     email: string;
     url_picture?: string | null;
@@ -183,10 +183,10 @@ export interface PointsSummary {
 }
 
 export interface PointTransaction {
-  id: number;
-  user_id: number;
-  team_id: number;
-  point_action_id: number;
+  id: number | string;
+  user_id: number | string;
+  team_id: number | string;
+  point_action_id: number | string;
   points: number;
   description: string;
   reference_type: string | null;
@@ -198,14 +198,14 @@ export interface PointTransaction {
     icon: string;
   };
   user?: {
-    id: number;
+    id: number | string;
     name: string;
     url_picture?: string | null;
   };
 }
 
 export interface GamificationBadge {
-  id: number;
+  id: number | string;
   slug: string;
   name: string;
   description: string;
@@ -225,7 +225,7 @@ export interface GamificationBadge {
 }
 
 export interface GamificationLevel {
-  id: number;
+  id: number | string;
   slug: string;
   name: string;
   description: string;
@@ -316,6 +316,7 @@ export type RootStackParamList = {
   TaskShareLink: { token: string };
   NfcTap: { uuid: string; tenantId?: string };
   NfcProgramTag: { tagId: string; url: string; tenantId?: string };
+  NfcManager: undefined;
   TaskDetail: { task: TaskItem };
   SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;

@@ -8,6 +8,7 @@ export { ColabScreen } from './ColabScreen';
 export { TaskDetailScreen } from './TaskDetailScreen';
 export { NfcTapScreen } from './NfcTapScreen';
 export { NfcProgramTagScreen } from './NfcProgramTagScreen';
+export { NfcManagerScreen } from './NfcManagerScreen';
 export { CreateTaskScreen } from './CreateTaskScreen';
 export { VoiceTaskReviewScreen } from './VoiceTaskReviewScreen';
 export { NotificationsScreen } from './NotificationsScreen';

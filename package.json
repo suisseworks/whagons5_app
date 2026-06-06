@@ -7,6 +7,10 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "test:findings": "tsx src/utils/taskFindings.test.ts",
+    "test:gamification": "tsx src/utils/gamification.test.ts",
+    "test:nfc": "tsx src/utils/nfc.test.ts",
+    "test:nfc-manager": "tsx src/utils/nfcManager.test.ts",
     "test:playwright": "playwright test"
   },
   "dependencies": {

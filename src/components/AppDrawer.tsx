@@ -207,6 +207,13 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
         {/* ── General section ──────────────────────────────────────── */}
         <Text style={[styles.sectionHeader, { color: textTertiary }]}>{t('component.appDrawer.sectionGeneral')}</Text>
 
+        {/* NFC cards */}
+        <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('NfcManager')} activeOpacity={0.6}>
+          <MaterialIcons name="nfc" size={20} color={colors.textSecondary} />
+          <Text style={[styles.menuLabel, { color: colors.text }]}>{t('component.appDrawer.menuNfcCards')}</Text>
+          <MaterialIcons name="chevron-right" size={14} color={textTertiary} />
+        </TouchableOpacity>
+
         {/* Notifications */}
         <TouchableOpacity style={styles.menuRow} onPress={() => handleNavigate('Notifications')} activeOpacity={0.6}>
           <MaterialIcons name="notifications-none" size={20} color={colors.textSecondary} />

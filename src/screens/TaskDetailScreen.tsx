@@ -112,6 +112,12 @@ import {
   computeApprovalStatusForTask,
   type ApproverDetail,
 } from '../utils/approvalStatus';
+import {
+  getTaskFindingsSummary,
+  isTaskFindingResolved,
+  sortTaskFindingsForMobile,
+  type TaskFindingRow,
+} from '../utils/taskFindings';
 import type { Id } from '../../../convex/_generated/dataModel';
 
 function isFinishedAction(action?: string | null): boolean {
@@ -982,6 +988,10 @@ export const TaskDetailScreen: React.FC = () => {
     api.taskResources.listTaskNotes,
     tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
   );
+  const taskFindingsRaw = useQuery(
+    api.taskFindings.list,
+    tenantId && hasValidConvexId ? { tenantId, taskId: convexTaskId as any } : 'skip',
+  ) as TaskFindingRow[] | undefined;
   const taskSignatures = useQuery(
     api.taskResources.listTaskSignatures,
     tenantId && hasValidConvexId
@@ -992,6 +1002,8 @@ export const TaskDetailScreen: React.FC = () => {
   const createNoteMutation = useOfflineMutation(api.taskResources.createNote, 'taskResources.createNote');
   const updateNoteMutation = useOfflineMutation(api.taskResources.updateNote, 'taskResources.updateNote');
   const removeNoteMutation = useOfflineMutation(api.taskResources.removeNote, 'taskResources.removeNote');
+  const createFindingMutation = useOfflineMutation(api.taskFindings.create, 'taskFindings.create');
+  const updateFindingMutation = useOfflineMutation(api.taskFindings.update, 'taskFindings.update');
   const createPublicShareMutation = useMutation(api.taskPublicShares.createOrGet);
 
   useEffect(() => {
@@ -1116,9 +1128,85 @@ export const TaskDetailScreen: React.FC = () => {
     }
   }, [authSubdomain, convexTaskId, createPublicShareMutation, hasValidConvexId, t, tenantId]);
 
+  const [newFindingText, setNewFindingText] = useState('');
+  const [findingActionId, setFindingActionId] = useState<string | null>(null);
+  const [savingNewFinding, setSavingNewFinding] = useState(false);
+  const [expandedFindingIds, setExpandedFindingIds] = useState<Set<string>>(() => new Set());
+  const [findingNoteDrafts, setFindingNoteDrafts] = useState<Record<string, string>>({});
+
   const handleOpenTaskActions = useCallback(() => {
     setTaskActionsVisible(true);
   }, []);
+
+  const handleAddFinding = useCallback(async () => {
+    const text = newFindingText.trim();
+    if (!text) return;
+    if (!tenantId || !hasValidConvexId) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.findingsSyncRequired') });
+      return;
+    }
+
+    setSavingNewFinding(true);
+    try {
+      await createFindingMutation({
+        tenantId,
+        taskId: convexTaskId as any,
+        text,
+      });
+      setNewFindingText('');
+    } catch (err: any) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('taskDetail.findingCreateFailed') });
+    } finally {
+      setSavingNewFinding(false);
+    }
+  }, [convexTaskId, createFindingMutation, hasValidConvexId, newFindingText, t, tenantId]);
+
+  const handleToggleFindingExpanded = useCallback((findingId: string) => {
+    setExpandedFindingIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(findingId)) next.delete(findingId);
+      else next.add(findingId);
+      return next;
+    });
+  }, []);
+
+  const handleToggleFindingResolved = useCallback(async (finding: TaskFindingRow) => {
+    if (!tenantId) return;
+    const findingId = String(finding._id);
+    setFindingActionId(findingId);
+    try {
+      await updateFindingMutation({
+        tenantId,
+        id: finding._id as any,
+        resolved: !isTaskFindingResolved(finding),
+      });
+    } catch (err: any) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('taskDetail.findingUpdateFailed') });
+    } finally {
+      setFindingActionId(null);
+    }
+  }, [tenantId, t, updateFindingMutation]);
+
+  const handleSaveFindingNotes = useCallback(async (finding: TaskFindingRow) => {
+    if (!tenantId) return;
+    const findingId = String(finding._id);
+    const draft = findingNoteDrafts[findingId];
+    if (draft === undefined || draft === (finding.notes ?? '')) return;
+
+    setFindingActionId(findingId);
+    try {
+      await updateFindingMutation({
+        tenantId,
+        id: finding._id as any,
+        notes: draft.trim() ? draft.trim() : null,
+      });
+    } catch (err: any) {
+      toastRef.current?.show({ type: 'error', title: t('common.error'), body: err?.message || t('taskDetail.findingUpdateFailed') });
+    } finally {
+      setFindingActionId(null);
+    }
+  }, [findingNoteDrafts, tenantId, t, updateFindingMutation]);
+
   const taskDocuments = useMemo(
     () => (taskDocumentAssociations ?? []).map((association) => association.document).filter(Boolean),
     [taskDocumentAssociations]
@@ -1154,6 +1242,12 @@ export const TaskDetailScreen: React.FC = () => {
     if (Number.isNaN(dt.getTime())) return null;
     return `${dt.toLocaleDateString()} ${dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }, [latestTaskSignature]);
+  const taskFindings = useMemo(
+    () => sortTaskFindingsForMobile(Array.isArray(taskFindingsRaw) ? taskFindingsRaw : []),
+    [taskFindingsRaw],
+  );
+  const taskFindingsSummary = useMemo(() => getTaskFindingsSummary(taskFindings), [taskFindings]);
+  const taskFindingsLoading = tenantId && hasValidConvexId ? taskFindingsRaw === undefined : false;
   const [sendingComment, setSendingComment] = useState(false);
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentText, setEditingCommentText] = useState('');
@@ -2025,6 +2119,178 @@ export const TaskDetailScreen: React.FC = () => {
     (navigation as any).push('TaskDetail', { task: buildTaskItemFromHistory(historyTask) });
   }, [buildTaskItemFromHistory, navigation]);
 
+  const renderFindingsSection = () => {
+    if (!hasValidConvexId || isActionTask) return null;
+
+    return (
+      <View style={[styles.findingsCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
+        <View style={styles.findingsHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.findingsTitle, { color: colors.text }]}>{t('taskDetail.findingsTitle')}</Text>
+            <Text style={[styles.findingsSubtitle, { color: tertiaryText }]}>
+              {taskFindingsSummary.total === 0
+                ? t('taskDetail.findingsEmptyCounter')
+                : t('taskDetail.findingsProgress', {
+                    corrected: taskFindingsSummary.corrected,
+                    total: taskFindingsSummary.total,
+                  })}
+            </Text>
+          </View>
+          <View style={styles.findingsStatsRow}>
+            <View style={[styles.findingStatPill, { backgroundColor: '#F0FDF4' }]}>
+              <Text style={[styles.findingStatText, { color: '#16A34A' }]}>
+                {taskFindingsSummary.corrected}
+              </Text>
+            </View>
+            <View style={[styles.findingStatPill, { backgroundColor: '#FFF7ED' }]}>
+              <Text style={[styles.findingStatText, { color: '#EA580C' }]}>
+                {taskFindingsSummary.pending + taskFindingsSummary.inProgress}
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.findingAddRow}>
+          <TextInput
+            style={[
+              styles.findingInput,
+              {
+                color: colors.text,
+                backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#FFFFFF',
+                borderColor: cardBorder,
+              },
+            ]}
+            placeholder={t('taskDetail.findingPlaceholder')}
+            placeholderTextColor={colors.textSecondary}
+            value={newFindingText}
+            onChangeText={setNewFindingText}
+            onSubmitEditing={handleAddFinding}
+            editable={!savingNewFinding}
+            returnKeyType="done"
+            underlineColorAndroid="transparent"
+          />
+          <TouchableOpacity
+            style={[
+              styles.findingAddButton,
+              { backgroundColor: newFindingText.trim() ? primaryColor : colors.textSecondary },
+            ]}
+            onPress={handleAddFinding}
+            disabled={!newFindingText.trim() || savingNewFinding}
+            activeOpacity={0.8}
+          >
+            {savingNewFinding ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <MaterialIcons name="add" size={18} color="#FFFFFF" />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {taskFindingsLoading ? (
+          <View style={styles.findingsLoadingRow}>
+            <ActivityIndicator size="small" color={tertiaryText} />
+            <Text style={[styles.findingsLoadingText, { color: tertiaryText }]}>
+              {t('taskDetail.findingsLoading')}
+            </Text>
+          </View>
+        ) : taskFindings.length === 0 ? (
+          <View style={[styles.findingsEmptyRow, { borderColor: cardBorder }]}>
+            <MaterialIcons name="playlist-add-check" size={18} color={tertiaryText} />
+            <Text style={[styles.findingsEmptyText, { color: tertiaryText }]}>
+              {t('taskDetail.findingsEmpty')}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.findingList}>
+            {taskFindings.map((finding) => {
+              const findingId = String(finding._id);
+              const resolved = isTaskFindingResolved(finding);
+              const expanded = expandedFindingIds.has(findingId);
+              const linkedStatus = finding.linkedTask?.statusName;
+              const noteValue = findingNoteDrafts[findingId] ?? (finding.notes ?? '');
+
+              return (
+                <View key={findingId} style={[styles.findingRow, { borderColor: cardBorder }]}>
+                  <TouchableOpacity
+                    style={styles.findingMainRow}
+                    activeOpacity={0.75}
+                    onPress={() => handleToggleFindingExpanded(findingId)}
+                  >
+                    <TouchableOpacity
+                      style={styles.findingCheckButton}
+                      onPress={() => handleToggleFindingResolved(finding)}
+                      disabled={findingActionId === findingId}
+                      activeOpacity={0.75}
+                    >
+                      {findingActionId === findingId ? (
+                        <ActivityIndicator size="small" color={primaryColor} />
+                      ) : (
+                        <MaterialCommunityIcons
+                          name={resolved ? 'checkbox-marked-circle' : 'checkbox-blank-circle-outline'}
+                          size={22}
+                          color={resolved ? '#16A34A' : tertiaryText}
+                        />
+                      )}
+                    </TouchableOpacity>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[
+                          styles.findingText,
+                          { color: resolved ? colors.textSecondary : colors.text },
+                          resolved && styles.findingTextResolved,
+                        ]}
+                        numberOfLines={expanded ? 3 : 2}
+                      >
+                        {finding.text}
+                      </Text>
+                      <View style={styles.findingMetaRow}>
+                        <Text style={[styles.findingMetaText, { color: resolved ? '#16A34A' : '#EA580C' }]}>
+                          {resolved ? t('taskDetail.findingCorrected') : t('taskDetail.findingPending')}
+                        </Text>
+                        {linkedStatus ? (
+                          <Text style={[styles.findingMetaText, { color: tertiaryText }]}>
+                            {t('taskDetail.findingLinkedStatus')}: {linkedStatus}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                    <MaterialIcons
+                      name={expanded ? 'expand-less' : 'expand-more'}
+                      size={20}
+                      color={tertiaryText}
+                    />
+                  </TouchableOpacity>
+
+                  {expanded && (
+                    <View style={styles.findingExpanded}>
+                      <TextInput
+                        style={[
+                          styles.findingNotesInput,
+                          {
+                            color: colors.text,
+                            backgroundColor: isDarkMode ? 'rgba(255,255,255,0.05)' : '#FFFFFF',
+                            borderColor: cardBorder,
+                          },
+                        ]}
+                        placeholder={t('taskDetail.findingNotesPlaceholder')}
+                        placeholderTextColor={colors.textSecondary}
+                        value={noteValue}
+                        onChangeText={(value) => setFindingNoteDrafts((prev) => ({ ...prev, [findingId]: value }))}
+                        onBlur={() => handleSaveFindingNotes(finding)}
+                        multiline
+                        underlineColorAndroid="transparent"
+                      />
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   const renderDetailsTab = () => (
     <ScrollView style={styles.tabContent} contentContainerStyle={styles.tabContentContainer}>
       {/* Title row: task name + flag + #id inline */}
@@ -2151,6 +2417,8 @@ export const TaskDetailScreen: React.FC = () => {
           />
         )}
       </View>
+
+      {renderFindingsSection()}
 
       {isActionTask && (
         <View style={[styles.actionTaskCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
@@ -2343,7 +2611,6 @@ export const TaskDetailScreen: React.FC = () => {
           taskTitle={task.title}
           spotName={task.spot}
           helperText={t('taskDetail.spotSavedLocationHelper')}
-          isDarkMode={isDarkMode}
           secondarySurface={secondarySurface}
           tertiaryText={tertiaryText}
           sectionLabelStyle={[styles.sectionLabel, { color: tertiaryText }]}
@@ -3864,6 +4131,144 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 10,
     marginBottom: 14,
+  },
+  findingsCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 14,
+    padding: 12,
+  },
+  findingsHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  findingsTitle: {
+    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 14,
+  },
+  findingsSubtitle: {
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  findingsStatsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  findingStatPill: {
+    alignItems: 'center',
+    borderRadius: 10,
+    justifyContent: 'center',
+    minWidth: 28,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  findingStatText: {
+    fontFamily: fontFamilies.bodySemibold,
+    fontSize: 12,
+  },
+  findingAddRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  findingInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    flex: 1,
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 13,
+    minHeight: 40,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  findingAddButton: {
+    alignItems: 'center',
+    borderRadius: 20,
+    height: 40,
+    justifyContent: 'center',
+    width: 40,
+  },
+  findingsLoadingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 10,
+  },
+  findingsLoadingText: {
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 12,
+  },
+  findingsEmptyRow: {
+    alignItems: 'center',
+    borderRadius: 10,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  findingsEmptyText: {
+    flex: 1,
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 12,
+  },
+  findingList: {
+    gap: 8,
+  },
+  findingRow: {
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  findingMainRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  findingCheckButton: {
+    alignItems: 'center',
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  },
+  findingText: {
+    fontFamily: fontFamilies.bodyMedium,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  findingTextResolved: {
+    textDecorationLine: 'line-through',
+  },
+  findingMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 5,
+  },
+  findingMetaText: {
+    fontFamily: fontFamilies.bodyMedium,
+    fontSize: 11,
+  },
+  findingExpanded: {
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+  },
+  findingNotesInput: {
+    borderRadius: 10,
+    borderWidth: 1,
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 12,
+    minHeight: 58,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    textAlignVertical: 'top',
   },
 
   /* ── Metadata grid ── */

@@ -118,7 +118,10 @@ export const GamificationScreen: React.FC = () => {
 
   const renderLeaderboardEntry = (entry: LeaderboardEntry, index: number) => {
     const rankInfo = getRankIcon(entry.rank);
-    const isMe = entry.user_id === Number(user?.id);
+    const currentUserIds = [user?.id, (user as any)?.convexId, (user as any)?._id]
+      .filter((value) => value != null)
+      .map(String);
+    const isMe = currentUserIds.includes(String(entry.user_id));
     return (
       <View
         key={entry.user_id}

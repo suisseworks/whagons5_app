@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '../../../convex/_generated/api';
 import type {
   LeaderboardEntry,
   PointsSummary,
@@ -8,6 +10,16 @@ import type {
   LevelProgress,
   LevelDistribution,
 } from '../models/types';
+import { useTenant } from '../hooks/useTenant';
+import {
+  normalizeGamificationBadge,
+  normalizeGamificationLevel,
+  normalizeLeaderboardEntry,
+  normalizeLevelDistribution,
+  normalizeLevelProgress,
+  normalizePointTransaction,
+  normalizePointsSummary,
+} from '../utils/gamification';
 
 interface GamificationState {
   leaderboard: LeaderboardEntry[];
@@ -37,42 +49,114 @@ interface GamificationContextValue extends GamificationState {
 const GamificationContext = createContext<GamificationContextValue | null>(null);
 
 export const GamificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [pointsSummary, setPointsSummary] = useState<PointsSummary | null>(null);
-  const [pointHistory, setPointHistory] = useState<PointTransaction[]>([]);
-  const [recentActivity, setRecentActivity] = useState<PointTransaction[]>([]);
-  const [badges, setBadges] = useState<GamificationBadge[]>([]);
-  const [levels, setLevels] = useState<GamificationLevel[]>([]);
-  const [levelProgress, setLevelProgress] = useState<LevelProgress | null>(null);
-  const [levelDistribution, setLevelDistribution] = useState<LevelDistribution[]>([]);
-  const [loading, setLoading] = useState(false);
+  const { tenantId } = useTenant();
+  const [leaderboardPeriod, setLeaderboardPeriod] = useState<'all_time' | 'weekly' | 'monthly'>('all_time');
+  const [leaderboardLimit, setLeaderboardLimit] = useState(20);
+  const [pointHistoryLimit, setPointHistoryLimit] = useState(20);
+  const [recentActivityLimit, setRecentActivityLimit] = useState(10);
   const [error, setError] = useState<string | null>(null);
 
-  // Gamification not yet available in Convex — all fetches are no-ops
-  const fetchLeaderboard = useCallback(async (_period?: string, _limit?: number) => {}, []);
-  const fetchPointsSummary = useCallback(async () => {}, []);
-  const fetchPointHistory = useCallback(async (_page?: number) => {}, []);
-  const fetchRecentActivity = useCallback(async () => {}, []);
-  const fetchBadges = useCallback(async () => {}, []);
-  const fetchLevels = useCallback(async () => {}, []);
-  const fetchLevelProgress = useCallback(async () => {}, []);
-  const fetchLevelDistribution = useCallback(async () => {}, []);
+  const leaderboardQuery = useQuery(
+    api.gamification.leaderboard,
+    tenantId ? { tenantId, period: leaderboardPeriod, limit: leaderboardLimit } : 'skip',
+  );
+  const pointsSummaryQuery = useQuery(api.gamification.myPointsSummary, tenantId ? { tenantId } : 'skip');
+  const pointHistoryQuery = useQuery(
+    api.gamification.pointHistory,
+    tenantId ? { tenantId, limit: pointHistoryLimit } : 'skip',
+  );
+  const recentActivityQuery = useQuery(
+    api.gamification.recentActivity,
+    tenantId ? { tenantId, limit: recentActivityLimit } : 'skip',
+  );
+  const badgesQuery = useQuery(api.gamification.badgesWithProgress, tenantId ? { tenantId } : 'skip');
+  const levelsQuery = useQuery(api.gamification.levelsWithProgress, tenantId ? { tenantId } : 'skip');
+  const levelProgressQuery = useQuery(api.gamification.myLevelProgress, tenantId ? { tenantId } : 'skip');
+  const levelDistributionQuery = useQuery(api.gamification.teamLevelDistribution, tenantId ? { tenantId } : 'skip');
+
+  const leaderboard = useMemo<LeaderboardEntry[]>(
+    () => (leaderboardQuery ?? []).map(normalizeLeaderboardEntry),
+    [leaderboardQuery],
+  );
+  const pointsSummary = useMemo<PointsSummary | null>(
+    () => normalizePointsSummary(pointsSummaryQuery),
+    [pointsSummaryQuery],
+  );
+  const pointHistory = useMemo<PointTransaction[]>(
+    () => ((pointHistoryQuery as any)?.data ?? []).map(normalizePointTransaction),
+    [pointHistoryQuery],
+  );
+  const recentActivity = useMemo<PointTransaction[]>(
+    () => (recentActivityQuery ?? []).map(normalizePointTransaction),
+    [recentActivityQuery],
+  );
+  const badges = useMemo<GamificationBadge[]>(
+    () => (badgesQuery ?? []).map(normalizeGamificationBadge),
+    [badgesQuery],
+  );
+  const levels = useMemo<GamificationLevel[]>(
+    () => (levelsQuery ?? []).map(normalizeGamificationLevel),
+    [levelsQuery],
+  );
+  const levelProgress = useMemo<LevelProgress | null>(
+    () => normalizeLevelProgress(levelProgressQuery),
+    [levelProgressQuery],
+  );
+  const levelDistribution = useMemo<LevelDistribution[]>(
+    () => (levelDistributionQuery ?? []).map(normalizeLevelDistribution),
+    [levelDistributionQuery],
+  );
+
+  const loading = !!tenantId && [
+    leaderboardQuery,
+    pointsSummaryQuery,
+    pointHistoryQuery,
+    recentActivityQuery,
+    badgesQuery,
+    levelsQuery,
+    levelProgressQuery,
+    levelDistributionQuery,
+  ].some((value) => value === undefined);
+
+  const fetchLeaderboard = useCallback(async (period?: 'all_time' | 'weekly' | 'monthly', limit?: number) => {
+    if (period) setLeaderboardPeriod(period);
+    if (limit) setLeaderboardLimit(limit);
+    setError(null);
+  }, []);
+  const fetchPointsSummary = useCallback(async () => setError(null), []);
+  const fetchPointHistory = useCallback(async (page?: number) => {
+    setPointHistoryLimit(Math.max(20, (page ?? 1) * 20));
+    setError(null);
+  }, []);
+  const fetchRecentActivity = useCallback(async () => {
+    setRecentActivityLimit(10);
+    setError(null);
+  }, []);
+  const fetchBadges = useCallback(async () => setError(null), []);
+  const fetchLevels = useCallback(async () => setError(null), []);
+  const fetchLevelProgress = useCallback(async () => setError(null), []);
+  const fetchLevelDistribution = useCallback(async () => setError(null), []);
 
   const refreshAll = useCallback(async () => {
-    setLoading(true);
     setError(null);
-    try {
-      await Promise.all([
-        fetchLeaderboard(),
-        fetchPointsSummary(),
-        fetchBadges(),
-        fetchLevels(),
-        fetchLevelProgress(),
-      ]);
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchLeaderboard, fetchPointsSummary, fetchBadges, fetchLevels, fetchLevelProgress]);
+    await Promise.all([
+      fetchLeaderboard(),
+      fetchPointsSummary(),
+      fetchRecentActivity(),
+      fetchBadges(),
+      fetchLevels(),
+      fetchLevelProgress(),
+      fetchLevelDistribution(),
+    ]);
+  }, [
+    fetchLeaderboard,
+    fetchPointsSummary,
+    fetchRecentActivity,
+    fetchBadges,
+    fetchLevels,
+    fetchLevelProgress,
+    fetchLevelDistribution,
+  ]);
 
   return (
     <GamificationContext.Provider
