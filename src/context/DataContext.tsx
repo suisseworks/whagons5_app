@@ -544,6 +544,7 @@ function mapTask(doc: any, fk: FkLookups): SyncedTask {
     category_id: resolveFk(fk.categories, doc.categoryId),
     status_id: resolveFk(fk.statuses, doc.statusId),
     priority_id: resolveFk(fk.priorities, doc.priorityId),
+    approval_id: resolveFk(fk.approvals, doc.approvalId) ?? doc.approvalId ?? null,
     spot_id: resolveFk(fk.spots, doc.spotId),
     template_id: resolveFk(fk.templates, doc.templateId),
     created_by: resolveFk(fk.users, doc.createdBy),

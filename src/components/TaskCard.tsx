@@ -312,12 +312,14 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
   const hasUnreadComment = task.lastCommentUnread === true;
   const commentAccent = isDarkMode ? '#34D399' : '#16A34A';
   const commentBadgeBg = isDarkMode ? 'rgba(52, 211, 153, 0.14)' : 'rgba(22, 163, 74, 0.12)';
-  const approvalState = !isAckActionTask && task.approvalStatus === 'pending'
+  const isPendingSourceApproval = !actionTask && task.approvalStatus === 'pending';
+  const approvalState = !actionTask && task.approvalStatus === 'pending'
     ? {
         label: t('component.taskCard.approvalPending'),
         icon: 'clock-outline' as const,
         color: '#EA580C',
         backgroundColor: '#FFF7ED',
+        prominent: true,
       }
     : approvalActionDecision === 'approved'
       ? {
@@ -465,7 +467,7 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
       </View>
 
       {/* Row 2: Status badge + Location + Approval pill */}
-      <View style={styles.metaRow}>
+        <View style={styles.metaRow}>
         {isAckActionResolved ? (
           <View style={[styles.approvalPill, { backgroundColor: '#F0FDF4' }]}>
             <MaterialCommunityIcons name="check-circle-outline" size={11} color="#16A34A" />
@@ -477,9 +479,13 @@ export const TaskCard: React.FC<TaskCardProps> = React.memo(({ task, density, on
             <Text style={[styles.actionPromptText, { color: '#047857' }]}>{t('sharedTask.acknowledgeButton')}</Text>
           </View>
         ) : approvalState ? (
-          <View style={[styles.approvalPill, { backgroundColor: approvalState.backgroundColor }]}> 
-            <MaterialCommunityIcons name={approvalState.icon} size={11} color={approvalState.color} />
-            <Text style={[styles.approvalPillText, { color: approvalState.color }]}>{approvalState.label}</Text>
+          <View style={[
+            styles.approvalPill,
+            { backgroundColor: approvalState.backgroundColor },
+            isPendingSourceApproval ? styles.approvalPillProminent : null,
+          ]}>
+            <MaterialCommunityIcons name={approvalState.icon} size={isPendingSourceApproval ? 13 : 11} color={approvalState.color} />
+            <Text style={[styles.approvalPillText, isPendingSourceApproval ? styles.approvalPillTextProminent : null, { color: approvalState.color }]}>{approvalState.label}</Text>
           </View>
         ) : isApprovalActionTask && approvalActionState?.decision !== 'approved' && approvalActionState?.decision !== 'rejected' ? (
           <View style={styles.actionPromptGroup}>
@@ -819,9 +825,21 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 4,
   },
+  approvalPillProminent: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+  },
   approvalPillText: {
     fontSize: 10.5,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  approvalPillTextProminent: {
+    fontSize: 11.5,
+    textTransform: 'uppercase',
+    letterSpacing: 0.25,
   },
   actionPromptGroup: {
     flexDirection: 'row',

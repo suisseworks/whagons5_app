@@ -130,6 +130,12 @@ function resolveTaskStatusMeta(
   };
 }
 
+function isWorkspaceActionTask(task: TaskItem): boolean {
+  const activeContext = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
+  const kind = String(activeContext?.kind ?? '').toLowerCase();
+  return kind === 'approval' || kind === 'acknowledgment';
+}
+
 function isWorkingListAction(action: string | null): boolean {
   return action === 'WORKING' || action === 'PAUSED';
 }
@@ -215,6 +221,7 @@ function mapTaskToItem(
     latitude: (task as any).latitude ?? null,
     longitude: (task as any).longitude ?? null,
     requiresSignature: (task as any).requiresSignature === true || (task as any).requires_signature === true,
+    approvalId: (task as any).approval_id ?? (task as any).approvalId ?? null,
     approvalActionDecision: (task as any).approvalActionDecision ?? (task as any).approval_action_decision ?? null,
     approval_action_decision: (task as any).approval_action_decision ?? (task as any).approvalActionDecision ?? null,
     activeWorkspaceContext: (task as any).activeWorkspaceContext ?? (task as any).active_workspace_context ?? null,
@@ -262,12 +269,17 @@ function taskWorkspaceKeys(task: TaskItem): string[] {
     if (value != null && value !== '') keys.add(String(value));
   };
 
-  addKey(task.workspaceId);
-  addKey((task as any).workspace_id);
-  addKey((task as any).sourceWorkspaceId);
-  addKey((task as any).source_workspace_id);
-
   const activeContext = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
+  const activeContextKind = String(activeContext?.kind ?? '').toLowerCase();
+  const isActionContext = activeContextKind === 'approval' || activeContextKind === 'acknowledgment';
+
+  if (!isActionContext) {
+    addKey(task.workspaceId);
+    addKey((task as any).workspace_id);
+    addKey((task as any).sourceWorkspaceId);
+    addKey((task as any).source_workspace_id);
+  }
+
   addKey(activeContext?.workspaceId);
   addKey(activeContext?.workspace_id);
 
@@ -286,6 +298,22 @@ function taskMatchesWorkspace(task: TaskItem, workspace: any): boolean {
   const workspaceKeys = workspaceKeySetForWorkspace(workspace);
   if (workspaceKeys.size === 0) return false;
   return taskWorkspaceKeys(task).some((key) => workspaceKeys.has(key));
+}
+
+function addVisibilityKey(keys: Set<string>, value: unknown) {
+  if (value != null && value !== '') keys.add(String(value));
+}
+
+function taskMatchesVisibleSpot(
+  task: TaskItem,
+  visibleSpotKeys: Set<string>,
+  spotScopeRestricted: boolean,
+  currentUserNames: Set<string>,
+): boolean {
+  if (task.spotId == null || task.spotId === '') return true;
+  if (task.assignees.some((assignee) => currentUserNames.has(String(assignee.name ?? '').trim().toLowerCase()))) return true;
+  if (visibleSpotKeys.size === 0) return !spotScopeRestricted;
+  return visibleSpotKeys.has(String(task.spotId));
 }
 
 function taskWorkspaceIndexKeys(task: TaskItem, workspaces: any[]): string[] {
@@ -954,6 +982,27 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return m;
   }, [approvalsList]);
 
+  const getTaskApprovalStatus = useCallback((task: TaskItem): 'pending' | 'approved' | 'rejected' | null => {
+    if (isWorkspaceActionTask(task)) return null;
+    const approvalId = task.approvalId ?? (task as any).approval_id ?? null;
+    if (!approvalId || !task.id) return null;
+
+    const derived = computeApprovalStatusForTask({
+      taskId: String(task.id),
+      taskConvexId: task.convexId ?? task.taskConvexId ?? undefined,
+      approvalId,
+      approval: approvalMap[String(approvalId)],
+      taskApprovalInstances: taskApprovalInstances as any[],
+    });
+
+    return derived ?? 'pending';
+  }, [approvalMap, taskApprovalInstances]);
+
+  const isTaskStatusLockedByApproval = useCallback((task: TaskItem): boolean => {
+    const approvalStatus = getTaskApprovalStatus(task);
+    return approvalStatus != null && approvalStatus !== 'approved';
+  }, [getTaskApprovalStatus]);
+
   const sharedEnrichmentMap = useMemo(() => {
     const m = new Map<string, {
       approvalStatus: 'pending' | 'approved' | 'rejected' | null;
@@ -1082,13 +1131,18 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const baseTasks = sharedMappedTasks.length > 0
       ? [...mappedActiveTasks, ...sharedMappedTasks]
       : mappedActiveTasks;
-    if (baseTasks.length === 0) return pendingCreatedTasks;
-    if (pendingCreatedTasks.length === 0) return baseTasks;
+    const withApprovalStatus = (tasks: TaskItem[]) => tasks.map((task) => {
+      const approvalStatus = task.approvalStatus ?? getTaskApprovalStatus(task);
+      return approvalStatus ? { ...task, approvalStatus } : task;
+    });
+
+    if (baseTasks.length === 0) return withApprovalStatus(pendingCreatedTasks);
+    if (pendingCreatedTasks.length === 0) return withApprovalStatus(baseTasks);
 
     const syncedKeys = new Set(baseTasks.map((task) => pendingTaskHeuristicKey(task)));
     const pending = pendingCreatedTasks.filter((task) => !syncedKeys.has(pendingTaskHeuristicKey(task)));
-    return [...baseTasks, ...pending];
-  }, [mappedActiveTasks, pendingCreatedTasks, sharedMappedTasks]);
+    return withApprovalStatus([...baseTasks, ...pending]);
+  }, [getTaskApprovalStatus, mappedActiveTasks, pendingCreatedTasks, sharedMappedTasks]);
 
   const taskIdByConvexId = useMemo(() => {
     const map = new Map<string, string>();
@@ -1304,9 +1358,32 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return workspaceKey === '' || !visibleWorkspaceKeySet.has(workspaceKey);
   }, [sharedTaskIds, visibleWorkspaceKeySet]);
 
+  const visibleSpotKeySet = useMemo(() => {
+    const keys = new Set<string>();
+    for (const spot of data.spots as any[]) {
+      addVisibilityKey(keys, spot.id);
+      addVisibilityKey(keys, spot._id);
+      addVisibilityKey(keys, spot.pgId);
+      addVisibilityKey(keys, spot.pg_id);
+    }
+    return keys;
+  }, [data.spots]);
+
+  const spotScopeRestricted = useMemo(() => {
+    return convexUser !== undefined;
+  }, [convexUser]);
+
+  const currentUserNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const value of [(convexUser as any)?.name, (convexUser as any)?.email, (authUser as any)?.name, (authUser as any)?.email]) {
+      if (typeof value === 'string' && value.trim()) names.add(value.trim().toLowerCase());
+    }
+    return names;
+  }, [authUser, convexUser]);
+
   const workspaceVisibleMappedTasks = useMemo(
-    () => allMappedTasks.filter((task) => !isSharedOnlyTask(task)),
-    [allMappedTasks, isSharedOnlyTask],
+    () => allMappedTasks.filter((task) => !isSharedOnlyTask(task) && taskMatchesVisibleSpot(task, visibleSpotKeySet, spotScopeRestricted, currentUserNames)),
+    [allMappedTasks, currentUserNames, isSharedOnlyTask, spotScopeRestricted, visibleSpotKeySet],
   );
 
   const workspaceTaskCounts = useMemo(() => {
@@ -1876,6 +1953,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!finalStatus) return;
     const currentTask = allMappedTaskMap.get(String(taskId));
     if (currentTask && (currentTask.shareId || currentTask.approvalStatus || isSharedOnlyTask(currentTask))) return;
+    if (currentTask && isTaskStatusLockedByApproval(currentTask)) {
+      Alert.alert(t('taskDetail.statusLockedByApprovalTitle'), t('taskDetail.statusLockedByApprovalBody'));
+      return;
+    }
 
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
@@ -1904,7 +1985,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         });
       }
     }
-  }, [finalStatus, data.statuses, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap, resolveTenantIdForTask, isSharedOnlyTask]);
+  }, [finalStatus, data.statuses, patchTaskMutation, setTimedOverride, allMappedTaskMap, statusConvexIdMap, resolveTenantIdForTask, isSharedOnlyTask, isTaskStatusLockedByApproval, t]);
 
   const isTaskWorking = useCallback((taskId: string) => {
     if (!workingTaskIds.includes(taskId)) return false;
@@ -2051,7 +2132,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const taskKey = String(taskId);
     const currentTask = allMappedTaskMap.get(taskKey);
     if (currentTask) {
-      if (currentTask.shareId || currentTask.approvalStatus || isSharedOnlyTask(currentTask)) {
+      if (currentTask.shareId || isSharedOnlyTask(currentTask)) {
+        return false;
+      }
+
+      if (isTaskStatusLockedByApproval(currentTask)) {
+        Alert.alert(t('taskDetail.statusLockedByApprovalTitle'), t('taskDetail.statusLockedByApprovalBody'));
         return false;
       }
 
@@ -2104,13 +2190,31 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setWorkingTaskIds((prev) => prev.filter((id) => id !== taskKey));
     }
 
+    const revertStatusOverride = () => {
+      const originalTask = currentTask ?? allMappedTaskMap.get(taskKey);
+      if (!originalTask) return;
+      setTimedOverride(taskKey, {
+        status: originalTask.status,
+        statusColor: originalTask.statusColor,
+        statusId: originalTask.statusId,
+        statusIcon: originalTask.statusIcon,
+        statusAction: originalTask.statusAction,
+      });
+    };
+
+    const handleStatusMutationError = (err: any) => {
+      revertStatusOverride();
+      const message = err?.message || t('errors.noPermissionChangeStatus', 'Failed to change task status');
+      Alert.alert(t('common.error'), message);
+    };
+
     if (hasConvexMutationTarget) {
       patchTaskMutation({
         tenantId: mutationTenantId,
         id: taskConvexId as any,
         statusId: statusConvexId as any,
       }).catch((err: any) => {
-        console.warn('[TaskContext] Failed to change status:', err);
+        handleStatusMutationError(err);
       });
       return true;
     }
@@ -2122,10 +2226,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         status_id: status.id,
       },
     }).catch((err: any) => {
-      console.warn('[TaskContext] Failed to change status by pgId:', err);
+      handleStatusMutationError(err);
     });
     return true;
-  }, [data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, isSharedOnlyTask, myTaskIds, setTimedOverride, resolveTenantIdForTask]);
+  }, [data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, getAllowedStatuses, isSharedOnlyTask, isTaskStatusLockedByApproval, myTaskIds, setTimedOverride, resolveTenantIdForTask, t]);
 
   const changeTaskPriority = useCallback((taskId: string, priorityId: AnyId) => {
     const taskKey = String(taskId);
@@ -2173,6 +2277,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const markTaskDone = useCallback((taskId: string) => {
     const taskKey = String(taskId);
     if (!finalStatus) return;
+    const currentTask = allMappedTaskMap.get(taskKey);
+    if (currentTask && isTaskStatusLockedByApproval(currentTask)) {
+      Alert.alert(t('taskDetail.statusLockedByApprovalTitle'), t('taskDetail.statusLockedByApprovalBody'));
+      return;
+    }
+
     const finalStatusObj = data.statuses.find((s) => s.final);
     const finalStatusId = finalStatusObj?.id;
     const finalStatusAction = readStringValue((finalStatusObj as Record<string, unknown> | undefined)?.action);
@@ -2216,7 +2326,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } else if (finalStatusId) {
       console.warn('[TaskContext] Missing tenantId for mark task done', { taskId: taskKey, finalStatusId });
     }
-  }, [finalStatus, data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, setTimedOverride, resolveTenantIdForTask]);
+  }, [finalStatus, data.statuses, data.tasks, patchTaskMutation, patchTaskByPgIdMutation, allMappedTaskMap, statusConvexIdMap, setTimedOverride, resolveTenantIdForTask, isTaskStatusLockedByApproval, t]);
 
   const assignTaskToUser = useCallback((taskId: string, userId: AnyId, userName: string) => {
     const taskKey = String(taskId);
