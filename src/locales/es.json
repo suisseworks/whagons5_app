@@ -302,6 +302,8 @@
     "approvalActionTitle": "Acción de aprobación",
     "ackActionTitle": "Acción de acuse",
     "approvalActionSignatureSubtitle": "Dibuja tu firma para aprobar este comunicado.",
+    "statusLockedByApprovalTitle": "Esperando aprobación",
+    "statusLockedByApprovalBody": "El estado solo puede cambiar cuando el comunicado sea aprobado.",
     "actionTaskSyncRequired": "Esta acción estará disponible cuando la tarea termine de sincronizar.",
     "taskActionsTitle": "Acciones de la tarea",
     "taskActionsSubtitle": "Elige lo que quieres hacer con esta tarea.",
@@ -363,7 +365,8 @@
     "fallbackUser": "Usuario",
     "fallbackUnknown": "Desconocido",
     "ackByLabel": "Por",
-    "ackTimeLabel": "Hora"
+    "ackTimeLabel": "Hora",
+    "ackRemainingLabel": "Faltan %{count}"
   },
   "colab": {
     "tabWorkspaces": "Espacios",

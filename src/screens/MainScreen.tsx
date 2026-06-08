@@ -773,7 +773,7 @@ export const MainScreen: React.FC = () => {
 
   const handleSwipeRight = useCallback(
     (task: TaskItem) => {
-      if (selectedWorkspace === 'Shared' || task.shareId || task.approvalStatus) return;
+      if (selectedWorkspace === 'Shared' || task.shareId || (task.approvalStatus != null && task.approvalStatus !== 'approved')) return;
       setStatusPickerTask(task);
       setStatusPickerVisible(true);
     },
@@ -793,7 +793,9 @@ export const MainScreen: React.FC = () => {
 
   const swipeStatusLabel = t('main.swipeStatus');
   const canChangeStatusFromList = useCallback(
-    (task: TaskItem) => selectedWorkspace !== 'Shared' && !task.shareId && !task.approvalStatus,
+    (task: TaskItem) => selectedWorkspace !== 'Shared'
+      && !task.shareId
+      && (task.approvalStatus == null || task.approvalStatus === 'approved'),
     [selectedWorkspace],
   );
   const renderTaskItem = useCallback(

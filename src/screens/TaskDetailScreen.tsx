@@ -811,12 +811,8 @@ export const TaskDetailScreen: React.FC = () => {
   const convexTaskId = task.convexId ?? task.taskConvexId ?? null;
   const activeWorkspaceContext = useMemo(() => {
     const direct = task.activeWorkspaceContext ?? task.active_workspace_context ?? null;
-    if (direct) return direct;
-    const contexts = task.workspaceContexts ?? task.workspace_contexts ?? [];
-    return contexts.find((context: any) => context?.kind === 'approval')
-      ?? contexts.find((context: any) => context?.kind === 'acknowledgment')
-      ?? null;
-  }, [task.activeWorkspaceContext, task.active_workspace_context, task.workspaceContexts, task.workspace_contexts]);
+    return direct;
+  }, [task.activeWorkspaceContext, task.active_workspace_context]);
   const activeApprovalWorkspaceContext = activeWorkspaceContext?.kind === 'approval' ? activeWorkspaceContext : null;
   const activeAckWorkspaceContext = activeWorkspaceContext?.kind === 'acknowledgment' ? activeWorkspaceContext : null;
   const requiresTaskSignature = task.requiresSignature === true;
@@ -911,6 +907,15 @@ export const TaskDetailScreen: React.FC = () => {
       taskApprovalInstances: taskApprovalInstances as any[],
     });
   }, [sourceApprovalId, approvalLookupMaps.approvalMap, task.id, convexTaskId, taskApprovalInstances]);
+  const sourceApprovalBlocksStatusChange = Boolean(
+    !isActionTask && sourceApprovalId && derivedSourceApprovalStatus !== 'approved',
+  );
+
+  useEffect(() => {
+    if (sourceApprovalBlocksStatusChange && statusPickerVisible) {
+      setStatusPickerVisible(false);
+    }
+  }, [sourceApprovalBlocksStatusChange, statusPickerVisible]);
 
   const sourceApproverDetails: ApproverDetail[] = useMemo(() => {
     if (!sourceApprovalId || isActionTask) return [];
@@ -937,8 +942,10 @@ export const TaskDetailScreen: React.FC = () => {
   const shouldLoadSourceAcknowledgmentProgress = Boolean(
     tenantId
     && hasValidConvexId
-    && !isActionTask
-    && (derivedSourceApprovalStatus === 'approved' || !sourceApprovalId),
+    && (
+      isAckAction ||
+      (!isActionTask && (derivedSourceApprovalStatus === 'approved' || !sourceApprovalId))
+    ),
   );
 
   const sourceAcknowledgmentProgress = useQuery(
@@ -962,6 +969,10 @@ export const TaskDetailScreen: React.FC = () => {
   const showSourceAcknowledgmentSection = Boolean(
     sourceAcknowledgmentProgress?.acknowledgmentTracked
     && (sourceAcknowledgmentProgress.ackTotal ?? 0) > 0,
+  );
+  const sourceAcknowledgmentRemaining = Math.max(
+    0,
+    (sourceAcknowledgmentProgress?.ackTotal ?? 0) - (sourceAcknowledgmentProgress?.ackDone ?? 0),
   );
 
   const approvalActionRequiresSignature = approvalActionRequirement?.requireSignature === true || task.requiresSignature === true;
@@ -1462,6 +1473,16 @@ export const TaskDetailScreen: React.FC = () => {
   }, [changeTaskStatus, task.id]);
 
   const handleStatusChange = useCallback((status: StatusOption) => {
+    if (sourceApprovalBlocksStatusChange) {
+      setStatusPickerVisible(false);
+      toastRef.current?.show({
+        type: 'warning',
+        title: t('taskDetail.statusLockedByApprovalTitle'),
+        body: t('taskDetail.statusLockedByApprovalBody'),
+      });
+      return;
+    }
+
     if (requiresTaskSignature && isCompletionStatus(status) && !hasTaskSignature) {
       if (!hasValidConvexId) {
         toastRef.current?.show({ type: 'error', title: t('common.error'), body: t('taskDetail.errorCannotSignTask') });
@@ -1474,7 +1495,7 @@ export const TaskDetailScreen: React.FC = () => {
       return;
     }
     applyStatusChange(status);
-  }, [requiresTaskSignature, isCompletionStatus, hasTaskSignature, hasValidConvexId, t, applyStatusChange]);
+  }, [sourceApprovalBlocksStatusChange, requiresTaskSignature, isCompletionStatus, hasTaskSignature, hasValidConvexId, t, applyStatusChange]);
 
   const handleTaskSigned = useCallback(async ({ storageId, signerName, comment }: { storageId: string; signerName: string; comment?: string }) => {
     if (!tenantId || !hasValidConvexId) {
@@ -1606,6 +1627,7 @@ export const TaskDetailScreen: React.FC = () => {
   const showActionTaskFooter = activeTab === 'details' && (canUseApprovalActionControls || canUseAckActionControls);
   const showStandardTaskActions = activeTab === 'details'
     && !isActionTask
+    && !sourceApprovalBlocksStatusChange
     && (getAllowedStatuses(currentTask).length > 0 || (requiresTaskSignature && !hasTaskSignature && hasValidConvexId));
 
   const closeAssigneePicker = useCallback(() => {
@@ -2123,9 +2145,9 @@ export const TaskDetailScreen: React.FC = () => {
           return (
             <TouchableOpacity
               onPress={() => {
-                if (!isActionTask) setStatusPickerVisible(true);
+                if (!sourceApprovalBlocksStatusChange) setStatusPickerVisible(true);
               }}
-              disabled={isActionTask}
+              disabled={sourceApprovalBlocksStatusChange}
               activeOpacity={0.7}
             >
               <CustomChip
@@ -2199,6 +2221,16 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       </View>
 
+      {!isActionTask && sourceApprovalBlocksStatusChange && (
+        <View style={styles.approvalPendingCard}>
+          <MaterialCommunityIcons name="clock-alert-outline" size={20} color="#EA580C" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.approvalPendingTitle}>{t('taskDetail.statusLockedByApprovalTitle')}</Text>
+            <Text style={styles.approvalPendingBody}>{t('taskDetail.statusLockedByApprovalBody')}</Text>
+          </View>
+        </View>
+      )}
+
       {!isActionTask && sourceApproverDetails.length > 0 && (
         <View style={[styles.communicationCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
           <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 8 }]}>
@@ -2225,23 +2257,28 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       )}
 
-      {!isActionTask && showSourceAcknowledgmentSection && (
+      {showSourceAcknowledgmentSection && (
         <View style={[styles.communicationCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
           <View style={styles.communicationSectionHeader}>
             <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 0 }]}>
               {t('sharedTask.sectionAcknowledgments')}
             </Text>
-            <View style={[styles.ackProgressBadge, {
-              backgroundColor: sourceAcknowledgmentProgress!.ackDone === sourceAcknowledgmentProgress!.ackTotal
-                ? '#F0FDF4'
-                : '#FFF7ED',
-            }]}>
-              <Text style={[styles.ackProgressText, {
-                color: sourceAcknowledgmentProgress!.ackDone === sourceAcknowledgmentProgress!.ackTotal
-                  ? '#16A34A'
-                  : '#EA580C',
+            <View style={{ alignItems: 'flex-end', gap: 3 }}>
+              <View style={[styles.ackProgressBadge, {
+                backgroundColor: sourceAcknowledgmentProgress!.ackDone === sourceAcknowledgmentProgress!.ackTotal
+                  ? '#F0FDF4'
+                  : '#FFF7ED',
               }]}>
-                {sourceAcknowledgmentProgress!.ackDone}/{sourceAcknowledgmentProgress!.ackTotal}
+                <Text style={[styles.ackProgressText, {
+                  color: sourceAcknowledgmentProgress!.ackDone === sourceAcknowledgmentProgress!.ackTotal
+                    ? '#16A34A'
+                    : '#EA580C',
+                }]}>
+                  {sourceAcknowledgmentProgress!.ackDone}/{sourceAcknowledgmentProgress!.ackTotal}
+                </Text>
+              </View>
+              <Text style={[styles.ackRecipientMetaText, { color: tertiaryText }]}>
+                {t('sharedTask.ackRemainingLabel', { count: sourceAcknowledgmentRemaining })}
               </Text>
             </View>
           </View>
@@ -3182,7 +3219,18 @@ export const TaskDetailScreen: React.FC = () => {
                   { backgroundColor: isDarkMode ? '#F0F0F0' : '#1A1A1A' },
                   requiresTaskSignature && !hasTaskSignature && hasValidConvexId ? styles.actionButtonHalf : null,
                 ]}
-                onPress={() => setStatusPickerVisible(true)}
+                onPress={() => {
+                  if (sourceApprovalBlocksStatusChange) {
+                    toastRef.current?.show({
+                      type: 'warning',
+                      title: t('taskDetail.statusLockedByApprovalTitle'),
+                      body: t('taskDetail.statusLockedByApprovalBody'),
+                    });
+                    return;
+                  }
+                  setStatusPickerVisible(true);
+                }}
+                disabled={sourceApprovalBlocksStatusChange}
               >
                 <MaterialIcons name="swap-horiz" size={16} color={isDarkMode ? '#1A1A1A' : '#FFFFFF'} />
                 <Text style={[styles.actionButtonText, { color: isDarkMode ? '#1A1A1A' : '#FFFFFF' }]}>{t('taskDetail.changeStatus')}</Text>
@@ -3311,7 +3359,7 @@ export const TaskDetailScreen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
 
-              {!isActionTask && (
+              {!isActionTask && !sourceApprovalBlocksStatusChange && (
                 <TouchableOpacity
                   style={[styles.taskActionRow, { borderColor: isDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}
                   onPress={() => {
@@ -3382,7 +3430,7 @@ export const TaskDetailScreen: React.FC = () => {
       </Modal>
 
       <Modal
-        visible={statusPickerVisible}
+        visible={statusPickerVisible && !sourceApprovalBlocksStatusChange}
         animationType="slide"
         transparent={true}
         onRequestClose={() => setStatusPickerVisible(false)}
@@ -3901,6 +3949,29 @@ const styles = StyleSheet.create({
   actionTaskHelp: {
     marginTop: 8,
     fontSize: 12,
+    fontFamily: fontFamilies.bodyRegular,
+  },
+  approvalPendingCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    backgroundColor: '#FFF7ED',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  approvalPendingTitle: {
+    color: '#9A3412',
+    fontSize: 13,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  approvalPendingBody: {
+    color: '#C2410C',
+    marginTop: 3,
+    fontSize: 12,
+    lineHeight: 17,
     fontFamily: fontFamilies.bodyRegular,
   },
   communicationCard: {

@@ -302,6 +302,8 @@
     "approvalActionTitle": "Approval action",
     "ackActionTitle": "Acknowledgment action",
     "approvalActionSignatureSubtitle": "Draw your signature to approve this communication.",
+    "statusLockedByApprovalTitle": "Waiting for approval",
+    "statusLockedByApprovalBody": "The status can only change after the communication is approved.",
     "actionTaskSyncRequired": "This action will be available once the task finishes syncing.",
     "taskActionsTitle": "Task actions",
     "taskActionsSubtitle": "Choose what you want to do with this task.",
@@ -363,7 +365,8 @@
     "fallbackUser": "User",
     "fallbackUnknown": "Unknown",
     "ackByLabel": "By",
-    "ackTimeLabel": "Time"
+    "ackTimeLabel": "Time",
+    "ackRemainingLabel": "%{count} left"
   },
   "colab": {
     "tabWorkspaces": "Workspaces",
