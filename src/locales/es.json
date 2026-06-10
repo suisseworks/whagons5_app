@@ -339,6 +339,8 @@
     "findingsAdd": "Agregar",
     "findingsEmpty": "Todavía no hay hallazgos registrados.",
     "findingsAddFailed": "No se pudo agregar el hallazgo.",
+    "findingsDragToReorder": "Mantén presionado un hallazgo para reordenar",
+    "findingsReorderFailed": "No se pudo reordenar los hallazgos.",
     "findingsUpdateFailed": "No se pudo actualizar el hallazgo.",
     "findingsDeleteTitle": "Eliminar hallazgo",
     "findingsDeleteMessage": "Este hallazgo se eliminará permanentemente.",

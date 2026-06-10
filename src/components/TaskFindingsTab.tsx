@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,9 @@ import {
   Modal,
   Alert,
   FlatList,
+  Pressable,
 } from 'react-native';
+import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useMutation, useQuery } from 'convex/react';
@@ -24,10 +26,68 @@ import { AttachmentPickerSheet } from './AttachmentPickerSheet';
 import { UserPickerSheet, type UserPickerItem } from './UserPickerSheet';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { resolveDefaultFindingTargetTeamId } from '../utils/findingActionDefaults';
+import {
+  applyOptimisticResolvedPatches,
+  createOptimisticFindingPending,
+  isOptimisticFindingId,
+  mergeFindingsWithOptimistic,
+  pruneResolvedOptimisticFindings,
+  pruneResolvedOptimisticPatches,
+  type OptimisticFindingPending,
+  type OptimisticFindingResolvedPatch,
+} from '../../../convex/_helpers/optimisticFindings';
 import type { ThemeColors } from '../models/types';
+
+const FINDINGS_DRAG_ANIMATION_CONFIG = {
+  damping: 22,
+  stiffness: 220,
+  mass: 0.2,
+  overshootClamping: true,
+} as const;
+
+const FINDINGS_REORDER_SAVE_DELAY_MS = 220;
 
 function getRowId(row: any): string {
   return String(row?._id ?? row?.id ?? '');
+}
+
+function sortRowsByOrder(rows: any[]): any[] {
+  return [...rows].sort(
+    (a, b) => (a.sortOrder ?? a.createdAt ?? 0) - (b.sortOrder ?? b.createdAt ?? 0),
+  );
+}
+
+function serializeRowOrder(rows: any[]): string {
+  return rows.map((row) => String(row._id)).join('\0');
+}
+
+function mergeRowsPreservingOrder(currentOrder: any[], freshRows: any[]): any[] {
+  const freshById = new Map(freshRows.map((row) => [String(row._id), row]));
+  const merged = currentOrder
+    .map((row) => freshById.get(String(row._id)))
+    .filter((row): row is any => Boolean(row));
+  for (const row of freshRows) {
+    if (!merged.some((item) => String(item._id) === String(row._id))) {
+      merged.push(row);
+    }
+  }
+  return merged;
+}
+
+function rowsMatchOrder(left: any[], right: any[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((row, index) => String(row._id) === String(right[index]?._id));
+}
+
+function rowsAreSameForList(left: any[], right: any[]): boolean {
+  if (!rowsMatchOrder(left, right)) return false;
+  return left.every((row, index) => {
+    const other = right[index];
+    return row.resolved === other.resolved
+      && row.text === other.text
+      && String(row.linkedTask?.statusName ?? '') === String(other.linkedTask?.statusName ?? '')
+      && String(row.linkedTask?.statusColor ?? '') === String(other.linkedTask?.statusColor ?? '');
+  });
 }
 
 function isFindingResolved(finding: any): boolean {
@@ -104,7 +164,8 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   const detailBottomInset = Math.max(insets.bottom, spacing.lg);
 
   const [draft, setDraft] = useState('');
-  const [addingFinding, setAddingFinding] = useState(false);
+  const [pendingOptimisticFindings, setPendingOptimisticFindings] = useState<OptimisticFindingPending[]>([]);
+  const [optimisticResolvedPatches, setOptimisticResolvedPatches] = useState<OptimisticFindingResolvedPatch[]>([]);
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [dueDateDraft, setDueDateDraft] = useState('');
@@ -118,6 +179,14 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
   const [creatingNote, setCreatingNote] = useState(false);
+  const [listData, setListData] = useState<any[]>([]);
+  const isDraggingRef = useRef(false);
+  const pendingOrderRef = useRef<string | null>(null);
+  const dragSnapshotRef = useRef<any[]>([]);
+  const listDataRef = useRef<any[]>([]);
+  const queuedOrderRef = useRef<any[] | null>(null);
+  const isPersistingOrderRef = useRef(false);
+  const reorderSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const cardBorder = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
   const surfaceMuted = isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7';
@@ -137,8 +206,62 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   const removeFinding = useMutation(api.taskFindings.remove);
   const createLinkedTask = useMutation(api.taskFindings.createLinkedTask);
   const createFindingNote = useMutation(api.taskFindings.createNote);
+  const reorderFindings = useMutation(api.taskFindings.reorder);
 
-  const rows = useMemo(() => (Array.isArray(findings) ? findings : []), [findings]);
+  const rows = useMemo(() => applyOptimisticResolvedPatches(
+    mergeFindingsWithOptimistic(
+      Array.isArray(findings) ? findings : [],
+      pendingOptimisticFindings,
+      { correctiveTaskCreationEnabled: true },
+    ),
+    optimisticResolvedPatches,
+  ), [findings, optimisticResolvedPatches, pendingOptimisticFindings]);
+
+  const sortedRows = useMemo(() => sortRowsByOrder(rows), [rows]);
+
+  useEffect(() => {
+    listDataRef.current = listData;
+  }, [listData]);
+
+  useEffect(() => {
+    if (!Array.isArray(findings)) return;
+    setPendingOptimisticFindings((current) => pruneResolvedOptimisticFindings(current, findings));
+    setOptimisticResolvedPatches((current) => pruneResolvedOptimisticPatches(current, findings));
+  }, [findings]);
+
+  useEffect(() => {
+    isDraggingRef.current = false;
+    pendingOrderRef.current = null;
+    dragSnapshotRef.current = [];
+    queuedOrderRef.current = null;
+    isPersistingOrderRef.current = false;
+    if (reorderSaveTimerRef.current) {
+      clearTimeout(reorderSaveTimerRef.current);
+      reorderSaveTimerRef.current = null;
+    }
+    setListData([]);
+    setOptimisticResolvedPatches([]);
+  }, [taskId]);
+
+  useEffect(() => {
+    if (isDraggingRef.current) return;
+
+    if (pendingOrderRef.current) {
+      if (serializeRowOrder(sortedRows) !== pendingOrderRef.current) return;
+      pendingOrderRef.current = null;
+      setListData((prev) => {
+        const merged = mergeRowsPreservingOrder(prev, sortedRows);
+        return rowsAreSameForList(prev, merged) ? prev : merged;
+      });
+      return;
+    }
+
+    setListData((prev) => {
+      if (prev.length === 0) return sortedRows;
+      const merged = mergeRowsPreservingOrder(prev, sortedRows);
+      return rowsAreSameForList(prev, merged) ? prev : merged;
+    });
+  }, [sortedRows]);
   const selectedFinding = useMemo(
     () => rows.find((row) => String(row._id) === selectedFindingId) ?? null,
     [rows, selectedFindingId],
@@ -146,8 +269,8 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
 
   const findingNotes = useQuery(
     api.taskFindings.listNotes,
-    tenantId && selectedFindingId
-      ? { tenantId, findingId: selectedFindingId as any }
+    tenantId && selectedFinding?._id
+      ? { tenantId, findingId: selectedFinding._id as any }
       : 'skip',
   ) as any[] | undefined;
 
@@ -252,6 +375,16 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   [data.users]);
 
   useEffect(() => {
+    setSelectedFindingId(null);
+  }, [taskId]);
+
+  useEffect(() => {
+    if (selectedFindingId && !selectedFinding) {
+      setSelectedFindingId(null);
+    }
+  }, [selectedFindingId, selectedFinding]);
+
+  useEffect(() => {
     if (!selectedFinding) {
       setAssigneePickerVisible(false);
       setSpotPickerVisible(false);
@@ -268,36 +401,121 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     setNoteDraft('');
   }, [selectedFinding?._id, selectedFinding?.notes, selectedFinding?.dueDate, selectedFinding?.due_date]);
 
-  const handleAddFinding = useCallback(async () => {
+  const handleAddFinding = useCallback(() => {
     if (!tenantId || readOnly) return;
     const trimmed = draft.trim();
     if (!trimmed) return;
-    setAddingFinding(true);
-    try {
-      await createFinding({ tenantId, taskId: taskId as any, text: trimmed });
-      setDraft('');
-    } catch (error: any) {
-      Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsAddFailed'));
-    } finally {
-      setAddingFinding(false);
-    }
+
+    const pending = createOptimisticFindingPending(trimmed);
+    setPendingOptimisticFindings((current) => [...current, pending]);
+    setDraft('');
+
+    void createFinding({ tenantId, taskId: taskId as any, text: trimmed })
+      .then((createdId) => {
+        setPendingOptimisticFindings((current) => current.map((item) => (
+          item.tempId === pending.tempId ? { ...item, resolvedId: String(createdId) } : item
+        )));
+      })
+      .catch((error: any) => {
+        setPendingOptimisticFindings((current) => current.filter((item) => item.tempId !== pending.tempId));
+        Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsAddFailed'));
+      });
   }, [createFinding, draft, readOnly, t, taskId, tenantId]);
 
-  const handleToggleResolved = useCallback(async (finding: any) => {
-    if (!tenantId || readOnly) return;
-    try {
-      await updateFinding({
-        tenantId,
-        id: finding._id,
-        resolved: !isFindingResolved(finding),
-      });
-    } catch (error: any) {
-      Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsUpdateFailed'));
+  const persistManualOrder = useCallback(async (nextRows: any[]) => {
+    if (!tenantId) return;
+    const findingIds = nextRows
+      .filter((finding) => !isOptimisticFindingId(String(finding._id)) && !finding._optimistic)
+      .map((finding) => finding._id);
+    if (findingIds.length === 0) return;
+    await reorderFindings({
+      tenantId,
+      taskId: taskId as any,
+      findingIds,
+    });
+  }, [reorderFindings, taskId, tenantId]);
+
+  const handleFindingDragBegin = useCallback(() => {
+    isDraggingRef.current = true;
+    dragSnapshotRef.current = listDataRef.current;
+  }, []);
+
+  const flushQueuedOrder = useCallback(() => {
+    if (isPersistingOrderRef.current) return;
+
+    const run = async () => {
+      isPersistingOrderRef.current = true;
+      try {
+        while (queuedOrderRef.current) {
+          const next = queuedOrderRef.current;
+          const order = serializeRowOrder(next);
+          queuedOrderRef.current = null;
+
+          try {
+            await persistManualOrder(next);
+          } catch (error: any) {
+            if (!queuedOrderRef.current && pendingOrderRef.current === order) {
+              pendingOrderRef.current = null;
+              const previous = dragSnapshotRef.current;
+              listDataRef.current = previous;
+              setListData(previous);
+              Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsReorderFailed'));
+            }
+          }
+        }
+      } finally {
+        isPersistingOrderRef.current = false;
+        if (queuedOrderRef.current) {
+          void run();
+        }
+      }
+    };
+
+    void run();
+  }, [persistManualOrder, t]);
+
+  const handleFindingDragEnd = useCallback(({ data, from, to }: { data: any[]; from: number; to: number }) => {
+    isDraggingRef.current = false;
+
+    if (readOnly || from === to) return;
+
+    const next = data;
+    pendingOrderRef.current = serializeRowOrder(next);
+    listDataRef.current = next;
+    setListData((prev) => (rowsMatchOrder(prev, next) ? prev : next));
+    queuedOrderRef.current = next;
+    if (reorderSaveTimerRef.current) {
+      clearTimeout(reorderSaveTimerRef.current);
     }
+    reorderSaveTimerRef.current = setTimeout(() => {
+      reorderSaveTimerRef.current = null;
+      flushQueuedOrder();
+    }, FINDINGS_REORDER_SAVE_DELAY_MS);
+  }, [flushQueuedOrder, readOnly]);
+
+  const handleToggleResolved = useCallback((finding: any) => {
+    if (!tenantId || readOnly || isOptimisticFindingId(String(finding?._id)) || finding?._optimistic) return;
+    const findingId = String(finding._id);
+    const nextResolved = !isFindingResolved(finding);
+
+    setOptimisticResolvedPatches((current) => [
+      ...current.filter((patch) => patch.findingId !== findingId),
+      { findingId, resolved: nextResolved },
+    ]);
+
+    void updateFinding({
+      tenantId,
+      id: finding._id,
+      resolved: nextResolved,
+    }).catch((error: any) => {
+      setOptimisticResolvedPatches((current) => current.filter((patch) => patch.findingId !== findingId));
+      Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsUpdateFailed'));
+    });
   }, [readOnly, t, tenantId, updateFinding]);
 
   const patchFinding = useCallback(async (patch: Record<string, unknown>) => {
     if (!tenantId || !selectedFinding || readOnly) return;
+    if (isOptimisticFindingId(String(selectedFinding._id)) || selectedFinding._optimistic) return;
     try {
       await updateFinding({ tenantId, id: selectedFinding._id, ...patch });
     } catch (error: any) {
@@ -401,9 +619,11 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
           text: t('common.delete'),
           style: 'destructive',
           onPress: () => {
+            const findingId = String(selectedFinding._id);
+            setSelectedFindingId(null);
             void removeFinding({ tenantId, id: selectedFinding._id })
-              .then(() => setSelectedFindingId(null))
               .catch((error: any) => {
+                setSelectedFindingId(findingId);
                 Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsDeleteFailed'));
               });
           },
@@ -467,6 +687,151 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   );
   const selectedCanCreateCorrectiveTask = selectedFinding?.correctiveTaskCreationEnabled !== false;
 
+  const draggableFindingCount = useMemo(
+    () => listData.filter((finding) => !isOptimisticFindingId(String(finding._id)) && !finding._optimistic).length,
+    [listData],
+  );
+
+  const renderFindingRow = useCallback(({
+    item: finding,
+    drag,
+    isActive,
+  }: RenderItemParams<any>) => {
+    const resolved = isFindingResolved(finding);
+    const linkedTask = finding.linkedTask;
+    const isOptimisticFinding = isOptimisticFindingId(String(finding._id)) || finding._optimistic === true;
+    const canDrag = !readOnly && !isOptimisticFinding;
+
+    return (
+      <View
+        style={[
+          styles.findingRow,
+          { borderColor: cardBorder, backgroundColor: colors.surface },
+          isActive && styles.findingRowActive,
+        ]}
+      >
+        <Pressable
+          style={({ pressed }) => [
+            styles.findingRowPressable,
+            pressed && !isActive && styles.findingRowPressed,
+          ]}
+          onPress={() => {
+            if (isOptimisticFinding) return;
+            setSelectedFindingId(String(finding._id));
+          }}
+          onLongPress={canDrag ? drag : undefined}
+          delayLongPress={280}
+          disabled={isActive}
+        >
+          {canDrag ? (
+            <MaterialIcons name="drag-indicator" size={20} color={colors.textSecondary} />
+          ) : null}
+          <TouchableOpacity
+            onPress={() => void handleToggleResolved(finding)}
+            disabled={readOnly || isOptimisticFinding}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <MaterialIcons
+              name={resolved ? 'check-box' : 'check-box-outline-blank'}
+              size={22}
+              color={colors.textSecondary}
+            />
+          </TouchableOpacity>
+          <View style={styles.findingTextWrap}>
+            <Text
+              style={[
+                styles.findingText,
+                { color: resolved ? colors.textSecondary : colors.text },
+                resolved && styles.findingTextResolved,
+              ]}
+              numberOfLines={2}
+            >
+              {finding.text}
+            </Text>
+            {linkedTask?.statusName ? (
+              <Text style={[styles.linkedTaskMeta, { color: linkedTask.statusColor || primaryColor }]} numberOfLines={1}>
+                {linkedTask.statusName}
+              </Text>
+            ) : null}
+          </View>
+          <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
+        </Pressable>
+      </View>
+    );
+  }, [cardBorder, colors.surface, colors.text, colors.textSecondary, handleToggleResolved, primaryColor, readOnly]);
+
+  const renderListHeader = useCallback(() => (
+    <View style={styles.listHeader}>
+      <View style={[styles.progressCard, { backgroundColor: surfaceMuted, borderColor: cardBorder }]}>
+        <View style={styles.progressHeader}>
+          <Text style={[styles.progressTitle, { color: colors.text }]}>{t('taskDetail.findingsTitle')}</Text>
+          <Text style={[styles.progressBadge, { color: colors.textSecondary }]}>{progressPercent}%</Text>
+        </View>
+        <Text style={[styles.progressSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+          {taskName} · {rows.length === 0
+            ? t('taskDetail.findingsEmptyCounter')
+            : `${resolvedCount}/${rows.length} ${t('taskDetail.findingsResolved')}`}
+        </Text>
+        <View style={[styles.progressTrack, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.12)' : '#E5E5EA' }]}>
+          <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: primaryColor }]} />
+        </View>
+      </View>
+
+      {!readOnly && (
+        <View style={[styles.addRow, { borderColor: cardBorder, backgroundColor: colors.surface }]}>
+          <TextInput
+            style={[styles.addInput, { color: colors.text }]}
+            placeholder={t('taskDetail.findingsPlaceholder')}
+            placeholderTextColor={colors.textSecondary}
+            value={draft}
+            onChangeText={setDraft}
+            onSubmitEditing={() => void handleAddFinding()}
+            returnKeyType="done"
+            editable={!readOnly}
+          />
+          <TouchableOpacity
+            style={[styles.addButton, { backgroundColor: primaryColor, opacity: !draft.trim() ? 0.6 : 1 }]}
+            onPress={handleAddFinding}
+            disabled={!draft.trim()}
+          >
+            <Text style={styles.addButtonText}>{t('taskDetail.findingsAdd')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {!readOnly && draggableFindingCount > 1 ? (
+        <Text style={[styles.dragHint, { color: colors.textSecondary }]}>
+          {t('taskDetail.findingsDragToReorder')}
+        </Text>
+      ) : null}
+    </View>
+  ), [
+    cardBorder,
+    colors.surface,
+    colors.text,
+    colors.textSecondary,
+    draft,
+    draggableFindingCount,
+    handleAddFinding,
+    isDarkMode,
+    primaryColor,
+    progressPercent,
+    readOnly,
+    resolvedCount,
+    rows.length,
+    surfaceMuted,
+    t,
+    taskName,
+  ]);
+
+  const renderListEmpty = useCallback(() => (
+    <View style={[styles.emptyCard, { borderColor: cardBorder }]}>
+      <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        {t('taskDetail.findingsEmpty')}
+      </Text>
+    </View>
+  ), [cardBorder, colors.textSecondary, t]);
+
   const renderSelectorModal = (
     visible: boolean,
     title: string,
@@ -510,7 +875,7 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     </Modal>
   );
 
-  if (findings === undefined) {
+  if (findings === undefined && pendingOptimisticFindings.length === 0) {
     return (
       <View style={styles.centered}>
         <ActivityIndicator size="large" color={primaryColor} />
@@ -523,106 +888,22 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.listContent} keyboardShouldPersistTaps="handled">
-        <View style={[styles.progressCard, { backgroundColor: surfaceMuted, borderColor: cardBorder }]}>
-          <View style={styles.progressHeader}>
-            <Text style={[styles.progressTitle, { color: colors.text }]}>{t('taskDetail.findingsTitle')}</Text>
-            <Text style={[styles.progressBadge, { color: colors.textSecondary }]}>{progressPercent}%</Text>
-          </View>
-          <Text style={[styles.progressSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-            {taskName} · {rows.length === 0
-              ? t('taskDetail.findingsEmptyCounter')
-              : `${resolvedCount}/${rows.length} ${t('taskDetail.findingsResolved')}`}
-          </Text>
-          <View style={[styles.progressTrack, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.12)' : '#E5E5EA' }]}>
-            <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: primaryColor }]} />
-          </View>
-        </View>
-
-        {!readOnly && (
-          <View style={[styles.addRow, { borderColor: cardBorder, backgroundColor: colors.surface }]}>
-            <TextInput
-              style={[styles.addInput, { color: colors.text }]}
-              placeholder={t('taskDetail.findingsPlaceholder')}
-              placeholderTextColor={colors.textSecondary}
-              value={draft}
-              onChangeText={setDraft}
-              onSubmitEditing={() => void handleAddFinding()}
-              returnKeyType="done"
-              editable={!addingFinding}
-            />
-            <TouchableOpacity
-              style={[styles.addButton, { backgroundColor: primaryColor, opacity: addingFinding ? 0.6 : 1 }]}
-              onPress={() => void handleAddFinding()}
-              disabled={addingFinding || !draft.trim()}
-            >
-              {addingFinding
-                ? <ActivityIndicator size="small" color="#FFFFFF" />
-                : <Text style={styles.addButtonText}>{t('taskDetail.findingsAdd')}</Text>}
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {rows.length === 0 ? (
-          <View style={[styles.emptyCard, { borderColor: cardBorder }]}>
-            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-              {t('taskDetail.findingsEmpty')}
-            </Text>
-          </View>
-        ) : rows.map((finding) => {
-          const resolved = isFindingResolved(finding);
-          const linkedTask = finding.linkedTask;
-          return (
-            <TouchableOpacity
-              key={String(finding._id)}
-              style={[
-                styles.findingRow,
-                {
-                  borderColor: resolved ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.25)',
-                  backgroundColor: resolved
-                    ? (isDarkMode ? 'rgba(34,197,94,0.08)' : '#F0FDF4')
-                    : (isDarkMode ? 'rgba(239,68,68,0.08)' : '#FEF2F2'),
-                },
-              ]}
-              onPress={() => setSelectedFindingId(String(finding._id))}
-              activeOpacity={0.75}
-            >
-              <TouchableOpacity
-                onPress={(event) => {
-                  event.stopPropagation?.();
-                  void handleToggleResolved(finding);
-                }}
-                disabled={readOnly}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <MaterialIcons
-                  name={resolved ? 'check-box' : 'check-box-outline-blank'}
-                  size={22}
-                  color={resolved ? '#16A34A' : colors.textSecondary}
-                />
-              </TouchableOpacity>
-              <View style={styles.findingTextWrap}>
-                <Text
-                  style={[
-                    styles.findingText,
-                    { color: resolved ? colors.textSecondary : colors.text },
-                    resolved && styles.findingTextResolved,
-                  ]}
-                  numberOfLines={2}
-                >
-                  {finding.text}
-                </Text>
-                {linkedTask?.statusName ? (
-                  <Text style={[styles.linkedTaskMeta, { color: linkedTask.statusColor || primaryColor }]} numberOfLines={1}>
-                    {linkedTask.statusName}
-                  </Text>
-                ) : null}
-              </View>
-              <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-          );
-        })}
-      </ScrollView>
+      <DraggableFlatList
+        data={listData}
+        keyExtractor={(finding) => String(finding._id)}
+        renderItem={renderFindingRow}
+        onDragBegin={handleFindingDragBegin}
+        onDragEnd={handleFindingDragEnd}
+        activationDistance={12}
+        autoscrollThreshold={72}
+        autoscrollSpeed={160}
+        animationConfig={FINDINGS_DRAG_ANIMATION_CONFIG}
+        containerStyle={styles.container}
+        contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={renderListHeader}
+        ListEmptyComponent={renderListEmpty}
+      />
 
       <Modal
         visible={selectedFinding != null}
@@ -981,7 +1262,9 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   centeredText: { marginTop: spacing.sm, fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },
-  listContent: { padding: spacing.md, paddingBottom: spacing.xl, gap: spacing.sm },
+  listContent: { padding: spacing.md, paddingBottom: spacing.xl },
+  listHeader: { gap: spacing.sm, marginBottom: spacing.sm },
+  dragHint: { fontSize: fontSizes.xs, fontFamily: fontFamilies.bodyRegular, paddingHorizontal: 4 },
   progressCard: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.md, gap: 8 },
   progressHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   progressTitle: { fontSize: fontSizes.md, fontFamily: fontFamilies.displaySemibold },
@@ -1003,13 +1286,28 @@ const styles = StyleSheet.create({
   emptyCard: { borderWidth: 1, borderStyle: 'dashed', borderRadius: radius.lg, padding: spacing.lg, alignItems: 'center' },
   emptyText: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular, textAlign: 'center' },
   findingRow: {
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    marginBottom: spacing.sm,
+    overflow: 'hidden',
+  },
+  findingRowPressable: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    borderWidth: 1,
-    borderRadius: radius.lg,
     paddingHorizontal: 12,
     paddingVertical: 12,
+  },
+  findingRowActive: {
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    elevation: 4,
+    zIndex: 2,
+  },
+  findingRowPressed: {
+    opacity: 0.92,
   },
   findingTextWrap: { flex: 1, gap: 2 },
   findingText: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },

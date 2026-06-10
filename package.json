@@ -1,6 +1,6 @@
 {
   "name": "whagons-rn",
-  "version": "5.1.20",
+  "version": "5.1.21",
   "main": "index.ts",
   "scripts": {
     "start": "expo start",
@@ -59,6 +59,7 @@
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
+    "react-native-draggable-flatlist": "^4.0.3",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-keyboard-controller": "1.18.5",
     "react-native-maps": "1.20.1",

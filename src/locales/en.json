@@ -339,6 +339,8 @@
     "findingsAdd": "Add",
     "findingsEmpty": "No findings recorded yet.",
     "findingsAddFailed": "Could not add finding.",
+    "findingsDragToReorder": "Hold a finding to reorder",
+    "findingsReorderFailed": "Could not reorder findings.",
     "findingsUpdateFailed": "Could not update finding.",
     "findingsDeleteTitle": "Delete finding",
     "findingsDeleteMessage": "This finding will be permanently removed.",
