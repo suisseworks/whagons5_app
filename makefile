@@ -246,7 +246,12 @@ release:
 	if [ -z "$${RELEASE_NOTES_SECRET:-}" ]; then echo "Error: RELEASE_NOTES_SECRET is required in .env.production and must match the Convex deployment env."; exit 1; fi && \
 	if [ -z "$${EXPO_PUBLIC_CONVEX_URL:-}" ] && [ -z "$${CONVEX_URL:-}" ]; then echo "Error: EXPO_PUBLIC_CONVEX_URL or CONVEX_URL is required in .env.production."; exit 1; fi && \
 	\
-	echo "=== Step 1: Determine version ===" && \
+	echo "=== Step 1: Verify app git sync ===" && \
+	git fetch $(REMOTE_REPO) main --tags && \
+	if [ "$$(git branch --show-current)" != "main" ]; then echo "Error: app release must run from local main, not detached HEAD or another branch."; exit 1; fi && \
+	if [ "$$(git rev-parse main)" != "$$(git rev-parse $(REMOTE_REPO)/main)" ]; then echo "Error: local app main is not synced with $(REMOTE_REPO)/main. Run: git pull --ff-only $(REMOTE_REPO) main"; exit 1; fi && \
+	\
+	echo "=== Step 2: Determine version ===" && \
 	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
 	if [ -z "$$latest_tag" ]; then latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1); fi && \
 	if [ -z "$$latest_tag" ]; then \
@@ -262,16 +267,16 @@ release:
 		echo "  auto-bumping: $$last_version -> $$version"; \
 	fi && \
 	\
-	echo "=== Step 2: Build uploader CLI ===" && \
+	echo "=== Step 3: Build uploader CLI ===" && \
 	if [ ! -f scripts/whagons-uploader ]; then \
 		cd scripts && go build -o whagons-uploader main.go && cd ..; \
 	fi && \
 	if [ ! -f android/gradlew ] || [ ! -f android/app/build.gradle ]; then \
-		echo "=== Step 2b: Generate Android native project ==="; \
+		echo "=== Step 3b: Generate Android native project ==="; \
 		npx expo prebuild -p android; \
 	fi && \
 	\
-	echo "=== Step 3: Query Play Store for latest versionCode ===" && \
+	echo "=== Step 4: Query Play Store for latest versionCode ===" && \
 	play_code=$$(cd scripts && ./whagons-uploader --service-account ../play-store-service-account.json latest-code && cd ..) && \
 	next_code=$$((play_code + 1)) && \
 	echo "  Play Store latest: $$play_code -> using: $$next_code" && \
@@ -343,7 +348,12 @@ release-prod-android:
 	if [ -z "$${RELEASE_NOTES_SECRET:-}" ]; then echo "Error: RELEASE_NOTES_SECRET is required in .env.production and must match the Convex deployment env."; exit 1; fi && \
 	if [ -z "$${EXPO_PUBLIC_CONVEX_URL:-}" ] && [ -z "$${CONVEX_URL:-}" ]; then echo "Error: EXPO_PUBLIC_CONVEX_URL or CONVEX_URL is required in .env.production."; exit 1; fi && \
 	\
-	echo "=== Step 1: Determine version ===" && \
+	echo "=== Step 1: Verify app git sync ===" && \
+	git fetch $(REMOTE_REPO) main --tags && \
+	if [ "$$(git branch --show-current)" != "main" ]; then echo "Error: app release must run from local main, not detached HEAD or another branch."; exit 1; fi && \
+	if [ "$$(git rev-parse main)" != "$$(git rev-parse $(REMOTE_REPO)/main)" ]; then echo "Error: local app main is not synced with $(REMOTE_REPO)/main. Run: git pull --ff-only $(REMOTE_REPO) main"; exit 1; fi && \
+	\
+	echo "=== Step 2: Determine version ===" && \
 	latest_tag=$$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true) && \
 	if [ -z "$$latest_tag" ]; then latest_tag=$$(git tag -l 'v*' --sort=-v:refname | head -1); fi && \
 	if [ -z "$$latest_tag" ]; then \
@@ -359,12 +369,12 @@ release-prod-android:
 		echo "  auto-bumping: $$last_version -> $$version"; \
 	fi && \
 	\
-	echo "=== Step 2: Build uploader CLI ===" && \
+	echo "=== Step 3: Build uploader CLI ===" && \
 	if [ ! -f scripts/whagons-uploader ]; then \
 		cd scripts && go build -o whagons-uploader main.go && cd ..; \
 	fi && \
 	if [ ! -f android/gradlew ] || [ ! -f android/app/build.gradle ]; then \
-		echo "=== Step 2b: Generate Android native project ==="; \
+		echo "=== Step 3b: Generate Android native project ==="; \
 		npx expo prebuild -p android; \
 	fi && \
 	\
