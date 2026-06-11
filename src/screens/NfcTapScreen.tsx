@@ -24,6 +24,8 @@ type NfcTapRoute = RouteProp<RootStackParamList, 'NfcTap'>;
 type FeedbackState = 'idle' | 'running' | 'success' | 'warning' | 'error';
 type SuccessTarget = { kind: 'task'; task: TaskItem } | { kind: 'external_url'; url: string } | null;
 
+const NFC_CLIENT_CAPABILITIES = { nfcTaskCreationResult: true };
+
 function makeClientTapId() {
   return `mobile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -176,6 +178,7 @@ export const NfcTapScreen: React.FC = () => {
         uuid,
         clientTapId: makeClientTapId(),
         deviceData,
+        clientCapabilities: NFC_CLIENT_CAPABILITIES,
       });
 
       if (!result?.ok) {
