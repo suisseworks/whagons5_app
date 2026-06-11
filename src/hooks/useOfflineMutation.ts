@@ -22,6 +22,10 @@ import { useNetwork } from '../context/NetworkContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import * as DB from '../store/database';
 import { useTenant } from './useTenant';
+import { addSupportBreadcrumb, captureSupportError } from '../services/supportDiagnostics';
+import { getConvexErrorDiagnostics } from '../services/convexErrorDiagnostics';
+import { createConvexClientRequestId } from '../services/convexCorrelation';
+import { APP_VERSION, GIT_HASH } from '../config/version';
 
 let _idCounter = 0;
 function generateQueueId(): string {
@@ -45,6 +49,32 @@ type OfflineQueuedResult = {
   _queueId: string;
 };
 
+const SUPPORT_METADATA_MUTATIONS = new Set([
+  'tasks.create',
+  'tasks.update',
+  'tasks.updateByPgId',
+  'taskFindings.create',
+  'taskFindings.update',
+  'taskFindings.reorder',
+]);
+
+function attachSupportMetadata<T extends Record<string, unknown>>(
+  apiPath: string,
+  args: T,
+  clientRequestId: string,
+): T {
+  if (!SUPPORT_METADATA_MUTATIONS.has(apiPath)) return args;
+  return {
+    ...args,
+    support: {
+      clientRequestId,
+      runtime: 'app',
+      appVersion: APP_VERSION,
+      buildCommit: GIT_HASH,
+    },
+  };
+}
+
 /**
  * @param mutationRef  The Convex API reference (e.g. api.tasks.create)
  * @param apiPath      A string key for replay identification (e.g. 'tasks.create')
@@ -67,17 +97,43 @@ export function useOfflineMutation<Mutation extends FunctionReference<'mutation'
         ? argsRecord.tenantId
         : null;
       const effectiveTenantId = tenantId ?? argsTenantId;
+      const clientRequestId = createConvexClientRequestId(apiPath);
+      const correlatedArgs = attachSupportMetadata(apiPath, argsRecord, clientRequestId) as FunctionArgs<Mutation>;
+      const correlatedMutationArgs = [correlatedArgs] as OptionalRestArgs<Mutation>;
 
       if (isOnline) {
         try {
-          return await mutate(...mutationArgs);
+          addSupportBreadcrumb('convex.mutation', apiPath, { tenantId: effectiveTenantId, clientRequestId });
+          return await mutate(...correlatedMutationArgs);
         } catch (error) {
           if (!effectiveTenantId || !isConnectivityError(error)) {
+            const convex = getConvexErrorDiagnostics(error);
+            const correlatedConvex = convex ? { ...convex, clientRequestId } : undefined;
+            addSupportBreadcrumb('convex.error', apiPath, {
+              tenantId: effectiveTenantId,
+              clientRequestId,
+              message: error instanceof Error ? error.message : String(error),
+              convex: correlatedConvex,
+            }, 'error');
+            captureSupportError({
+              message: `Convex mutation failed: ${apiPath}`,
+              stack: error instanceof Error ? error.stack : undefined,
+              category: 'convex',
+              metadata: {
+                apiPath,
+                tenantId: effectiveTenantId,
+                clientRequestId,
+                args,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                convex: correlatedConvex,
+              },
+            });
             throw error;
           }
 
           const id = generateQueueId();
-          await DB.enqueueMutation(id, apiPath, args, effectiveTenantId, actionAt);
+          addSupportBreadcrumb('mutation.queue', apiPath, { tenantId: effectiveTenantId, queueId: id, clientRequestId, reason: 'connectivity' }, 'warn');
+          await DB.enqueueMutation(id, apiPath, correlatedArgs, effectiveTenantId, actionAt);
           await refreshCount();
           return { _offlineQueued: true, _queueId: id };
         }
@@ -89,7 +145,8 @@ export function useOfflineMutation<Mutation extends FunctionReference<'mutation'
 
       // Offline: queue for later replay
       const id = generateQueueId();
-      await DB.enqueueMutation(id, apiPath, args, effectiveTenantId, actionAt);
+      addSupportBreadcrumb('mutation.queue', apiPath, { tenantId: effectiveTenantId, queueId: id, clientRequestId, reason: 'offline' }, 'warn');
+      await DB.enqueueMutation(id, apiPath, correlatedArgs, effectiveTenantId, actionAt);
       await refreshCount();
       return { _offlineQueued: true, _queueId: id };
     },

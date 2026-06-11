@@ -22,6 +22,10 @@ import { api } from '../../../convex/_generated/api';
 import * as DB from '../store/database';
 import { isMutationQueueReplayPaused } from '../store/mutationQueueRuntime';
 import { useTenant } from '../hooks/useTenant';
+import { addSupportBreadcrumb, captureSupportError } from '../services/supportDiagnostics';
+import { getConvexErrorDiagnostics } from '../services/convexErrorDiagnostics';
+import { createConvexClientRequestId } from '../services/convexCorrelation';
+import { APP_VERSION, GIT_HASH } from '../config/version';
 
 // ---------------------------------------------------------------------------
 // Map apiPath strings back to Convex function references for replay
@@ -39,6 +43,39 @@ function errorMessage(error: unknown, fallback = ''): string {
 
 function isConvexMutationReference(value: unknown): value is FunctionReference<'mutation'> {
   return Boolean(value && typeof value === 'object' && convexFunctionName in value);
+}
+
+const SUPPORT_METADATA_MUTATIONS = new Set([
+  'tasks.create',
+  'tasks.update',
+  'tasks.updateByPgId',
+  'taskFindings.create',
+  'taskFindings.update',
+  'taskFindings.reorder',
+]);
+
+function existingClientRequestId(args: Record<string, unknown>): string | null {
+  const support = args.support;
+  if (!support || typeof support !== 'object') return null;
+  const value = (support as Record<string, unknown>).clientRequestId;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function attachSupportMetadata(
+  apiPath: string,
+  args: Record<string, unknown>,
+  clientRequestId: string,
+): Record<string, unknown> {
+  if (!SUPPORT_METADATA_MUTATIONS.has(apiPath)) return args;
+  return {
+    ...args,
+    support: {
+      clientRequestId,
+      runtime: 'app',
+      appVersion: APP_VERSION,
+      buildCommit: GIT_HASH,
+    },
+  };
 }
 
 function resolveApiRef(apiPath: string): FunctionReference<'mutation'> | null {
@@ -307,12 +344,20 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
         }
 
         const pushAttemptAt = Date.now();
+        const clientRequestId = existingClientRequestId(args) ?? createConvexClientRequestId(mutation.api_path);
+        const correlatedArgs = attachSupportMetadata(mutation.api_path, args, clientRequestId);
 
         try {
           if (shouldStopReplay()) return;
           await DB.markMutationSyncing(mutation.id, attempts);
           if (shouldStopReplay()) return;
-          await convex.mutation(apiRef, args);
+          addSupportBreadcrumb('mutation.replay', mutation.api_path, {
+            tenantId: replayTenantId,
+            queueId: mutation.id,
+            attempts,
+            clientRequestId,
+          });
+          await convex.mutation(apiRef, correlatedArgs as any);
           if (shouldStopReplay()) return;
           await DB.archiveMutation(
             {
@@ -329,6 +374,31 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
         } catch (err) {
           if (shouldStopReplay()) return;
           const errMessage = errorMessage(err, 'Replay failed');
+          const convex = getConvexErrorDiagnostics(err);
+          const correlatedConvex = convex ? { ...convex, clientRequestId } : undefined;
+          addSupportBreadcrumb('convex.error', mutation.api_path, {
+            tenantId: replayTenantId,
+            queueId: mutation.id,
+            attempts,
+            clientRequestId,
+            message: errMessage,
+            convex: correlatedConvex,
+          }, 'error');
+          captureSupportError({
+            message: `Queued Convex mutation failed: ${mutation.api_path}`,
+            stack: err instanceof Error ? err.stack : undefined,
+            category: 'convex',
+            metadata: {
+              apiPath: mutation.api_path,
+              tenantId: replayTenantId,
+              queueId: mutation.id,
+              attempts,
+              clientRequestId,
+              args: correlatedArgs,
+              errorMessage: errMessage,
+              convex: correlatedConvex,
+            },
+          });
           const shouldRetry = attempts < REPLAY_MAX_ATTEMPTS && isRetriableError(err);
 
           if (shouldRetry) {
@@ -371,6 +441,7 @@ export const MutationQueueProvider: React.FC<{ children: ReactNode }> = ({ child
         }
       }
     } catch (err) {
+      addSupportBreadcrumb('mutation.replay', errorMessage(err, 'Replay error'), { tenantId }, 'error');
       console.warn('[MutationQueue] Replay error:', err);
     } finally {
       replayingRef.current = false;

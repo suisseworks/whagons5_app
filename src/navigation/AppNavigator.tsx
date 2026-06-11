@@ -9,6 +9,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import { useAuth } from '../context/AuthContext';
 import { fontFamilies } from '../config/designTokens';
+import { addSupportBreadcrumb } from '../services/supportDiagnostics';
 
 // Screens
 import { SplashScreen } from '../screens/SplashScreen';
@@ -283,8 +284,20 @@ export const AppNavigator: React.FC = () => {
       ref={navigationRef}
       theme={navigationTheme}
       linking={linking}
-      onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name)}
-      onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name)}
+      onReady={() => {
+        const routeName = navigationRef.getCurrentRoute()?.name;
+        setCurrentRouteName(routeName);
+        if (routeName) {
+          addSupportBreadcrumb('navigation', String(routeName), { ready: true });
+        }
+      }}
+      onStateChange={() => {
+        const route = navigationRef.getCurrentRoute();
+        setCurrentRouteName(route?.name);
+        if (route?.name) {
+          addSupportBreadcrumb('navigation', String(route.name), { params: route.params });
+        }
+      }}
     >
       <AppStatusBar />
       <Stack.Navigator

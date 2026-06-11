@@ -16,8 +16,10 @@ import { NotificationProvider } from './src/context/NotificationContext';
 import { GamificationProvider } from './src/context/GamificationContext';
 import { NetworkProvider } from './src/context/NetworkContext';
 import { MutationQueueProvider } from './src/context/MutationQueueContext';
+import { TechSupportSessionProvider } from './src/context/TechSupportSessionContext';
 import { CallProvider } from './src/context/CallContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
+import { addSupportBreadcrumb, captureSupportError } from './src/services/supportDiagnostics';
 
 class ErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -29,6 +31,13 @@ class ErrorBoundary extends React.Component<
   }
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error('[ErrorBoundary]', error.message, info.componentStack);
+    addSupportBreadcrumb('app.crash', error.message, { componentStack: info.componentStack }, 'error');
+    captureSupportError({
+      message: `[React ErrorBoundary] ${error.message}`,
+      stack: error.stack,
+      category: 'ui',
+      metadata: { componentStack: info.componentStack },
+    });
   }
   render() {
     if (this.state.error) {
@@ -104,21 +113,23 @@ export default function App() {
               <NetworkProvider>
                 <AuthProvider>
                   <MutationQueueProvider>
-                    <DataProvider>
-                      <NotificationProvider>
-                        <ThemeProvider>
-                          <LanguageProvider>
-                            <TaskProvider>
-                              <GamificationProvider>
-                                <CallProvider>
-                                  <AppNavigator />
-                                </CallProvider>
-                              </GamificationProvider>
-                            </TaskProvider>
-                          </LanguageProvider>
-                        </ThemeProvider>
-                      </NotificationProvider>
-                    </DataProvider>
+                    <TechSupportSessionProvider>
+                      <DataProvider>
+                        <NotificationProvider>
+                          <ThemeProvider>
+                            <LanguageProvider>
+                              <TaskProvider>
+                                <GamificationProvider>
+                                  <CallProvider>
+                                    <AppNavigator />
+                                  </CallProvider>
+                                </GamificationProvider>
+                              </TaskProvider>
+                            </LanguageProvider>
+                          </ThemeProvider>
+                        </NotificationProvider>
+                      </DataProvider>
+                    </TechSupportSessionProvider>
                   </MutationQueueProvider>
                 </AuthProvider>
               </NetworkProvider>
