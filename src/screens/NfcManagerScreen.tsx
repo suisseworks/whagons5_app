@@ -181,6 +181,7 @@ export const NfcManagerScreen: React.FC = () => {
   const [form, setForm] = useState<NfcManagerFormState>(emptyNfcManagerForm);
   const [saving, setSaving] = useState(false);
   const [writingTagId, setWritingTagId] = useState<string | null>(null);
+  const [programmedUrl, setProgrammedUrl] = useState<string | null>(null);
 
   const tags = (tagsRaw ?? []) as NfcTagRecord[];
   const borderColor = isDarkMode ? 'rgba(255,255,255,0.08)' : '#E6E1D7';
@@ -205,8 +206,19 @@ export const NfcManagerScreen: React.FC = () => {
   const templates = useMemo<Option[]>(
     () => (data.templates ?? [])
       .filter((row: any) => rowId(row))
-      .map((row: any) => ({ value: rowId(row), label: rowName(row) })),
-    [data.templates],
+      .map((row: any) => {
+        const categoryRef = row.categoryId ?? row.category_id;
+        const category = (data.categories ?? []).find((cat: any) =>
+          String(cat?._id ?? cat?.convexId ?? cat?.id ?? '') === String(categoryRef)
+          || String(cat?.id ?? cat?.pgId ?? '') === String(categoryRef)
+        );
+        return {
+          value: rowId(row),
+          label: rowName(row),
+          subtitle: category ? workspaceNameById.get(String(category.workspaceId ?? category.workspace_id)) : undefined,
+        };
+      }),
+    [data.categories, data.templates, workspaceNameById],
   );
   const spots = useMemo<Option[]>(
     () => (data.spots ?? [])
@@ -286,7 +298,7 @@ export const NfcManagerScreen: React.FC = () => {
         id: tag._id as any,
         tagUidHash: await hashTagUid(result.tagUid),
       });
-      Alert.alert('NFC card programmed', url);
+      setProgrammedUrl(url);
       Vibration.vibrate(80);
     } catch (error: any) {
       Alert.alert('NFC', error?.message || 'Unable to program NFC card.');
@@ -315,9 +327,9 @@ export const NfcManagerScreen: React.FC = () => {
   const renderTagTarget = (tag: NfcTagRecord) => {
     if (tag.actionKind === 'open_url') return String(tag.actionConfig?.url ?? 'URL');
     if (tag.actionKind === 'linked_task_status') return tag.taskName || 'Linked task';
-    return [tag.templateName || tag.categoryName || tag.actionConfig?.taskName || 'Task session', tag.workspaceName, tag.spotName]
+    return [tag.actionConfig?.taskName || tag.templateName || 'New task', tag.workspaceName, tag.spotName]
       .filter(Boolean)
-      .join(' · ');
+      .join(' - ');
   };
 
   return (
@@ -366,6 +378,11 @@ export const NfcManagerScreen: React.FC = () => {
                 </View>
 
                 <Text style={[styles.targetText, { color: colors.text }]}>{renderTagTarget(tag)}</Text>
+                {tag.actionKind === 'task_session_toggle' ? (
+                  <Text style={[styles.detailText, { color: colors.textSecondary }]}>
+                    {tag.actionConfig?.startOnScan === true ? 'Creates and starts for whoever scans' : 'Creates a new task'}
+                  </Text>
+                ) : null}
                 {tag.actionKind === 'linked_task_status' ? (
                   <Text style={[styles.detailText, { color: colors.textSecondary }]}>
                     {getNfcLinkedActionLabel(tag.actionConfig?.actionType ?? tag.actionType)}
@@ -459,19 +476,44 @@ export const NfcManagerScreen: React.FC = () => {
 
             {form.actionKind === 'task_session_toggle' ? (
               <>
-                <SelectField title="Workspace" value={form.workspaceId} options={workspaces} placeholder="Choose workspace" onSelect={(workspaceId) => setForm((current) => ({ ...current, workspaceId }))} />
-                <SelectField title="Task type" value={form.categoryId} options={categories} placeholder="Optional" onSelect={(categoryId) => setForm((current) => ({ ...current, categoryId }))} />
-                <SelectField title="Template" value={form.templateId} options={templates} placeholder="Optional" onSelect={(templateId) => setForm((current) => ({ ...current, templateId }))} />
-                <SelectField title="Spot" value={form.spotId} options={spots} placeholder="Optional" onSelect={(spotId) => setForm((current) => ({ ...current, spotId }))} />
-                <SelectField title="Priority" value={form.priorityId} options={priorities} placeholder="Optional" onSelect={(priorityId) => setForm((current) => ({ ...current, priorityId }))} />
-                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Task name override</Text>
+                <SelectField title="Template" value={form.templateId} options={templates} placeholder="Optional" onSelect={(templateId) => setForm((current) => ({ ...current, templateId, workspaceId: templateId ? '' : current.workspaceId }))} />
+                {!form.templateId ? (
+                  <SelectField title="Workspace" value={form.workspaceId} options={workspaces} placeholder="Choose workspace" onSelect={(workspaceId) => setForm((current) => ({ ...current, workspaceId }))} />
+                ) : null}
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Task title</Text>
                 <TextInput
                   value={form.taskName}
                   onChangeText={(taskName) => setForm((current) => ({ ...current, taskName }))}
-                  placeholder="Optional"
+                  placeholder={form.templateId ? 'Use template name' : 'What should be created?'}
                   placeholderTextColor={colors.textSecondary}
                   style={[styles.textInput, { color: colors.text, borderColor, backgroundColor: colors.surface }]}
                 />
+                <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Description</Text>
+                <TextInput
+                  value={form.description}
+                  onChangeText={(description) => setForm((current) => ({ ...current, description }))}
+                  placeholder="Optional"
+                  placeholderTextColor={colors.textSecondary}
+                  multiline
+                  style={[styles.textInput, styles.textArea, { color: colors.text, borderColor, backgroundColor: colors.surface }]}
+                />
+                <SelectField title="Location" value={form.spotId} options={spots} placeholder="Optional" onSelect={(spotId) => setForm((current) => ({ ...current, spotId }))} />
+                <SelectField title="Priority" value={form.priorityId} options={priorities} placeholder="Optional" onSelect={(priorityId) => setForm((current) => ({ ...current, priorityId }))} />
+                <TouchableOpacity
+                  style={[styles.toggleRow, { borderColor, backgroundColor: colors.surface }]}
+                  activeOpacity={0.7}
+                  onPress={() => setForm((current) => ({ ...current, startOnScan: !current.startOnScan }))}
+                >
+                  <View style={styles.toggleTextGroup}>
+                    <Text style={[styles.selectValue, { color: colors.text }]}>Start when scanned</Text>
+                    <Text style={[styles.optionSubtitle, { color: colors.textSecondary }]}>
+                      Assigns the new task to the person who taps this card and moves it to the working status.
+                    </Text>
+                  </View>
+                  <View style={[styles.switchTrack, { backgroundColor: form.startOnScan ? primaryColor : mutedSurface }]}>
+                    <View style={[styles.switchThumb, form.startOnScan && styles.switchThumbOn]} />
+                  </View>
+                </TouchableOpacity>
               </>
             ) : null}
 
@@ -522,6 +564,36 @@ export const NfcManagerScreen: React.FC = () => {
             </TouchableOpacity>
           </ScrollView>
         </SafeAreaView>
+      </Modal>
+
+      <Modal
+        visible={!!programmedUrl}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setProgrammedUrl(null)}
+      >
+        <View style={styles.successScrim}>
+          <View style={[styles.successSheet, { backgroundColor: colors.surface, borderColor }]}>
+            <View style={[styles.successIcon, { backgroundColor: `${primaryColor}18` }]}>
+              <MaterialIcons name="check" size={28} color={primaryColor} />
+            </View>
+            <Text style={[styles.successTitle, { color: colors.text }]}>Card programmed</Text>
+            <Text style={[styles.successSubtitle, { color: colors.textSecondary }]}>
+              This NFC card is ready to scan.
+            </Text>
+            {programmedUrl ? (
+              <Text style={[styles.successUrl, { color: colors.textSecondary, backgroundColor: mutedSurface }]} numberOfLines={2}>
+                {programmedUrl}
+              </Text>
+            ) : null}
+            <TouchableOpacity
+              style={[styles.successButton, { backgroundColor: primaryColor }]}
+              onPress={() => setProgrammedUrl(null)}
+            >
+              <Text style={styles.primaryButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </Modal>
     </SafeAreaView>
   );
@@ -682,6 +754,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
+  textArea: {
+    minHeight: 86,
+    textAlignVertical: 'top',
+  },
   segmented: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -707,6 +783,33 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   selectTextGroup: { flex: 1, gap: 2 },
+  toggleRow: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    minHeight: 64,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  toggleTextGroup: { flex: 1, gap: 3 },
+  switchTrack: {
+    borderRadius: 14,
+    height: 28,
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+    width: 48,
+  },
+  switchThumb: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 11,
+    height: 22,
+    width: 22,
+  },
+  switchThumbOn: {
+    alignSelf: 'flex-end',
+  },
   selectValue: {
     fontFamily: fontFamilies.bodyMedium,
     fontSize: 14,
@@ -715,6 +818,58 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.35)',
     flex: 1,
     justifyContent: 'flex-end',
+  },
+  successScrim: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.34)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  successSheet: {
+    alignItems: 'center',
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    gap: 12,
+    padding: 22,
+    width: '100%',
+  },
+  successIcon: {
+    alignItems: 'center',
+    borderRadius: 28,
+    height: 56,
+    justifyContent: 'center',
+    width: 56,
+  },
+  successTitle: {
+    fontFamily: fontFamilies.displaySemibold,
+    fontSize: 22,
+    lineHeight: 28,
+    textAlign: 'center',
+  },
+  successSubtitle: {
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  successUrl: {
+    borderRadius: radius.md,
+    fontFamily: fontFamilies.bodyRegular,
+    fontSize: 12,
+    lineHeight: 17,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    textAlign: 'center',
+    width: '100%',
+  },
+  successButton: {
+    alignItems: 'center',
+    borderRadius: radius.md,
+    marginTop: 2,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    width: '100%',
   },
   optionSheet: {
     borderTopLeftRadius: 20,

@@ -21,8 +21,12 @@
       "usesAppleSignIn": true,
       "googleServicesFile": "./GoogleService-Info.plist",
       "associatedDomains": [
+        "applinks:cvx-share-dev.whagons.com",
+        "applinks:cvx-share.whagons.com",
         "applinks:whagons.com",
         "applinks:app.whagons.com",
+        "applinks:*.app.whagons.com",
+        "applinks:*.dev.whagons.com",
         "applinks:*.whagons.com"
       ],
       "infoPlist": {
@@ -55,6 +59,16 @@
           "data": [
             {
               "scheme": "https",
+              "host": "cvx-share-dev.whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
+              "host": "cvx-share.whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
               "host": "whagons.com",
               "pathPrefix": "/nfc/tap"
             },
@@ -71,6 +85,26 @@
             {
               "scheme": "https",
               "host": "app.whagons.com",
+              "pathPrefix": "/nfc/program"
+            },
+            {
+              "scheme": "https",
+              "host": "*.app.whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
+              "host": "*.app.whagons.com",
+              "pathPrefix": "/nfc/program"
+            },
+            {
+              "scheme": "https",
+              "host": "*.dev.whagons.com",
+              "pathPrefix": "/nfc/tap"
+            },
+            {
+              "scheme": "https",
+              "host": "*.dev.whagons.com",
               "pathPrefix": "/nfc/program"
             },
             {

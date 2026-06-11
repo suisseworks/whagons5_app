@@ -16,6 +16,8 @@ const sessionForm = {
   spotId: 'spot_1',
   priorityId: '',
   taskName: '  Minibar check  ',
+  description: '  Check fridge and restock  ',
+  startOnScan: true,
 };
 assert.equal(canSaveNfcManagerForm(sessionForm), true);
 assert.deepEqual(buildNfcManagerActionConfig(sessionForm), {
@@ -25,6 +27,8 @@ assert.deepEqual(buildNfcManagerActionConfig(sessionForm), {
   spotId: 'spot_1',
   priorityId: undefined,
   taskName: 'Minibar check',
+  description: 'Check fridge and restock',
+  startOnScan: true,
   assigneeMode: 'current_user',
 });
 assert.deepEqual(buildNfcManagerSavePayload(sessionForm, 'hotel'), {
@@ -38,9 +42,28 @@ assert.deepEqual(buildNfcManagerSavePayload(sessionForm, 'hotel'), {
     spotId: 'spot_1',
     priorityId: undefined,
     taskName: 'Minibar check',
+    description: 'Check fridge and restock',
+    startOnScan: true,
     assigneeMode: 'current_user',
   },
   executionMode: 'direct',
+});
+
+const templateOnlyForm = {
+  ...emptyNfcManagerForm,
+  templateId: 'template_1',
+};
+assert.equal(canSaveNfcManagerForm(templateOnlyForm), true);
+assert.deepEqual(buildNfcManagerActionConfig(templateOnlyForm), {
+  workspaceId: undefined,
+  categoryId: undefined,
+  templateId: 'template_1',
+  spotId: undefined,
+  priorityId: undefined,
+  taskName: undefined,
+  description: undefined,
+  startOnScan: false,
+  assigneeMode: 'none',
 });
 
 const linkedForm = {
@@ -81,11 +104,15 @@ const editForm = getNfcManagerFormFromTag({
     spotId: 'spot_2',
     priorityId: 'priority_2',
     taskName: 'Elevator check',
+    description: 'Monthly service pass',
+    startOnScan: true,
   },
 });
 assert.equal(editForm.label, 'Service elevator');
 assert.equal(editForm.executionMode, 'confirm');
 assert.equal(editForm.workspaceId, 'workspace_2');
 assert.equal(editForm.templateId, 'template_2');
+assert.equal(editForm.description, 'Monthly service pass');
+assert.equal(editForm.startOnScan, true);
 
 process.stdout.write('nfc manager tests passed\n');

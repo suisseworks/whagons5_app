@@ -21,6 +21,8 @@ export type NfcManagerFormState = {
   spotId: string;
   priorityId: string;
   taskName: string;
+  description: string;
+  startOnScan: boolean;
   url: string;
 };
 
@@ -36,6 +38,8 @@ export const emptyNfcManagerForm: NfcManagerFormState = {
   spotId: '',
   priorityId: '',
   taskName: '',
+  description: '',
+  startOnScan: false,
   url: '',
 };
 
@@ -49,13 +53,15 @@ export function buildNfcManagerActionConfig(form: NfcManagerFormState) {
   }
 
   return {
-    workspaceId: form.workspaceId,
+    workspaceId: form.workspaceId || undefined,
     categoryId: form.categoryId || undefined,
     templateId: form.templateId || undefined,
     spotId: form.spotId || undefined,
     priorityId: form.priorityId || undefined,
     taskName: form.taskName.trim() || undefined,
-    assigneeMode: 'current_user',
+    description: form.description.trim() || undefined,
+    startOnScan: form.startOnScan,
+    assigneeMode: form.startOnScan ? 'current_user' : 'none',
   };
 }
 
@@ -63,7 +69,7 @@ export function canSaveNfcManagerForm(form: NfcManagerFormState, saving = false)
   if (saving) return false;
   if (form.actionKind === 'linked_task_status') return !!form.taskId;
   if (form.actionKind === 'open_url') return !!form.url.trim();
-  return !!form.workspaceId;
+  return !!form.templateId || !!form.workspaceId;
 }
 
 export function getNfcManagerFormFromTag(tag: NfcManagerTagLike): NfcManagerFormState {
@@ -80,6 +86,8 @@ export function getNfcManagerFormFromTag(tag: NfcManagerTagLike): NfcManagerForm
     spotId: String(config.spotId ?? ''),
     priorityId: String(config.priorityId ?? ''),
     taskName: String(config.taskName ?? ''),
+    description: String(config.description ?? ''),
+    startOnScan: config.startOnScan === true || config.assigneeMode === 'current_user',
     url: String(config.url ?? ''),
   };
 }

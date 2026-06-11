@@ -55,8 +55,13 @@ export const AppNavigator: React.FC = () => {
   const authResetPendingRef = useRef(false);
   const backOnlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
+  const nfcBaseUrl = process.env.EXPO_PUBLIC_NFC_BASE_URL?.trim();
   const convexSiteUrl = process.env.EXPO_PUBLIC_CONVEX_SITE_URL?.trim();
-  const nfcBaseDomain = (process.env.EXPO_PUBLIC_NFC_BASE_DOMAIN?.trim() || 'whagons.com')
+  const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL?.trim() ?? '';
+  const inferredNfcBaseDomain = convexUrl.includes('-dev') || convexUrl.includes('dev.')
+    ? 'dev.whagons.com'
+    : 'app.whagons.com';
+  const nfcBaseDomain = (process.env.EXPO_PUBLIC_NFC_BASE_DOMAIN?.trim() || inferredNfcBaseDomain)
     .replace(/^https?:\/\//, '')
     .replace(/\/.*$/, '');
 
@@ -117,7 +122,7 @@ export const AppNavigator: React.FC = () => {
       return;
     }
 
-    if (!token && !hasNoTenants && currentRoute !== 'Login' && currentRoute !== 'Splash' && !authResetPendingRef.current) {
+    if (!token && !hasNoTenants && currentRoute !== 'Login' && currentRoute !== 'Splash' && currentRoute !== 'NfcTap' && !authResetPendingRef.current) {
       authResetPendingRef.current = true;
       InteractionManager.runAfterInteractions(() => {
         requestAnimationFrame(() => {
@@ -153,8 +158,14 @@ export const AppNavigator: React.FC = () => {
     const shareCandidates = [shareBaseUrl, convexSiteUrl].filter(
       (value): value is string => Boolean(value),
     );
+    const nfcCandidates = [nfcBaseUrl, shareBaseUrl, convexSiteUrl].filter(
+      (value): value is string => Boolean(value),
+    );
     if (nfcBaseDomain) {
-      prefixes.push(`https://${nfcBaseDomain}`, `https://app.${nfcBaseDomain}`, `https://*.${nfcBaseDomain}`);
+      prefixes.push(`https://${nfcBaseDomain}`, `https://*.${nfcBaseDomain}`);
+      if (nfcBaseDomain !== 'whagons.com') {
+        prefixes.push('https://whagons.com', 'https://app.whagons.com', 'https://*.whagons.com');
+      }
     }
 
     for (const candidate of shareCandidates) {
@@ -166,21 +177,41 @@ export const AppNavigator: React.FC = () => {
       } catch {}
     }
 
+    for (const candidate of nfcCandidates) {
+      try {
+        prefixes.push(new URL(candidate).origin);
+      } catch {}
+    }
+
     const normalizeIncomingUrl = (url: string) => {
       try {
         const parsed = new URL(url);
-        const isNfcTap = parsed.pathname.startsWith('/nfc/tap/');
+        const isNfcTap = parsed.pathname.startsWith('/nfc/tap');
         const isNfcProgram = parsed.pathname.startsWith('/nfc/program/');
         if (!isNfcTap && !isNfcProgram) return url;
 
-        const pathId = parsed.pathname.split('/').filter(Boolean).at(-1);
+        const pathSegments = parsed.pathname.split('/').filter(Boolean);
+        const pathId = isNfcTap
+          ? parsed.searchParams.get('uuid') || (pathSegments.length > 2 ? pathSegments.at(-1) : null)
+          : pathSegments.at(-1);
         if (!pathId) return url;
 
-        const suffix = `.${nfcBaseDomain}`;
-        const tenantId = parsed.hostname.endsWith(suffix)
-          ? parsed.hostname.slice(0, -suffix.length)
+        const domainCandidates = Array.from(new Set([nfcBaseDomain, 'app.whagons.com', 'whagons.com'].filter(Boolean)));
+        const tenantFromHost = domainCandidates.reduce<string | null>((found, domain) => {
+          if (found) return found;
+          const suffix = `.${domain}`;
+          return parsed.hostname.endsWith(suffix)
+            ? parsed.hostname.slice(0, -suffix.length)
+            : null;
+        }, null);
+        const queryTenant = parsed.searchParams.get('tenantId');
+        const reservedHostTenants = new Set(['app', 'www', 'cvx-share', 'cvx-share-dev']);
+        const normalizedHostTenant = tenantFromHost
+          && !reservedHostTenants.has(tenantFromHost)
+          && !tenantFromHost.startsWith('cvx-')
+          ? tenantFromHost
           : null;
-        const normalizedTenant = tenantId && tenantId !== 'app' && tenantId !== 'www' ? tenantId : null;
+        const normalizedTenant = queryTenant || normalizedHostTenant;
         const params = new URLSearchParams();
         if (normalizedTenant) params.set('tenantId', normalizedTenant);
         if (isNfcProgram) {
@@ -245,7 +276,7 @@ export const AppNavigator: React.FC = () => {
         },
       },
     };
-  }, [convexSiteUrl, nfcBaseDomain, shareBaseUrl]);
+  }, [convexSiteUrl, nfcBaseDomain, nfcBaseUrl, shareBaseUrl]);
 
   return (
     <NavigationContainer

@@ -3,22 +3,44 @@ export type NfcLinkedAction = 'open_task' | 'start_task' | 'complete_task';
 export type NfcExecutionMode = 'direct' | 'confirm';
 
 export function getNfcBaseDomain(): string {
-  return (process.env.EXPO_PUBLIC_NFC_BASE_DOMAIN?.trim() || 'whagons.com')
+  const explicit = process.env.EXPO_PUBLIC_NFC_BASE_DOMAIN?.trim();
+  const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL?.trim() ?? '';
+  const inferred = convexUrl.includes('-dev') || convexUrl.includes('dev.')
+    ? 'dev.whagons.com'
+    : 'app.whagons.com';
+  return (explicit || inferred)
     .replace(/^https?:\/\//, '')
     .replace(/\/.*$/, '');
 }
 
-export function getNfcTapUrl(uuid: string, tenantId?: string | null, baseDomain = getNfcBaseDomain()): string {
-  const safeUuid = encodeURIComponent(uuid);
-  const normalizedBase = baseDomain.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+export function getNfcBaseUrl(): string {
+  const explicit = process.env.EXPO_PUBLIC_NFC_BASE_URL?.trim();
+  const shareBaseUrl = process.env.EXPO_PUBLIC_TASK_SHARE_BASE_URL?.trim();
+  if (explicit) return explicit;
+  if (shareBaseUrl) return shareBaseUrl;
+  return `https://${getNfcBaseDomain()}`;
+}
+
+export function getNfcTapUrl(uuid: string, tenantId?: string | null, baseUrl = getNfcBaseUrl()): string {
   const normalizedTenant = tenantId?.trim();
-  const host = normalizedTenant ? `${normalizedTenant}.${normalizedBase}` : `app.${normalizedBase}`;
-  return `https://${host}/nfc/tap/${safeUuid}`;
+
+  try {
+    const url = new URL('/nfc/tap', baseUrl);
+    url.searchParams.set('uuid', uuid);
+    if (normalizedTenant) url.searchParams.set('tenantId', normalizedTenant);
+    return url.toString();
+  } catch {
+    const normalizedBase = baseUrl.replace(/\/+$/, '');
+    const query = new URLSearchParams();
+    query.set('uuid', uuid);
+    if (normalizedTenant) query.set('tenantId', normalizedTenant);
+    return `${normalizedBase}/nfc/tap?${query.toString()}`;
+  }
 }
 
 export function getNfcActionLabel(kind?: string): string {
-  if (kind === 'task_session_toggle') return 'Start/end task';
-  if (kind === 'linked_task_status') return 'Linked task status';
+  if (kind === 'task_session_toggle') return 'Create task';
+  if (kind === 'linked_task_status') return 'Existing task action';
   if (kind === 'open_url') return 'Open URL';
   return 'NFC action';
 }

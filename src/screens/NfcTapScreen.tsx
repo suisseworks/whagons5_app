@@ -11,39 +11,79 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CommonActions, RouteProp, useNavigation, useRoute } from '@react-navigation/native';
-import { useMutation } from 'convex/react';
+import { useConvexAuth, useMutation } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useNetwork } from '../context/NetworkContext';
+import { useTasks } from '../context/TaskContext';
 import { fontFamilies, radius } from '../config/designTokens';
-import { RootStackParamList } from '../models/types';
+import { RootStackParamList, TaskItem } from '../models/types';
 
 type NfcTapRoute = RouteProp<RootStackParamList, 'NfcTap'>;
-type FeedbackState = 'idle' | 'running' | 'success' | 'error';
+type FeedbackState = 'idle' | 'running' | 'success' | 'warning' | 'error';
+type SuccessTarget = { kind: 'task'; task: TaskItem } | { kind: 'external_url'; url: string } | null;
 
 function makeClientTapId() {
   return `mobile-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function formatDate(timestamp?: number | null) {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString();
+}
+
+function buildTaskItemFromNfcSummary(summary: any): TaskItem {
+  return {
+    id: summary?.pgId != null ? String(summary.pgId) : undefined,
+    convexId: summary?.id ?? undefined,
+    taskConvexId: summary?.id ?? null,
+    title: summary?.name ?? 'Untitled',
+    description: summary?.description ?? null,
+    spot: summary?.spotName ?? '',
+    spotId: summary?.spotPgId ?? summary?.spotId ?? null,
+    priority: summary?.priorityName ?? 'Medium',
+    priorityColor: summary?.priorityColor ?? null,
+    priorityId: summary?.priorityId ?? null,
+    status: summary?.currentStatusName ?? '',
+    statusColor: summary?.currentStatusColor ?? null,
+    statusId: summary?.currentStatusId ?? null,
+    workspaceId: summary?.workspacePgId ?? summary?.workspaceId ?? null,
+    assignees: [],
+    createdAt: formatDate(summary?.createdAt),
+    tags: [],
+  };
+}
+
 export const NfcTapScreen: React.FC = () => {
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const route = useRoute<NfcTapRoute>();
   const { colors, primaryColor, isDarkMode } = useTheme();
   const { token, isLoading: authLoading, subdomain, selectTenant } = useAuth();
+  const { isAuthenticated: convexAuthenticated, isLoading: convexAuthLoading } = useConvexAuth();
   const { isOnline } = useNetwork();
+  const { unfilteredTasks } = useTasks();
   const executeTap = useMutation(api.nfc.executeTap);
   const [feedback, setFeedback] = useState<FeedbackState>('idle');
   const [message, setMessage] = useState('Preparing NFC action...');
   const [detail, setDetail] = useState<string | null>(null);
+  const [successTarget, setSuccessTarget] = useState<SuccessTarget>(null);
   const startedRef = useRef(false);
+  const tenantSelectionRef = useRef(false);
+  const authRetryCountRef = useRef(0);
+  const authWaitStartedAtRef = useRef<number | null>(null);
   const { uuid, tenantId: tenantFromLink } = route.params;
 
   const targetTenantId = tenantFromLink || subdomain;
   const secondaryText = isDarkMode ? 'rgba(255,255,255,0.66)' : '#667085';
   const borderColor = isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)';
   const surfaceColor = isDarkMode ? 'rgba(255,255,255,0.06)' : '#FFFFFF';
-  const accentColor = feedback === 'error' ? '#DC2626' : feedback === 'success' ? '#16A34A' : primaryColor;
+  const accentColor = feedback === 'error' ? '#DC2626'
+    : feedback === 'warning' ? '#D97706'
+    : feedback === 'success' ? '#16A34A'
+      : primaryColor;
 
   const deviceData = useMemo(
     () => ({
@@ -57,6 +97,30 @@ export const NfcTapScreen: React.FC = () => {
   const openMain = useCallback(() => {
     navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }));
   }, [navigation]);
+
+  const openTask = useCallback((task: TaskItem) => {
+    navigation.dispatch(
+      CommonActions.reset({
+        index: 1,
+        routes: [
+          { name: 'Main' },
+          { name: 'TaskDetail', params: { task } },
+        ],
+      }),
+    );
+  }, [navigation]);
+
+  const openSuccessTarget = useCallback(() => {
+    if (successTarget?.kind === 'task') {
+      openTask(successTarget.task);
+      return;
+    }
+    if (successTarget?.kind === 'external_url') {
+      Linking.openURL(successTarget.url).catch(() => undefined);
+      return;
+    }
+    openMain();
+  }, [openMain, openTask, successTarget]);
 
   const runTap = useCallback(async () => {
     if (!uuid) {
@@ -73,12 +137,27 @@ export const NfcTapScreen: React.FC = () => {
       return;
     }
 
-    if (!token) {
+    if (!token || !convexAuthenticated) {
+      const now = Date.now();
+      authWaitStartedAtRef.current ??= now;
+      if (now - authWaitStartedAtRef.current < 10000) {
+        setFeedback('running');
+        setMessage('Finishing sign-in...');
+        setDetail('Whagons is restoring your app session, then it will run the NFC action.');
+        setTimeout(() => {
+          startedRef.current = false;
+          void runTap();
+        }, 700);
+        return;
+      }
+
       setFeedback('error');
       setMessage('Sign in to run this NFC action.');
       setDetail('Whagons needs to verify your tenant and permissions first.');
       return;
     }
+
+    authWaitStartedAtRef.current = null;
 
     if (!targetTenantId) {
       setFeedback('error');
@@ -89,12 +168,9 @@ export const NfcTapScreen: React.FC = () => {
     setFeedback('running');
     setMessage('Running NFC action...');
     setDetail(null);
+    setSuccessTarget(null);
 
     try {
-      if (tenantFromLink && subdomain !== tenantFromLink) {
-        await selectTenant(tenantFromLink);
-      }
-
       const result = await executeTap({
         tenantId: targetTenantId,
         uuid,
@@ -110,29 +186,82 @@ export const NfcTapScreen: React.FC = () => {
         return;
       }
 
-      setFeedback('success');
+      setFeedback(result.result === 'blocked' ? 'warning' : 'success');
       setMessage(result.message || 'NFC action completed.');
-      setDetail(result.action === 'finished' ? 'Task session finished.' : result.action === 'started' ? 'Task session started.' : null);
+      setDetail(result.detail ?? (result.result === 'blocked' ? 'Open the task to review the pending approval.'
+        : result.result === 'created' ? 'Task created.'
+        : result.action === 'finished' || result.result === 'finished' ? 'Task session finished.'
+          : result.action === 'started' || result.result === 'started' ? 'Task session started.'
+            : null));
       Vibration.vibrate(60);
 
+      const resultTaskId = result.taskId ? String(result.taskId) : null;
+      const matchedTask = resultTaskId
+        ? unfilteredTasks.find((candidate) => (
+            candidate.convexId === resultTaskId
+            || candidate.taskConvexId === resultTaskId
+            || String(candidate.id) === resultTaskId
+          ))
+        : null;
+      const taskTarget = matchedTask ?? (result.task ? buildTaskItemFromNfcSummary(result.task) : null);
+      if (taskTarget) {
+        setSuccessTarget({ kind: 'task', task: taskTarget });
+        setTimeout(() => openTask(taskTarget), 650);
+        return;
+      }
+
       if (result.externalUrl) {
+        setSuccessTarget({ kind: 'external_url', url: result.externalUrl });
         setTimeout(() => {
           Linking.openURL(result.externalUrl).catch(() => undefined);
         }, 450);
       }
     } catch (error: any) {
+      const errorMessage = error?.message || '';
+      if (errorMessage.includes('Not authenticated') && authRetryCountRef.current < 2) {
+        authRetryCountRef.current += 1;
+        setMessage('Finishing sign-in...');
+        setDetail('Whagons is restoring your app session, then it will retry the tap.');
+        setTimeout(() => {
+          startedRef.current = false;
+          void runTap();
+        }, 700);
+        return;
+      }
+
       setFeedback('error');
-      setMessage(error?.message || 'Unable to run NFC action.');
+      setMessage(errorMessage || 'Unable to run NFC action.');
       setDetail('Whagons could not complete this tap.');
       Vibration.vibrate([0, 80, 60, 80]);
     }
-  }, [deviceData, executeTap, isOnline, selectTenant, subdomain, targetTenantId, tenantFromLink, token, uuid]);
+  }, [convexAuthenticated, deviceData, executeTap, isOnline, openTask, targetTenantId, token, unfilteredTasks, uuid]);
 
   useEffect(() => {
-    if (authLoading || startedRef.current) return;
+    if (authLoading || convexAuthLoading || startedRef.current) return;
+
+    if (tenantFromLink && subdomain !== tenantFromLink) {
+      if (tenantSelectionRef.current) return;
+      tenantSelectionRef.current = true;
+      setFeedback('running');
+      setMessage('Opening tenant...');
+      setDetail('Whagons is switching to the tenant stored on this NFC tag.');
+      selectTenant(tenantFromLink)
+        .catch((error: any) => {
+          startedRef.current = true;
+          setFeedback('error');
+          setMessage(error?.message || 'Unable to open this tenant.');
+          setDetail('Select the tenant in Whagons, then scan the tag again.');
+          Vibration.vibrate([0, 80, 60, 80]);
+        })
+        .finally(() => {
+          tenantSelectionRef.current = false;
+        });
+      return;
+    }
+
     startedRef.current = true;
     void runTap();
-  }, [authLoading, runTap]);
+  }, [authLoading, convexAuthLoading, runTap, selectTenant, subdomain, tenantFromLink]);
 
   const showSpinner = feedback === 'idle' || feedback === 'running';
 
@@ -168,9 +297,11 @@ export const NfcTapScreen: React.FC = () => {
             </TouchableOpacity>
           ) : null}
 
-          {feedback === 'success' ? (
-            <TouchableOpacity style={[styles.button, { backgroundColor: primaryColor }]} onPress={openMain}>
-              <Text style={styles.buttonText}>Open Whagons</Text>
+          {feedback === 'success' || feedback === 'warning' ? (
+            <TouchableOpacity style={[styles.button, { backgroundColor: primaryColor }]} onPress={openSuccessTarget}>
+              <Text style={styles.buttonText}>
+                {successTarget?.kind === 'task' ? 'Open task' : successTarget?.kind === 'external_url' ? 'Open link' : 'Open Whagons'}
+              </Text>
             </TouchableOpacity>
           ) : null}
         </View>
