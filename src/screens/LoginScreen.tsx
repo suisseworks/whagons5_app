@@ -24,9 +24,11 @@ import { useNavigation, CommonActions } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../models/types';
 import { useAuth } from '../context/AuthContext';
+import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
 import Svg, { Path, Rect, G, Defs, ClipPath } from 'react-native-svg';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
+import { formatTenantName, parseInvitationQrPayload } from '../utils/invitationQr';
 
 type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
@@ -50,7 +52,7 @@ const GoogleLogo = () => (
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
   const { width } = useWindowDimensions();
-  const { signInWithGoogle, signInWithApple, signInWithEmail, token, pendingTenants, hasNoTenants } = useAuth();
+  const { signInWithGoogle, signInWithApple, signInWithEmail, token, pendingTenants, hasNoTenants, queueInvitation, pendingInvitation, acceptingInvitation } = useAuth();
   const { t } = useLanguage();
 
   const [email, setEmail] = useState('');
@@ -61,6 +63,7 @@ export const LoginScreen: React.FC = () => {
   const [isAppleLoading, setIsAppleLoading] = useState(false);
   const [isAppleAvailable, setIsAppleAvailable] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [scannerVisible, setScannerVisible] = useState(false);
 
   // Animations
   const logoFade = useRef(new Animated.Value(0)).current;
@@ -241,6 +244,20 @@ export const LoginScreen: React.FC = () => {
     }
   };
 
+  const handleInvitationScan = (value: string) => {
+    const invitation = parseInvitationQrPayload(value);
+    if (!invitation) {
+      Alert.alert(t('invitationQr.invalidTitle'), t('invitationQr.invalidMessage'));
+      return;
+    }
+
+    queueInvitation(invitation);
+    Alert.alert(
+      t('invitationQr.savedTitle'),
+      t('invitationQr.signInToAcceptMessage', { tenant: formatTenantName(invitation.tenantId) }),
+    );
+  };
+
   const loginForm = (
     <Animated.View
       style={[
@@ -359,6 +376,20 @@ export const LoginScreen: React.FC = () => {
           )}
         </View>
       )}
+
+      <TouchableOpacity
+        style={[styles.scanInviteButton, (anyLoading || acceptingInvitation) && styles.loginButtonDisabled]}
+        onPress={() => setScannerVisible(true)}
+        disabled={anyLoading || acceptingInvitation}
+        activeOpacity={0.85}
+      >
+        <MaterialIcons name="qr-code-scanner" size={20} color="#1E2321" />
+        <Text style={styles.scanInviteButtonText}>
+          {pendingInvitation
+            ? t('invitationQr.pendingInviteButton', { tenant: formatTenantName(pendingInvitation.tenantId) })
+            : t('invitationQr.scanInviteButton')}
+        </Text>
+      </TouchableOpacity>
     </Animated.View>
   );
 
@@ -376,6 +407,14 @@ export const LoginScreen: React.FC = () => {
             {loginForm}
           </View>
         </View>
+        <BarcodeScannerModal
+          visible={scannerVisible}
+          onClose={() => setScannerVisible(false)}
+          onScan={handleInvitationScan}
+          title={t('invitationQr.scannerTitle')}
+          hint={t('invitationQr.scannerHint')}
+          manualPlaceholder={t('invitationQr.manualPlaceholder')}
+        />
       </SafeAreaView>
     );
   }
@@ -420,6 +459,14 @@ export const LoginScreen: React.FC = () => {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+      <BarcodeScannerModal
+        visible={scannerVisible}
+        onClose={() => setScannerVisible(false)}
+        onScan={handleInvitationScan}
+        title={t('invitationQr.scannerTitle')}
+        hint={t('invitationQr.scannerHint')}
+        manualPlaceholder={t('invitationQr.manualPlaceholder')}
+      />
     </SafeAreaView>
   );
 };
@@ -593,6 +640,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#000000',
+  },
+  scanInviteButton: {
+    marginTop: 12,
+    height: 50,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(30, 35, 33, 0.14)',
+    backgroundColor: '#F4EFE8',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+  },
+  scanInviteButtonText: {
+    marginLeft: 8,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
+    textAlign: 'center',
   },
 
   // ---- Footer ----

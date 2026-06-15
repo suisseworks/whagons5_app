@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
   StyleSheet,
   Text,
@@ -14,18 +15,41 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { RootStackParamList } from '../models/types';
 import { useAuth } from '../context/AuthContext';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
+import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
+import { formatTenantName, parseInvitationQrPayload } from '../utils/invitationQr';
+import { useLanguage } from '../context/LanguageContext';
 
 type NavProp = NativeStackNavigationProp<RootStackParamList, 'NoTenants'>;
 
 export const NoTenantsScreen: React.FC = () => {
   const navigation = useNavigation<NavProp>();
-  const { logout } = useAuth();
+  const { logout, acceptInvitation, acceptingInvitation } = useAuth();
+  const { t } = useLanguage();
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [scannerVisible, setScannerVisible] = useState(false);
 
   const handleSignOut = async () => {
     setIsSigningOut(true);
     await logout();
     navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Login' }] }));
+  };
+
+  const handleInvitationScan = async (value: string) => {
+    const invitation = parseInvitationQrPayload(value);
+    if (!invitation) {
+      Alert.alert(t('invitationQr.invalidTitle'), t('invitationQr.invalidMessage'));
+      return;
+    }
+
+    try {
+      await acceptInvitation(invitation);
+      navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }));
+    } catch (err: any) {
+      Alert.alert(
+        t('common.error'),
+        err?.message || t('invitationQr.acceptFailedMessage', { tenant: formatTenantName(invitation.tenantId) }),
+      );
+    }
   };
 
   return (
@@ -37,24 +61,47 @@ export const NoTenantsScreen: React.FC = () => {
         </View>
         <Text style={styles.title}>No workspaces found</Text>
         <Text style={styles.body}>
-          Your sign-in is valid, but this account is not currently attached to any Whagons workspace. Ask an admin to invite you again, then reopen the app.
+          Your sign-in is valid, but this account is not currently attached to any Whagons workspace. Scan an invitation QR code or ask an admin to invite you again.
         </Text>
         <TouchableOpacity
-          style={[styles.primaryButton, isSigningOut && styles.disabledButton]}
-          onPress={handleSignOut}
-          disabled={isSigningOut}
+          style={[styles.primaryButton, (isSigningOut || acceptingInvitation) && styles.disabledButton]}
+          onPress={() => setScannerVisible(true)}
+          disabled={acceptingInvitation || isSigningOut}
           activeOpacity={0.85}
         >
-          {isSigningOut ? (
+          {acceptingInvitation ? (
             <ActivityIndicator color="#FFFFFF" size="small" />
           ) : (
             <>
-              <MaterialIcons name="logout" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryButtonText}>Sign out</Text>
+              <MaterialIcons name="qr-code-scanner" size={18} color="#FFFFFF" />
+              <Text style={styles.primaryButtonText}>{t('invitationQr.scanInviteButton')}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.secondaryButton, isSigningOut && styles.disabledButton]}
+          onPress={handleSignOut}
+          disabled={isSigningOut || acceptingInvitation}
+          activeOpacity={0.85}
+        >
+          {isSigningOut ? (
+            <ActivityIndicator color="#6B6F66" size="small" />
+          ) : (
+            <>
+              <MaterialIcons name="logout" size={18} color="#6B6F66" />
+              <Text style={styles.secondaryButtonText}>Sign out</Text>
             </>
           )}
         </TouchableOpacity>
       </View>
+      <BarcodeScannerModal
+        visible={scannerVisible}
+        onClose={() => setScannerVisible(false)}
+        onScan={handleInvitationScan}
+        title={t('invitationQr.scannerTitle')}
+        hint={t('invitationQr.scannerHint')}
+        manualPlaceholder={t('invitationQr.manualPlaceholder')}
+      />
     </SafeAreaView>
   );
 };
@@ -114,11 +161,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  secondaryButton: {
+    minHeight: 46,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.xl,
+    marginTop: spacing.sm,
+    backgroundColor: '#F8F5EF',
+    borderWidth: 1,
+    borderColor: '#EEE8E0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   disabledButton: {
     opacity: 0.7,
   },
   primaryButtonText: {
     color: '#FFFFFF',
+    fontSize: fontSizes.md,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  secondaryButtonText: {
+    color: '#6B6F66',
     fontSize: fontSizes.md,
     fontFamily: fontFamilies.bodySemibold,
   },

@@ -51,6 +51,9 @@ interface BarcodeScannerModalProps {
   visible: boolean;
   onClose: () => void;
   onScan: (value: string) => void;
+  title?: string;
+  hint?: string;
+  manualPlaceholder?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -60,6 +63,9 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
   visible,
   onClose,
   onScan,
+  title,
+  hint,
+  manualPlaceholder,
 }) => {
   const { t } = useLanguage();
   const [cameraReady, setCameraReady] = useState(false);
@@ -157,7 +163,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
               style={styles.manualInput}
               value={manualValue}
               onChangeText={setManualValue}
-              placeholder={t('component.barcodeScanner.enterBarcodePlaceholder')}
+              placeholder={manualPlaceholder || t('component.barcodeScanner.enterBarcodePlaceholder')}
               placeholderTextColor="rgba(255,255,255,0.4)"
               autoFocus
               onSubmitEditing={handleManualSubmit}
@@ -254,7 +260,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
           <TouchableOpacity style={styles.closeButton} onPress={handleClose}>
             <MaterialIcons name="close" size={28} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>{t('component.barcodeScanner.title')}</Text>
+          <Text style={styles.headerTitle}>{title || t('component.barcodeScanner.title')}</Text>
           <View style={{ width: 44 }} />
         </View>
 
@@ -262,7 +268,7 @@ export const BarcodeScannerModal: React.FC<BarcodeScannerModalProps> = ({
         {cameraAvailable && permissionGranted && cameraReady && (
           <View style={styles.hintContainer}>
             <Text style={styles.hintText}>
-              {t('component.barcodeScanner.hint')}
+              {hint || t('component.barcodeScanner.hint')}
             </Text>
           </View>
         )}

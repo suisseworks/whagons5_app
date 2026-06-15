@@ -8,6 +8,7 @@ import {
   Image,
   FlatList,
   InteractionManager,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -18,6 +19,8 @@ import { RootStackParamList } from '../models/types';
 import { useAuth } from '../context/AuthContext';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
+import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
+import { formatTenantName as formatInvitationTenantName, parseInvitationQrPayload } from '../utils/invitationQr';
 
 type NavProp = NativeStackNavigationProp<RootStackParamList, 'TenantSelect'>;
 type RoutePropType = RouteProp<RootStackParamList, 'TenantSelect'>;
@@ -25,12 +28,13 @@ type RoutePropType = RouteProp<RootStackParamList, 'TenantSelect'>;
 export const TenantSelectScreen: React.FC = () => {
   const navigation = useNavigation<NavProp>();
   const route = useRoute<RoutePropType>();
-  const { selectTenant, logout } = useAuth();
+  const { selectTenant, logout, acceptInvitation, acceptingInvitation } = useAuth();
   const { t } = useLanguage();
 
   const { tenants, firebaseIdToken } = route.params;
   const [selecting, setSelecting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [scannerVisible, setScannerVisible] = useState(false);
 
   const resetToLogin = () => {
     InteractionManager.runAfterInteractions(() => {
@@ -54,6 +58,26 @@ export const TenantSelectScreen: React.FC = () => {
       );
     } catch (err: any) {
       setError(err?.message || t('tenantSelect.connectionError'));
+      setSelecting(null);
+    }
+  };
+
+  const handleInvitationScan = async (value: string) => {
+    const invitation = parseInvitationQrPayload(value);
+    if (!invitation) {
+      Alert.alert(t('invitationQr.invalidTitle'), t('invitationQr.invalidMessage'));
+      return;
+    }
+
+    setSelecting(invitation.tenantId);
+    setError(null);
+    try {
+      await acceptInvitation(invitation);
+      navigation.dispatch(
+        CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }),
+      );
+    } catch (err: any) {
+      setError(err?.message || t('invitationQr.acceptFailedMessage', { tenant: formatInvitationTenantName(invitation.tenantId) }));
       setSelecting(null);
     }
   };
@@ -137,6 +161,19 @@ export const TenantSelectScreen: React.FC = () => {
       {/* Footer */}
       <View style={styles.footer}>
         <TouchableOpacity
+          style={[styles.scanButton, acceptingInvitation && styles.scanButtonDisabled]}
+          onPress={() => setScannerVisible(true)}
+          disabled={acceptingInvitation || selecting !== null}
+          activeOpacity={0.85}
+        >
+          {acceptingInvitation ? (
+            <ActivityIndicator color="#1E2321" size="small" />
+          ) : (
+            <MaterialIcons name="qr-code-scanner" size={18} color="#1E2321" />
+          )}
+          <Text style={styles.scanButtonText}>{t('invitationQr.scanInviteButton')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
           style={styles.backButton}
           onPress={async () => {
             await logout();
@@ -147,6 +184,15 @@ export const TenantSelectScreen: React.FC = () => {
           <Text style={styles.backText}>{t('tenantSelect.backToSignIn')}</Text>
         </TouchableOpacity>
       </View>
+
+      <BarcodeScannerModal
+        visible={scannerVisible}
+        onClose={() => setScannerVisible(false)}
+        onScan={handleInvitationScan}
+        title={t('invitationQr.scannerTitle')}
+        hint={t('invitationQr.scannerHint')}
+        manualPlaceholder={t('invitationQr.manualPlaceholder')}
+      />
     </SafeAreaView>
   );
 };
@@ -251,6 +297,26 @@ const styles = StyleSheet.create({
   footer: {
     paddingVertical: 16,
     alignItems: 'center',
+  },
+  scanButton: {
+    minHeight: 46,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(30, 35, 33, 0.12)',
+    backgroundColor: '#F4EFE8',
+    paddingHorizontal: 18,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  scanButtonDisabled: {
+    opacity: 0.65,
+  },
+  scanButtonText: {
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodySemibold,
+    color: '#1E2321',
   },
   backButton: {
     flexDirection: 'row',

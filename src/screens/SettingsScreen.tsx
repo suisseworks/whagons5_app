@@ -38,6 +38,8 @@ import { themeMetadata } from '../config/themes';
 import { HIDE_SHARED_WITH_ME_STORAGE_KEY } from '../config/storageKeys';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
 import { sendPasswordReset } from '../firebase/authService';
+import { BarcodeScannerModal } from '../components/BarcodeScannerModal';
+import { formatTenantName, parseInvitationQrPayload } from '../utils/invitationQr';
 
 export const GPS_CAPTURE_STORAGE_KEY = '@whagons/gps_capture_enabled';
 const PRIVACY_POLICY_URL = 'https://whagons.com/en/privacy';
@@ -91,7 +93,7 @@ export const SettingsScreen: React.FC = () => {
   const navigation = useNavigation<SettingsNavProp>();
   const { colors, primaryColor, isDarkMode, toggleDarkMode, themeName } = useTheme();
   const { preferences, updatePreferences, hasPermission } = useNotifications();
-  const { user, logout, subdomain, switchTenant } = useAuth();
+  const { user, logout, subdomain, switchTenant, acceptInvitation, acceptingInvitation } = useAuth();
   const { forceResync } = useData();
   const { pendingCount, failedCount } = useMutationQueue();
   const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
@@ -111,6 +113,7 @@ export const SettingsScreen: React.FC = () => {
   const [releaseNotesModalVisible, setReleaseNotesModalVisible] = useState(false);
   const [gpsCaptureEnabled, setGpsCaptureEnabled] = useState(false);
   const [hideSharedWithMe, setHideSharedWithMe] = useState(false);
+  const [invitationScannerVisible, setInvitationScannerVisible] = useState(false);
 
   useEffect(() => {
     AsyncStorage.multiGet([GPS_CAPTURE_STORAGE_KEY, HIDE_SHARED_WITH_ME_STORAGE_KEY]).then((entries) => {
@@ -268,6 +271,28 @@ export const SettingsScreen: React.FC = () => {
 
   const handleSwitchTenant = () => {
     setSwitchTenantModalVisible(true);
+  };
+
+  const handleInvitationScan = async (value: string) => {
+    const invitation = parseInvitationQrPayload(value);
+    if (!invitation) {
+      Alert.alert(t('invitationQr.invalidTitle'), t('invitationQr.invalidMessage'));
+      return;
+    }
+
+    try {
+      await acceptInvitation(invitation);
+      Alert.alert(
+        t('invitationQr.acceptedTitle'),
+        t('invitationQr.acceptedMessage', { tenant: formatTenantName(invitation.tenantId) }),
+      );
+      navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Main' }] }));
+    } catch (err: any) {
+      Alert.alert(
+        t('common.error'),
+        err?.message || t('invitationQr.acceptFailedMessage', { tenant: formatTenantName(invitation.tenantId) }),
+      );
+    }
   };
 
   const showLogoutDialog = () => {
@@ -439,6 +464,20 @@ export const SettingsScreen: React.FC = () => {
               )
             }
             onPress={handleSwitchTenant}
+          />
+          <View style={styles.divider} />
+          <ListTile
+            icon="qr-code-scanner"
+            title={t('invitationQr.scanInviteButton')}
+            subtitle={t('invitationQr.settingsSubtitle')}
+            trailing={
+              acceptingInvitation ? (
+                <ActivityIndicator size="small" color={primaryColor} />
+              ) : (
+                <MaterialIcons name="chevron-right" size={20} color="#BDBDBD" />
+              )
+            }
+            onPress={() => setInvitationScannerVisible(true)}
           />
         </View>
 
@@ -634,6 +673,15 @@ export const SettingsScreen: React.FC = () => {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      <BarcodeScannerModal
+        visible={invitationScannerVisible}
+        onClose={() => setInvitationScannerVisible(false)}
+        onScan={handleInvitationScan}
+        title={t('invitationQr.scannerTitle')}
+        hint={t('invitationQr.scannerHint')}
+        manualPlaceholder={t('invitationQr.manualPlaceholder')}
+      />
 
       <Modal
         visible={languageModalVisible}

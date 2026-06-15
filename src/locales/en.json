@@ -71,6 +71,21 @@
     "backToSignIn": "Back to sign in",
     "connectionError": "Failed to connect to workspace"
   },
+  "invitationQr": {
+    "scanInviteButton": "Scan invitation QR",
+    "pendingInviteButton": "Invitation ready for %{tenant}",
+    "scannerTitle": "Scan invitation",
+    "scannerHint": "Point your camera at a Whagons invitation QR code.",
+    "manualPlaceholder": "Paste invitation link",
+    "invalidTitle": "Invitation not recognized",
+    "invalidMessage": "This QR code does not look like a Whagons invitation.",
+    "savedTitle": "Invitation saved",
+    "signInToAcceptMessage": "Sign in to accept the invitation for %{tenant}.",
+    "acceptedTitle": "Invitation accepted",
+    "acceptedMessage": "You're now connected to %{tenant}.",
+    "acceptFailedMessage": "We couldn't accept the invitation for %{tenant}.",
+    "settingsSubtitle": "Join another workspace with an invitation code"
+  },
   "splash": {
     "brandName": "Whagons",
     "tagline": "Operational Intelligence in Action."

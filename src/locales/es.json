@@ -71,6 +71,21 @@
     "backToSignIn": "Volver a iniciar sesión",
     "connectionError": "Error al conectar con el espacio de trabajo"
   },
+  "invitationQr": {
+    "scanInviteButton": "Escanear QR de invitación",
+    "pendingInviteButton": "Invitación lista para %{tenant}",
+    "scannerTitle": "Escanear invitación",
+    "scannerHint": "Apunta la cámara a un código QR de invitación de Whagons.",
+    "manualPlaceholder": "Pegar enlace de invitación",
+    "invalidTitle": "Invitación no reconocida",
+    "invalidMessage": "Este código QR no parece ser una invitación de Whagons.",
+    "savedTitle": "Invitación guardada",
+    "signInToAcceptMessage": "Inicia sesión para aceptar la invitación de %{tenant}.",
+    "acceptedTitle": "Invitación aceptada",
+    "acceptedMessage": "Ahora estás conectado a %{tenant}.",
+    "acceptFailedMessage": "No pudimos aceptar la invitación de %{tenant}.",
+    "settingsSubtitle": "Únete a otro espacio con un código de invitación"
+  },
   "splash": {
     "brandName": "Whagons",
     "tagline": "Inteligencia Operacional en Acción."

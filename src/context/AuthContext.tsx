@@ -34,6 +34,8 @@ import { getFCMToken } from '../firebase/notificationService';
 import { useNetwork } from './NetworkContext';
 import * as DB from '../store/database';
 import { pauseMutationQueueReplay, resumeMutationQueueReplay } from '../store/mutationQueueRuntime';
+import type { InvitationQrPayload } from '../utils/invitationQr';
+import { convex } from '../providers/ConvexClientProvider';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,9 +79,15 @@ interface AuthContextType extends AuthState {
   signInWithEmail: (params: { email: string; password: string }) => Promise<void>;
   selectTenant: (tenant: string, firebaseIdToken?: string) => Promise<void>;
   switchTenant: () => Promise<{ tenants: string[]; firebaseIdToken: string }>;
+  queueInvitation: (invitation: InvitationQrPayload) => void;
+  acceptInvitation: (invitation: InvitationQrPayload) => Promise<{ ok: true; tenantId: string } | { ok: false; requiresAuth: true }>;
   logout: () => Promise<void>;
   /** Non-null when user has multiple tenants and needs to pick one */
   pendingTenants: string[] | null;
+  /** Invitation scanned before the user finished signing in */
+  pendingInvitation: InvitationQrPayload | null;
+  /** True while a scanned invitation is being accepted */
+  acceptingInvitation: boolean;
   /** Authenticated in Firebase, but not attached to any Convex tenant */
   hasNoTenants: boolean;
 }
@@ -113,11 +121,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [tenantResolved, setTenantResolved] = useState(false);
   const [cachedUser, setCachedUser] = useState<UserInfo | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pendingInvitation, setPendingInvitation] = useState<InvitationQrPayload | null>(null);
+  const [acceptingInvitation, setAcceptingInvitation] = useState(false);
   const offlineResolvedRef = useRef(false);
   const loggingOutRef = useRef(false);
+  const acceptingInvitationRef = useRef(false);
   const lastAuthDebugRef = useRef('');
   const unregisterPushToken = useMutation(api.pushNotificationHelpers.unregisterToken);
   const claimCurrentUserByEmail = useMutation(api.users.claimCurrentUserByEmail);
+  const upsertUser = useMutation(api.users.upsert);
+  const acceptTenantInvitation = useMutation(api.tenants.acceptInvitation);
 
   // Query tenants for the authenticated user
   const myTenants = useQuery(
@@ -171,6 +184,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ------------------------------------------------------------------
   useEffect(() => {
     if (isLoggingOut || loggingOutRef.current) return;
+    if (pendingInvitation || acceptingInvitation) return;
     if (tenantResolved) return;
     if (!isAuthenticated || !myTenants) {
       console.log('[AUTH] Tenant auto-select waiting:', {
@@ -246,7 +260,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => {
       cancelled = true;
     };
-  }, [claimCurrentUserByEmail, isAuthenticated, isLoggingOut, myTenants, tenantId, tenantResolved]);
+  }, [acceptingInvitation, claimCurrentUserByEmail, isAuthenticated, isLoggingOut, myTenants, pendingInvitation, tenantId, tenantResolved]);
 
   useEffect(() => {
     if (!isAuthenticated && loggingOutRef.current) {
@@ -314,6 +328,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       : (
           convexAuthLoading ||
           isRestoringTenant ||
+          acceptingInvitation ||
           (isAuthenticated && !myTenants) ||
           (isAuthenticated && myTenants && !tenantResolved) ||
           (isAuthenticated && !!tenantId && convexUser === undefined)
@@ -347,13 +362,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       cachedUser: cachedUser ? 'present' : 'null',
       token,
       pendingTenants: summarizeTenants(pendingTenants),
+      pendingInvitation: pendingInvitation ? pendingInvitation.tenantId : null,
+      acceptingInvitation,
       hasNoTenants,
       isLoading,
     });
     if (snapshot === lastAuthDebugRef.current) return;
     lastAuthDebugRef.current = snapshot;
     console.log('[AUTH] State snapshot:', JSON.parse(snapshot));
-  }, [cachedUser, convexAuthLoading, convexUser, hasNoTenants, isAuthenticated, isLoading, isLoggingOut, isOnline, isRestoringTenant, myTenants, pendingTenants, tenantId, tenantResolved, token]);
+  }, [acceptingInvitation, cachedUser, convexAuthLoading, convexUser, hasNoTenants, isAuthenticated, isLoading, isLoggingOut, isOnline, isRestoringTenant, myTenants, pendingInvitation, pendingTenants, tenantId, tenantResolved, token]);
 
   // ------------------------------------------------------------------
   // Google Sign-In
@@ -403,6 +420,91 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     [],
   );
 
+  const queueInvitation = useCallback((invitation: InvitationQrPayload) => {
+    setPendingInvitation(invitation);
+    setHasNoTenants(false);
+    setTenantResolved(false);
+  }, []);
+
+  const acceptInvitation = useCallback(
+    async (invitation: InvitationQrPayload): Promise<{ ok: true; tenantId: string } | { ok: false; requiresAuth: true }> => {
+      const firebaseUser = getCurrentUser();
+      if (!firebaseUser) {
+        queueInvitation(invitation);
+        return { ok: false, requiresAuth: true };
+      }
+
+      if (acceptingInvitationRef.current) {
+        throw new Error('An invitation is already being accepted');
+      }
+
+      acceptingInvitationRef.current = true;
+      setAcceptingInvitation(true);
+      setHasNoTenants(false);
+
+      try {
+        const tenant = invitation.tenantId.trim();
+        const token = invitation.invitationToken.trim();
+        if (!tenant || !token) {
+          throw new Error('This invitation QR code is missing tenant information.');
+        }
+
+        const invitationDoc = await convex.query(api.tenants.getInvitationByToken, { token });
+        if (!invitationDoc || invitationDoc.tenantId !== tenant) {
+          throw new Error('This invitation is invalid or has expired.');
+        }
+
+        await upsertUser({
+          tenantId: tenant,
+          name: firebaseUser.displayName || firebaseUser.email || '',
+          email: firebaseUser.email || '',
+          urlPicture: firebaseUser.photoURL || undefined,
+        });
+
+        await acceptTenantInvitation({
+          tenantId: tenant,
+          invitationToken: token,
+        });
+
+        resumeMutationQueueReplay();
+        setTenantId(tenant);
+        setPendingTenants(null);
+        setPendingInvitation(null);
+        setHasNoTenants(false);
+        setCachedUser(null);
+        await AsyncStorage.setItem(STORAGE_KEY_SUBDOMAIN, tenant);
+        await AsyncStorage.removeItem(STORAGE_KEY_CACHED_USER);
+        setTenantResolved(true);
+        return { ok: true, tenantId: tenant };
+      } finally {
+        acceptingInvitationRef.current = false;
+        setAcceptingInvitation(false);
+      }
+    },
+    [acceptTenantInvitation, queueInvitation, upsertUser],
+  );
+
+  useEffect(() => {
+    if (!isAuthenticated || !pendingInvitation || acceptingInvitation || acceptingInvitationRef.current) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        await acceptInvitation(pendingInvitation);
+      } catch (err) {
+        if (!cancelled) {
+          setPendingInvitation(null);
+          setTenantResolved(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [acceptInvitation, acceptingInvitation, isAuthenticated, pendingInvitation]);
+
   const unregisterCurrentPushToken = useCallback(async (tenant: string | null) => {
     if (!tenant) return;
 
@@ -424,6 +526,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     loggingOutRef.current = true;
     setIsLoggingOut(true);
     setPendingTenants(null);
+    setPendingInvitation(null);
     setHasNoTenants(false);
     pauseMutationQueueReplay();
 
@@ -510,10 +613,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     signInWithEmail,
     selectTenant,
     switchTenant,
+    queueInvitation,
+    acceptInvitation,
     logout,
-    pendingTenants: isLoggingOut ? null : pendingTenants,
-    hasNoTenants: !isLoggingOut && hasNoTenants,
-  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithApple, signInWithEmail, selectTenant, switchTenant, logout, isLoggingOut, pendingTenants, hasNoTenants]);
+    pendingTenants: isLoggingOut || pendingInvitation || acceptingInvitation ? null : pendingTenants,
+    pendingInvitation: isLoggingOut ? null : pendingInvitation,
+    acceptingInvitation: !isLoggingOut && acceptingInvitation,
+    hasNoTenants: !isLoggingOut && !pendingInvitation && !acceptingInvitation && hasNoTenants,
+  }), [state.isLoading, state.token, state.subdomain, state.user, signInWithGoogle, signInWithApple, signInWithEmail, selectTenant, switchTenant, queueInvitation, acceptInvitation, logout, isLoggingOut, pendingTenants, pendingInvitation, acceptingInvitation, hasNoTenants]);
 
   return (
     <AuthContext.Provider value={contextValue}>
