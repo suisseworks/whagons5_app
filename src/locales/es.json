@@ -429,6 +429,11 @@
     "ackTimeLabel": "Hora",
     "ackRemainingLabel": "Faltan %{count}"
   },
+  "approvals": {
+    "ui": {
+      "statusSkipped": "Omitido"
+    }
+  },
   "colab": {
     "tabWorkspaces": "Espacios",
     "tabChats": "Chats",

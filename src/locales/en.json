@@ -429,6 +429,11 @@
     "ackTimeLabel": "Time",
     "ackRemainingLabel": "%{count} left"
   },
+  "approvals": {
+    "ui": {
+      "statusSkipped": "Skipped"
+    }
+  },
   "colab": {
     "tabWorkspaces": "Workspaces",
     "tabChats": "Chats",
