@@ -72,10 +72,40 @@ export interface ApproverDetail {
   respondedAt?: string | null;
   comment?: string | null;
   approverUserId?: number | string | null;
-  approverRoleId?: number | string | null;
   approverTeamId?: number | string | null;
   memberUserIds?: (number | string)[];
   signatureStorageId?: string | null;
+  memberDetails?: Array<{
+    id: number | string;
+    name: string;
+    status: string;
+    statusColor: string;
+    respondedAt?: string | null;
+    comment?: string | null;
+    signatureStorageId?: string | null;
+  }>;
+}
+
+export interface ApprovalProgressSummary {
+  total: number;
+  approved: number;
+  rejected: number;
+  pending: number;
+  skipped: number;
+}
+
+export function getApprovalProgressSummary(approverDetails: ApproverDetail[] = []): ApprovalProgressSummary {
+  return approverDetails
+    .flatMap((detail) => detail.memberDetails?.length ? detail.memberDetails : [detail])
+    .reduce<ApprovalProgressSummary>((summary, detail) => {
+      const status = normStatus(detail.status || 'pending');
+      summary.total += 1;
+      if (status === 'approved') summary.approved += 1;
+      else if (status === 'rejected') summary.rejected += 1;
+      else if (status === 'skipped') summary.skipped += 1;
+      else summary.pending += 1;
+      return summary;
+    }, { total: 0, approved: 0, rejected: 0, pending: 0, skipped: 0 });
 }
 
 export function buildApproverDetails(
@@ -84,7 +114,6 @@ export function buildApproverDetails(
   taskApprovalInstances: any[],
   approvalApprovers: any[],
   userMap: Record<string | number, any>,
-  roleMap: Record<string | number, any>,
   teamMap?: Record<string | number, any>,
   taskConvexId?: string,
 ): ApproverDetail[] {
@@ -111,20 +140,37 @@ export function buildApproverDetails(
     let stepIdx = 0;
     for (const [sourceKey, group] of groupedBySource) {
       const sourceApprover = sourceKey.startsWith('direct-') ? null
-        : (Array.isArray(approvalApprovers) ? approvalApprovers.find((ap: any) => String(ap.id) === sourceKey) : null);
+        : (Array.isArray(approvalApprovers) ? approvalApprovers.find((ap: any) => String(ap._id ?? '') === sourceKey || String(ap.id) === sourceKey) : null);
       const approverType = field(sourceApprover, 'approver_type', 'approverType');
       const isTeamBased = approverType === 'team';
-      const isRoleBased = approverType === 'role';
 
       if (isTeamBased) {
         const teamId = field(sourceApprover, 'approver_id', 'approverId');
         const teamName = teamMap?.[String(teamId)]?.name || teamMap?.[Number(teamId)]?.name || 'Team';
         const approvedCount = group.filter((i: any) => (i.status || '').toLowerCase() === 'approved').length;
         const rejectedCount = group.filter((i: any) => (i.status || '').toLowerCase() === 'rejected').length;
+        const pendingCount = group.filter((i: any) => ['pending', 'not started', ''].includes((i.status || 'pending').toLowerCase())).length;
         const hasReject = rejectedCount > 0;
-        const allApproved = approvedCount === group.length;
-        const aggregateStatus = hasReject ? 'rejected' : allApproved ? 'approved' : 'pending';
+        const aggregateStatus = hasReject ? 'rejected' : pendingCount > 0 ? 'pending' : approvedCount > 0 ? 'approved' : 'skipped';
         const memberUserIds = group.map((i: any) => field(i, 'approver_user_id', 'approverUserId')).filter(Boolean);
+        const memberDetails = group.map((i: any, idx: number) => {
+          const approverUserId = field(i, 'approver_user_id', 'approverUserId');
+          const userRecord = approverUserId != null
+            ? ((userMap?.[Number(approverUserId)]) || (userMap?.[String(approverUserId)]) || null)
+            : null;
+          const normalizedStatus = (i.status || 'pending').toString().toLowerCase();
+          return {
+            id: approverUserId ?? i.id ?? `${sourceKey}-${idx}`,
+            name: userRecord ? (userRecord.name || userRecord.email || `User #${approverUserId}`) : `Approver ${idx + 1}`,
+            status: normalizedStatus,
+            statusColor: normalizedStatus === 'approved' ? '#16a34a'
+              : normalizedStatus === 'rejected' ? '#dc2626'
+              : normalizedStatus === 'skipped' ? '#d97706' : '#2563eb',
+            respondedAt: field(i, 'responded_at', 'respondedAt'),
+            comment: field(i, 'response_comment', 'responseComment'),
+            signatureStorageId: i.signatureStorageId || i.signature_storage_id || null,
+          };
+        });
         approverDetails.push({
           id: sourceKey,
           name: teamName,
@@ -135,15 +181,14 @@ export function buildApproverDetails(
           respondedAt: group.map((i: any) => field(i, 'responded_at', 'respondedAt')).find(Boolean) || null,
           comment: group.map((i: any) => field(i, 'response_comment', 'responseComment')).find(Boolean) || null,
           approverUserId: null,
-          approverRoleId: null,
           approverTeamId: teamId,
           memberUserIds,
+          memberDetails,
           signatureStorageId: group.find((i: any) => i.signatureStorageId || i.signature_storage_id)?.signatureStorageId
             || group.find((i: any) => i.signature_storage_id)?.signature_storage_id || null,
         });
       } else {
         for (const inst of group) {
-          const roleId = isRoleBased ? field(sourceApprover, 'approver_id', 'approverId') : null;
           const approverUserId = field(inst, 'approver_user_id', 'approverUserId');
           const userRecord = approverUserId != null
             ? ((userMap?.[Number(approverUserId)]) || (userMap?.[String(approverUserId)]) || null)
@@ -151,8 +196,8 @@ export function buildApproverDetails(
           let displayName: string;
           if (userRecord) {
             displayName = userRecord.name || userRecord.email || `User #${approverUserId}`;
-          } else if (isRoleBased && roleId) {
-            displayName = roleMap[roleId]?.name || roleMap[String(roleId)]?.name || `Role #${roleId}`;
+          } else if (approverType && !['user', 'team', 'job_position'].includes(String(approverType))) {
+            displayName = 'Unsupported legacy approver';
           } else {
             displayName = inst.approver_name || `Approver ${stepIdx + 1}`;
           }
@@ -169,7 +214,6 @@ export function buildApproverDetails(
             respondedAt: field(inst, 'responded_at', 'respondedAt'),
             comment: field(inst, 'response_comment', 'responseComment'),
             approverUserId: approverUserId != null ? approverUserId : null,
-            approverRoleId: roleId,
             signatureStorageId: inst.signatureStorageId || inst.signature_storage_id || null,
           });
         }
@@ -191,11 +235,13 @@ export function buildApproverDetails(
         const name = userRecord
           ? (userRecord.name || userRecord.email || `User #${approverId}`)
           : (
-            approverType === 'role'
-              ? (roleMap[Number(approverId)]?.name || roleMap[String(approverId)]?.name || `Role #${approverId}`)
-              : approverType === 'team'
+            approverType === 'team'
                 ? (teamMap?.[String(approverId)]?.name || teamMap?.[Number(approverId)]?.name || config.approver_label || 'Team')
-                : config.approver_label || `Approver ${idx + 1}`
+                : approverType === 'job_position'
+                  ? config.approver_label || 'Job position approver'
+                  : ['user', 'team', 'job_position'].includes(String(approverType))
+                    ? config.approver_label || `Approver ${idx + 1}`
+                    : 'Unsupported legacy approver'
           );
         return {
           id: config.id ?? `config-${idx}`,
@@ -207,7 +253,6 @@ export function buildApproverDetails(
           respondedAt: null,
           comment: null,
           approverUserId: approverType === 'user' && approverId ? approverId : null,
-          approverRoleId: approverType === 'role' && approverId ? approverId : null,
           approverTeamId: approverType === 'team' && approverId ? approverId : null,
         };
       });

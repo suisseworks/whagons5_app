@@ -111,6 +111,7 @@ import { parseApprovalDecisionNote } from '../utils/approvalNotes';
 import {
   buildApproverDetails,
   computeApprovalStatusForTask,
+  getApprovalProgressSummary,
   type ApproverDetail,
 } from '../utils/approvalStatus';
 import type { Id } from '../../../convex/_generated/dataModel';
@@ -586,7 +587,6 @@ export const TaskDetailScreen: React.FC = () => {
     approvals: approvalsList,
     approvalApprovers,
     taskApprovalInstances,
-    roles,
   } = useData();
   const cardBorder = isDarkMode ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.08)';
   const secondarySurface = isDarkMode ? '#242424' : '#F5F5F7';
@@ -908,10 +908,9 @@ export const TaskDetailScreen: React.FC = () => {
     return {
       approvalMap: buildRecord(approvalsList),
       userRecordMap: buildRecord(data.users),
-      roleMap: buildRecord(roles),
       teamMap: buildRecord(data.teams),
     };
-  }, [approvalsList, data.users, data.teams, roles]);
+  }, [approvalsList, data.users, data.teams]);
 
   const derivedSourceApprovalStatus = useMemo(() => {
     if (!sourceApprovalId) return null;
@@ -935,20 +934,18 @@ export const TaskDetailScreen: React.FC = () => {
   }, [sourceApprovalBlocksStatusChange, statusPickerVisible]);
 
   const sourceApproverDetails: ApproverDetail[] = useMemo(() => {
-    if (!sourceApprovalId || isActionTask) return [];
+    if (!sourceApprovalId) return [];
     return buildApproverDetails(
       sourceApprovalId,
       task.id ?? '',
       taskApprovalInstances as any[],
       approvalApprovers as any[],
       approvalLookupMaps.userRecordMap,
-      approvalLookupMaps.roleMap,
       approvalLookupMaps.teamMap,
       convexTaskId ?? undefined,
     );
   }, [
     sourceApprovalId,
-    isActionTask,
     task.id,
     taskApprovalInstances,
     approvalApprovers,
@@ -956,11 +953,23 @@ export const TaskDetailScreen: React.FC = () => {
     convexTaskId,
   ]);
 
+  const sourceApprovalProgress = useMemo(
+    () => getApprovalProgressSummary(sourceApproverDetails),
+    [sourceApproverDetails],
+  );
+
   const shouldLoadSourceAcknowledgmentProgress = Boolean(
     tenantId
     && hasValidConvexId
     && (
       isAckAction ||
+      (isApprovalAction && (
+        actionDecision === 'approved'
+        || task.approvalActionDecision === 'approved'
+        || task.approval_action_decision === 'approved'
+        || approvalActionState?.decision === 'approved'
+        || derivedSourceApprovalStatus === 'approved'
+      )) ||
       (!isActionTask && (derivedSourceApprovalStatus === 'approved' || !sourceApprovalId))
     ),
   );
@@ -2293,26 +2302,89 @@ export const TaskDetailScreen: React.FC = () => {
         </View>
       )}
 
-      {!isActionTask && sourceApproverDetails.length > 0 && (
+      {sourceApproverDetails.length > 0 && (
         <View style={[styles.communicationCard, { backgroundColor: secondarySurface, borderColor: cardBorder }]}>
-          <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 8 }]}>
-            {t('sharedTask.sectionApprovers')}
-          </Text>
+          <View style={styles.communicationSectionHeader}>
+            <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 0 }]}>
+              {t('sharedTask.sectionApprovers')}
+            </Text>
+            {sourceApprovalProgress.total > 0 ? (
+              <View style={[styles.ackProgressBadge, {
+                backgroundColor: sourceApprovalProgress.approved === sourceApprovalProgress.total
+                  ? '#F0FDF4'
+                  : '#FFF7ED',
+              }]}>
+                <Text style={[styles.ackProgressText, {
+                  color: sourceApprovalProgress.approved === sourceApprovalProgress.total
+                    ? '#16A34A'
+                    : '#EA580C',
+                }]}>
+                  {sourceApprovalProgress.approved}/{sourceApprovalProgress.total}
+                </Text>
+              </View>
+            ) : null}
+          </View>
           {sourceApproverDetails.map((detail) => {
+            const memberDetails = detail.memberDetails ?? [];
+            const memberApproved = memberDetails.filter((member) => member.status === 'approved').length;
             const statusIcon = detail.status === 'approved' ? 'check-circle' as const
               : detail.status === 'rejected' ? 'close-circle' as const
               : 'clock-outline' as const;
             const statusLabel = detail.status === 'approved' ? t('sharedTask.statusApproved')
               : detail.status === 'rejected' ? t('sharedTask.statusRejected')
+              : detail.status === 'skipped' ? t('approvals.ui.statusSkipped')
               : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
               : t('sharedTask.ackStatusPending');
             return (
-              <View key={String(detail.id)} style={[styles.communicationRow, { borderBottomColor: cardBorder }]}>
-                <MaterialCommunityIcons name={statusIcon} size={18} color={detail.statusColor} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.communicationName, { color: colors.text }]}>{detail.name}</Text>
-                  <Text style={[styles.communicationStatus, { color: detail.statusColor }]}>{statusLabel}</Text>
+              <View key={String(detail.id)} style={[styles.approverBlock, { borderBottomColor: cardBorder }]}>
+                <View style={[styles.communicationRow, { borderBottomColor: 'transparent', paddingBottom: memberDetails.length > 0 ? 4 : 8 }]}>
+                  <MaterialCommunityIcons name={statusIcon} size={18} color={detail.statusColor} />
+                  <View style={{ flex: 1 }}>
+                    <View style={styles.approverNameRow}>
+                      <Text style={[styles.communicationName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+                        {detail.name}
+                      </Text>
+                      {memberDetails.length > 0 ? (
+                        <Text style={[styles.approverProgressPill, {
+                          color: memberApproved === memberDetails.length ? '#16A34A' : '#EA580C',
+                          backgroundColor: memberApproved === memberDetails.length ? '#F0FDF4' : '#FFF7ED',
+                        }]}>
+                          {memberApproved}/{memberDetails.length}
+                        </Text>
+                      ) : null}
+                    </View>
+                    <Text style={[styles.communicationStatus, { color: detail.statusColor }]}>{statusLabel}</Text>
+                  </View>
                 </View>
+                {memberDetails.length > 0 ? (
+                  <View style={[styles.approverMemberList, {
+                    backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
+                    borderColor: cardBorder,
+                  }]}>
+                    {memberDetails.map((member) => {
+                      const memberIcon = member.status === 'approved' ? 'check-circle' as const
+                        : member.status === 'rejected' ? 'close-circle' as const
+                        : 'clock-outline' as const;
+                      const memberLabel = member.status === 'approved' ? t('sharedTask.statusApproved')
+                        : member.status === 'rejected' ? t('sharedTask.statusRejected')
+                        : member.status === 'skipped' ? t('approvals.ui.statusSkipped')
+                        : t('sharedTask.ackStatusPending');
+                      return (
+                        <View key={String(member.id)} style={styles.approverMemberRow}>
+                          <Text style={[styles.approverMemberName, { color: colors.text }]} numberOfLines={1}>
+                            {member.name}
+                          </Text>
+                          <View style={styles.approverMemberStatus}>
+                            <MaterialCommunityIcons name={memberIcon} size={13} color={member.statusColor} />
+                            <Text style={[styles.approverMemberStatusText, { color: member.statusColor }]}>
+                              {memberLabel}
+                            </Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : null}
               </View>
             );
           })}
@@ -4093,6 +4165,52 @@ const styles = StyleSheet.create({
   },
   communicationStatus: {
     fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  approverBlock: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 4,
+  },
+  approverNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  approverProgressPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+    fontSize: 11,
+    fontFamily: fontFamilies.bodySemibold,
+  },
+  approverMemberList: {
+    marginLeft: 28,
+    marginBottom: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  approverMemberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  approverMemberName: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  approverMemberStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  approverMemberStatusText: {
+    fontSize: 11,
     fontFamily: fontFamilies.bodyMedium,
   },
   ackProgressBadge: {

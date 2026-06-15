@@ -27,6 +27,7 @@ import { fontFamilies, radius, shadows } from '../config/designTokens';
 import {
   computeApprovalStatusForTask,
   buildApproverDetails,
+  getApprovalProgressSummary,
   type ApproverDetail,
 } from '../utils/approvalStatus';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
@@ -49,7 +50,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const { user: authUser } = useAuth();
   const {
     data, rawSharedToMe, approvals: approvalsList,
-    approvalApprovers, taskApprovalInstances, userTeams, roles,
+    approvalApprovers, taskApprovalInstances, userTeams,
   } = useData();
 
   const [signatureVisible, setSignatureVisible] = useState(false);
@@ -87,7 +88,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   } | null | undefined;
 
   // Build lookup maps
-  const { userMap, approvalMap, roleMap, teamMap } = useMemo(() => {
+  const { userMap, approvalMap, teamMap } = useMemo(() => {
     const buildMap = (items: any[]): Record<string, any> => {
       const m: Record<string, any> = {};
       for (const item of items) {
@@ -99,10 +100,9 @@ export const SharedTaskDetailScreen: React.FC = () => {
     return {
       userMap: buildMap(data.users),
       approvalMap: buildMap(approvalsList),
-      roleMap: buildMap(roles),
       teamMap: buildMap(data.teams),
     };
-  }, [data.users, approvalsList, roles, data.teams]);
+  }, [data.users, approvalsList, data.teams]);
 
   // Approval logic
   const approvalId = task.approvalId;
@@ -148,11 +148,15 @@ export const SharedTaskDetailScreen: React.FC = () => {
       taskApprovalInstances as any[],
       approvalApprovers as any[],
       userMap,
-      roleMap,
       teamMap,
       taskConvexId ?? undefined,
     );
-  }, [hasApproval, approvalId, task.id, taskApprovalInstances, approvalApprovers, userMap, roleMap, teamMap, taskConvexId]);
+  }, [hasApproval, approvalId, task.id, taskApprovalInstances, approvalApprovers, userMap, teamMap, taskConvexId]);
+
+  const approvalProgress = useMemo(
+    () => getApprovalProgressSummary(approverDetails),
+    [approverDetails],
+  );
 
   // canAct: can the current user approve/reject?
   const canAct = useMemo(() => {
@@ -441,7 +445,20 @@ export const SharedTaskDetailScreen: React.FC = () => {
         {/* Approvers Section */}
         {approverDetails.length > 0 && (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('sharedTask.sectionApprovers')}</Text>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('sharedTask.sectionApprovers')}</Text>
+              {approvalProgress.total > 0 ? (
+                <View style={[styles.ackProgressBadge, {
+                  backgroundColor: approvalProgress.approved === approvalProgress.total ? '#F0FDF4' : '#FFF7ED',
+                }]}>
+                  <Text style={[styles.ackProgressText, {
+                    color: approvalProgress.approved === approvalProgress.total ? '#16A34A' : '#EA580C',
+                  }]}>
+                    {approvalProgress.approved}/{approvalProgress.total}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             {approverDetails.map((d) => (
               <ApproverRow
                 key={d.id}
@@ -622,12 +639,15 @@ const ApproverRow: React.FC<{
   tertiaryText: string;
   t: (key: string) => string;
 }> = ({ detail, colors, isDark, tertiaryText, t }) => {
+  const memberDetails = detail.memberDetails ?? [];
+  const memberApproved = memberDetails.filter((member) => member.status === 'approved').length;
   const statusIcon = detail.status === 'approved' ? 'check-circle' as const
     : detail.status === 'rejected' ? 'close-circle' as const
     : 'clock-outline' as const;
 
   const statusLabel = detail.status === 'approved' ? t('sharedTask.statusApproved')
     : detail.status === 'rejected' ? t('sharedTask.statusRejected')
+    : detail.status === 'skipped' ? t('approvals.ui.statusSkipped')
     : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
     : t('sharedTask.ackStatusPending');
 
@@ -639,7 +659,17 @@ const ApproverRow: React.FC<{
         <Text style={[approverStyles.stepText, { color: tertiaryText }]}>{detail.step}</Text>
       </View>
       <View style={approverStyles.info}>
-        <Text style={[approverStyles.name, { color: colors.text }]}>{detail.name}</Text>
+        <View style={approverStyles.nameRow}>
+          <Text style={[approverStyles.name, { color: colors.text, flex: 1 }]} numberOfLines={1}>{detail.name}</Text>
+          {memberDetails.length > 0 ? (
+            <Text style={[approverStyles.memberProgress, {
+              color: memberApproved === memberDetails.length ? '#16A34A' : '#EA580C',
+              backgroundColor: memberApproved === memberDetails.length ? '#F0FDF4' : '#FFF7ED',
+            }]}>
+              {memberApproved}/{memberDetails.length}
+            </Text>
+          ) : null}
+        </View>
         <View style={approverStyles.statusRow}>
           <MaterialCommunityIcons name={statusIcon} size={14} color={detail.statusColor} />
           <Text style={[approverStyles.statusText, { color: detail.statusColor }]}>{statusLabel}</Text>
@@ -649,6 +679,33 @@ const ApproverRow: React.FC<{
             "{detail.comment}"
           </Text>
         )}
+        {memberDetails.length > 0 ? (
+          <View style={[approverStyles.memberList, {
+            borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
+          }]}>
+            {memberDetails.map((member) => {
+              const memberIcon = member.status === 'approved' ? 'check-circle' as const
+                : member.status === 'rejected' ? 'close-circle' as const
+                : 'clock-outline' as const;
+              const memberLabel = member.status === 'approved' ? t('sharedTask.statusApproved')
+                : member.status === 'rejected' ? t('sharedTask.statusRejected')
+                : member.status === 'skipped' ? t('approvals.ui.statusSkipped')
+                : t('sharedTask.ackStatusPending');
+              return (
+                <View key={String(member.id)} style={approverStyles.memberRow}>
+                  <Text style={[approverStyles.memberName, { color: colors.text }]} numberOfLines={1}>
+                    {member.name}
+                  </Text>
+                  <View style={approverStyles.statusRow}>
+                    <MaterialCommunityIcons name={memberIcon} size={13} color={member.statusColor} />
+                    <Text style={[approverStyles.memberStatus, { color: member.statusColor }]}>{memberLabel}</Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        ) : null}
       </View>
       {detail.signatureStorageId && (
         <MaterialCommunityIcons name="signature-freehand" size={18} color={tertiaryText} />
@@ -676,10 +733,36 @@ const approverStyles = StyleSheet.create({
   },
   stepText: { fontSize: 11, fontFamily: fontFamilies.bodySemibold },
   info: { flex: 1 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   name: { fontSize: 13, fontFamily: fontFamilies.bodySemibold },
+  memberProgress: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+    fontSize: 11,
+    fontFamily: fontFamilies.bodySemibold,
+    overflow: 'hidden',
+  },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   statusText: { fontSize: 12, fontFamily: fontFamilies.bodyMedium },
   comment: { fontSize: 12, fontFamily: fontFamilies.bodyRegular, fontStyle: 'italic', marginTop: 4 },
+  memberList: {
+    marginTop: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.sm,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    gap: 2,
+  },
+  memberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  memberName: { flex: 1, fontSize: 12, fontFamily: fontFamilies.bodyMedium },
+  memberStatus: { fontSize: 11, fontFamily: fontFamilies.bodyMedium },
 });
 
 // ---------------------------------------------------------------------------
