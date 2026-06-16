@@ -18,7 +18,7 @@ import React, {
   useCallback,
   ReactNode,
 } from 'react';
-import { usePaginatedQuery, useQuery } from 'convex/react';
+import { useConvex, usePaginatedQuery, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { useNetwork } from './NetworkContext';
@@ -42,6 +42,7 @@ export interface SyncedTask {
   created_by?: number | string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  completed_at?: string | null;
   deleted_at?: string | null;
   [key: string]: unknown;
 }
@@ -376,6 +377,7 @@ export interface TaskQueryOptions {
   workspaceId?: string;
   mode?: 'hot' | 'all' | 'archive';
   statusIds?: string[];
+  archiveEnabled?: boolean;
 }
 
 interface DataContextType {
@@ -394,6 +396,11 @@ interface DataContextType {
   syncProgress: number | null;
   isInitialSync: boolean;
   hasMoreTaskRows: boolean;
+  isTaskPageLoading: boolean;
+  isTaskPageIncomplete: boolean;
+  isArchiveSyncing: boolean;
+  isArchiveIncomplete: boolean;
+  taskCacheVersion: number;
   loadMoreTaskRows: () => void;
   setTaskQuery: (query: TaskQueryOptions) => void;
   refresh: () => Promise<void>;
@@ -549,8 +556,9 @@ function mapTask(doc: any, fk: FkLookups): SyncedTask {
     template_id: resolveFk(fk.templates, doc.templateId),
     created_by: resolveFk(fk.users, doc.createdBy),
     deleted_at: doc.deletedAt ? new Date(doc.deletedAt).toISOString() : null,
-    created_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : null,
-    updated_at: doc._creationTime ? new Date(doc._creationTime).toISOString() : null,
+    completed_at: doc.completedAt ? new Date(doc.completedAt).toISOString() : null,
+    created_at: doc.createdAt ? new Date(doc.createdAt).toISOString() : (doc._creationTime ? new Date(doc._creationTime).toISOString() : null),
+    updated_at: doc.updatedAt ? new Date(doc.updatedAt).toISOString() : (doc._creationTime ? new Date(doc._creationTime).toISOString() : null),
   };
 }
 
@@ -797,7 +805,44 @@ const SQLITE_TABLES: (keyof SyncedData)[] = [
   'kpiCards', 'plugins',
 ];
 
+const GENERIC_SQLITE_TABLES = SQLITE_TABLES.filter((table) => table !== 'tasks');
+
 const TASKS_PAGE_SIZE = 512;
+const ARCHIVE_PAGE_SIZE = 200;
+const TASK_ARCHIVE_SYNC_VERSION = 12;
+
+function readIdArray(value: unknown): Array<string | number> {
+  if (Array.isArray(value)) return value.filter((item) => item != null) as Array<string | number>;
+  if (typeof value !== 'string' || value.trim().length === 0) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item) => item != null) : [];
+  } catch {
+    return [];
+  }
+}
+
+function addSearchValue(parts: string[], value: unknown) {
+  if (value == null || value === '') return;
+  parts.push(String(value).toLowerCase());
+}
+
+function isFinishedStatusDoc(status: any): boolean {
+  const action = String(status?.action ?? '').toUpperCase();
+  const name = String(status?.name ?? '').trim().toLowerCase();
+  return status?.final === true
+    || action === 'FINISHED'
+    || action === 'DONE'
+    || action === 'COMPLETED'
+    || name === 'finalizado'
+    || name === 'finalizada'
+    || name === 'finalizadas'
+    || name === 'finished'
+    || name === 'done'
+    || name === 'completed'
+    || name === 'completado'
+    || name === 'completada';
+}
 
 /** Persist an array of mapped docs to SQLite (fire-and-forget). */
 function persistToSqlite(table: string, rows: any[]) {
@@ -822,10 +867,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const { tenantId } = useTenant();
   const { token } = useAuth();
   const { isOnline } = useNetwork();
+  const convex = useConvex();
   const activeTenantId = token ? tenantId : null;
   const skipArgs = !activeTenantId ? 'skip' as const : undefined;
   const [taskQuery, setTaskQueryState] = useState<TaskQueryOptions>({ mode: 'hot' });
   const taskStatusIdsKey = (taskQuery.statusIds ?? []).join('|');
+  const [taskCacheVersion, setTaskCacheVersion] = useState(0);
+  const [archiveSyncState, setArchiveSyncState] = useState<{
+    key: string;
+    syncing: boolean;
+    incomplete: boolean;
+  }>({ key: '', syncing: false, incomplete: false });
 
   const setTaskQuery = useCallback((query: TaskQueryOptions) => {
     setTaskQueryState((prev) => {
@@ -834,11 +886,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const sameStatusIds = prevStatusIds.length === nextStatusIds.length
         && prevStatusIds.every((id, index) => id === nextStatusIds[index]);
       const nextMode = query.mode ?? 'hot';
-      if (prev.workspaceId === query.workspaceId && prev.mode === nextMode && sameStatusIds) return prev;
+      if (
+        prev.workspaceId === query.workspaceId
+        && prev.mode === nextMode
+        && prev.archiveEnabled === query.archiveEnabled
+        && sameStatusIds
+      ) return prev;
       return {
         workspaceId: query.workspaceId,
         mode: nextMode,
         statusIds: nextStatusIds.length > 0 ? nextStatusIds : undefined,
+        archiveEnabled: query.archiveEnabled === true,
       };
     });
   }, []);
@@ -865,7 +923,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await DB.initDb();
         const results: Partial<SyncedData> = {};
         await Promise.all(
-          SQLITE_TABLES.map(async (table) => {
+          GENERIC_SQLITE_TABLES.map(async (table) => {
             const rows = await loadFromSqlite(table);
             if (rows.length > 0) {
               (results as any)[table] = rows;
@@ -925,6 +983,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   );
 
   const hasMoreTaskRows = tasksStatus === 'CanLoadMore';
+  const isTaskPageLoading = tasksStatus === 'LoadingFirstPage' || tasksStatus === 'LoadingMore';
+  const isTaskPageIncomplete = tasksStatus === 'LoadingFirstPage' || tasksStatus === 'LoadingMore';
   const loadMoreTaskRows = useCallback(() => {
     if (tasksStatus === 'CanLoadMore') {
       loadMoreTaskRowsPage(TASKS_PAGE_SIZE);
@@ -1091,6 +1151,94 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, [activeTenantId, refData, rawTasks, pivotData, rawBoards, rawBoardMembers, rawBoardMessages, rawConversations, rawParticipants, rawDirectMessages, rawReactions, rawLinkPreviews, rawKpiCards, rawPlugins]);
 
+  const taskCacheLookups = useMemo(() => {
+    const statusNameById = new Map<string, string>();
+    for (const status of data.statuses) {
+      statusNameById.set(String(status.id), status.name);
+      if ((status as any)._id) statusNameById.set(String((status as any)._id), status.name);
+    }
+
+    const workspaceNameById = new Map<string, string>();
+    for (const workspace of data.workspaces) {
+      workspaceNameById.set(String(workspace.id), workspace.name);
+      if ((workspace as any)._id) workspaceNameById.set(String((workspace as any)._id), workspace.name);
+    }
+
+    const spotNameById = new Map<string, string>();
+    for (const spot of data.spots) {
+      spotNameById.set(String(spot.id), spot.name);
+      if ((spot as any)._id) spotNameById.set(String((spot as any)._id), spot.name);
+    }
+
+    const userNameById = new Map<string, string>();
+    for (const user of data.users) {
+      userNameById.set(String(user.id), user.name);
+      if ((user as any)._id) userNameById.set(String((user as any)._id), user.name);
+    }
+
+    const tagNameById = new Map<string, string>();
+    for (const tag of data.tags) {
+      tagNameById.set(String(tag.id), tag.name);
+      if ((tag as any)._id) tagNameById.set(String((tag as any)._id), tag.name);
+    }
+
+    const taskUserIdsByTaskId = new Map<string, Array<string | number>>();
+    for (const taskUser of data.taskUsers) {
+      const taskId = String(taskUser.task_id);
+      const list = taskUserIdsByTaskId.get(taskId) ?? [];
+      list.push(taskUser.user_id);
+      taskUserIdsByTaskId.set(taskId, list);
+    }
+
+    const taskTagIdsByTaskId = new Map<string, Array<string | number>>();
+    for (const taskTag of data.taskTags) {
+      const taskId = String(taskTag.task_id);
+      const list = taskTagIdsByTaskId.get(taskId) ?? [];
+      list.push(taskTag.tag_id);
+      taskTagIdsByTaskId.set(taskId, list);
+    }
+
+    return {
+      statusNameById,
+      workspaceNameById,
+      spotNameById,
+      userNameById,
+      tagNameById,
+      taskUserIdsByTaskId,
+      taskTagIdsByTaskId,
+    };
+  }, [data.statuses, data.workspaces, data.spots, data.users, data.tags, data.taskUsers, data.taskTags]);
+
+  const buildTaskCacheRows = useCallback((tasks: SyncedTask[]): DB.CachedTaskRecord[] => (
+    tasks.map((task) => {
+      const userIds = readIdArray((task as any).user_ids ?? (task as any).userIds);
+      const tagIds = readIdArray((task as any).tag_ids ?? (task as any).tagIds);
+      const resolvedUserIds = userIds.length > 0 ? userIds : (taskCacheLookups.taskUserIdsByTaskId.get(String(task.id)) ?? []);
+      const resolvedTagIds = tagIds.length > 0 ? tagIds : (taskCacheLookups.taskTagIdsByTaskId.get(String(task.id)) ?? []);
+      const statusName = task.status_id == null ? null : taskCacheLookups.statusNameById.get(String(task.status_id)) ?? null;
+
+      const searchParts: string[] = [];
+      addSearchValue(searchParts, task.id);
+      addSearchValue(searchParts, (task as any)._id);
+      addSearchValue(searchParts, task.name);
+      addSearchValue(searchParts, task.description);
+      addSearchValue(searchParts, statusName);
+      addSearchValue(searchParts, task.workspace_id == null ? null : taskCacheLookups.workspaceNameById.get(String(task.workspace_id)));
+      addSearchValue(searchParts, task.spot_id == null ? null : taskCacheLookups.spotNameById.get(String(task.spot_id)));
+      for (const userId of resolvedUserIds) addSearchValue(searchParts, taskCacheLookups.userNameById.get(String(userId)));
+      for (const tagId of resolvedTagIds) addSearchValue(searchParts, taskCacheLookups.tagNameById.get(String(tagId)));
+
+      return {
+        ...task,
+        tenant_id: activeTenantId,
+        status: statusName,
+        user_ids: resolvedUserIds,
+        tag_ids: resolvedTagIds,
+        search_text: searchParts.join(' '),
+      };
+    })
+  ), [activeTenantId, taskCacheLookups]);
+
   const sharedTaskIds = useMemo(() => {
     const ids = new Set<number | string>();
     if (rawSharedToMe) {
@@ -1135,27 +1283,187 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!activeTenantId) return;
     const convexReady = refData !== undefined && rawTasks !== undefined;
     if (!convexReady) return;
-    if (prevDataRef.current === data) return;
-    prevDataRef.current = data;
+    const shouldPersistTables = prevDataRef.current !== data;
+    if (shouldPersistTables) {
+      prevDataRef.current = data;
 
-    // Fire-and-forget persist each table
-    for (const table of SQLITE_TABLES) {
-      const rows = data[table] as any[];
-      if (rows && rows.length > 0) {
-        persistToSqlite(table, rows);
+      for (const table of GENERIC_SQLITE_TABLES) {
+        const rows = data[table] as any[];
+        if (rows && rows.length > 0) {
+          persistToSqlite(table, rows);
+        }
       }
     }
 
     if (data.tasks.length > 0) {
-      const statusNameById = new Map(data.statuses.map((status) => [String(status.id), status.name]));
-      DB.upsertTaskCacheRows(data.tasks.map((task) => ({
-        ...task,
-        status: task.status_id == null ? null : statusNameById.get(String(task.status_id)) ?? null,
-      }))).catch(() => {});
+      const rows = buildTaskCacheRows(data.tasks);
+      const write = tasksStatus === 'Exhausted' && !taskQuery.archiveEnabled
+        ? DB.replaceTaskCacheBucketRows(rows, { tenantId: activeTenantId, bucket: 'live' })
+        : DB.upsertTaskCacheRows(rows, { tenantId: activeTenantId, bucket: 'live' });
+      write
+        .then(() => setTaskCacheVersion((version) => version + 1))
+        .catch(() => {});
     }
 
     DB.setMeta('last_sync_ts', String(Date.now())).catch(() => {});
-  }, [data, activeTenantId, refData, rawTasks]);
+  }, [data, activeTenantId, refData, rawTasks, buildTaskCacheRows, tasksStatus, taskQuery.archiveEnabled]);
+
+  useEffect(() => {
+    if (!activeTenantId || !taskQuery.archiveEnabled || !refData) {
+      setArchiveSyncState({ key: '', syncing: false, incomplete: false });
+      return;
+    }
+
+    const archiveDayKey = Math.floor(Date.now() / 86400000);
+    const archiveKey = `v${TASK_ARCHIVE_SYNC_VERSION}:${activeTenantId}:all-finalized:${archiveDayKey}`;
+    const cursorKey = `task_archive:${archiveKey}:cursor`;
+    const doneKey = `task_archive:${archiveKey}:done`;
+    const clearedKey = `task_archive:${archiveKey}:cleared`;
+    let cancelled = false;
+
+    const finishedStatusIds = new Set<string>();
+    const finishedStatusConvexIds: string[] = [];
+    for (const status of refData.statuses ?? []) {
+      if (!isFinishedStatusDoc(status)) continue;
+      if (status._id != null) finishedStatusConvexIds.push(String(status._id));
+      if (status._id != null) finishedStatusIds.add(String(status._id));
+      if (status.pgId != null) finishedStatusIds.add(String(status.pgId));
+      if (status.id != null) finishedStatusIds.add(String(status.id));
+    }
+
+    const mapArchiveRows = (rawRows: any[]): SyncedTask[] => {
+      const fk: FkLookups = {
+        workspaces: buildPgLookup(refData.workspaces),
+        categories: buildPgLookup(refData.categories),
+        statuses: buildPgLookup(refData.statuses),
+        priorities: buildPgLookup(refData.priorities),
+        spots: buildPgLookup(refData.spots),
+        templates: buildPgLookup(refData.templates),
+        users: buildPgLookup(refData.users),
+        tasks: buildPgLookup(rawRows),
+        tags: buildPgLookup(refData.tags),
+        statusTransitionGroups: buildPgLookup(refData.statusTransitionGroups),
+        forms: buildPgLookup(refData.forms),
+        formVersions: buildPgLookup(refData.formVersions),
+        approvals: buildPgLookup(refData.approvals),
+      };
+
+      return rawRows.map((row) => {
+        const mapped = mapTask(row, fk);
+        const userIds = readIdArray(row.userIds ?? row.user_ids)
+          .map((userId) => resolveFk(fk.users, userId))
+          .filter((userId) => userId != null);
+        const tagIds = readIdArray(row.tagIds ?? row.tag_ids)
+          .map((tagId) => resolveFk(fk.tags, tagId))
+          .filter((tagId) => tagId != null);
+        return {
+          ...mapped,
+          user_ids: userIds,
+          tag_ids: tagIds,
+        };
+      });
+    };
+
+    const runArchiveSync = async () => {
+      const done = await DB.getMeta(doneKey);
+      if (cancelled) return;
+
+      if (done === 'true') {
+        const archiveSummary = await DB.queryTaskCacheSummary({
+          tenantId: activeTenantId,
+          buckets: ['live'],
+        });
+        if (archiveSummary.total > 0) {
+          setArchiveSyncState({ key: archiveKey, syncing: false, incomplete: false });
+          return;
+        }
+        await DB.deleteMeta(doneKey);
+      }
+
+      if (!isOnline) {
+        setArchiveSyncState({ key: archiveKey, syncing: false, incomplete: true });
+        return;
+      }
+
+      setArchiveSyncState({ key: archiveKey, syncing: true, incomplete: true });
+      let statusIndex = 0;
+      let statusCursor: string | null = null;
+      const savedCursor = await DB.getMeta(cursorKey);
+      if (savedCursor) {
+        try {
+          const parsed = JSON.parse(savedCursor);
+          if (Number.isFinite(parsed?.statusIndex)) {
+            statusIndex = Math.max(0, Math.min(Math.floor(parsed.statusIndex), finishedStatusConvexIds.length));
+          }
+          statusCursor = typeof parsed?.statusCursor === 'string' ? parsed.statusCursor : null;
+        } catch {
+          statusIndex = 0;
+          statusCursor = null;
+        }
+      }
+
+      try {
+        const cleared = await DB.getMeta(clearedKey);
+        if (!savedCursor && cleared !== 'true') {
+          await DB.setMeta(clearedKey, 'true');
+        }
+
+        if (finishedStatusConvexIds.length === 0) {
+          await DB.setMeta(doneKey, 'true');
+          await DB.deleteMeta(cursorKey);
+          if (!cancelled) setArchiveSyncState({ key: archiveKey, syncing: false, incomplete: false });
+          return;
+        }
+
+        while (!cancelled && statusIndex < finishedStatusConvexIds.length) {
+          const statusId = finishedStatusConvexIds[statusIndex];
+          const page = await convex.query(api.bulk.tasksByWorkspace as any, {
+            tenantId: activeTenantId,
+            mode: 'all',
+            statusIds: [statusId],
+            paginationOpts: {
+              numItems: ARCHIVE_PAGE_SIZE,
+              cursor: statusCursor,
+            },
+          }) as { page?: any[]; isDone?: boolean; continueCursor?: string };
+
+          const rows = mapArchiveRows(page.page ?? []);
+          if (rows.length > 0) {
+            await DB.upsertTaskCacheRows(buildTaskCacheRows(rows), {
+              tenantId: activeTenantId,
+              bucket: 'live',
+            });
+            if (!cancelled) setTaskCacheVersion((version) => version + 1);
+          }
+
+          if (page.isDone) {
+            statusIndex += 1;
+            statusCursor = null;
+          } else if (page.continueCursor) {
+            statusCursor = page.continueCursor;
+          } else {
+            if (!cancelled) setArchiveSyncState({ key: archiveKey, syncing: false, incomplete: true });
+            return;
+          }
+
+          await DB.setMeta(cursorKey, JSON.stringify({ statusIndex, statusCursor }));
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+
+        await DB.setMeta(doneKey, 'true');
+        await DB.deleteMeta(cursorKey);
+        if (!cancelled) setArchiveSyncState({ key: archiveKey, syncing: false, incomplete: false });
+      } catch {
+        if (!cancelled) setArchiveSyncState({ key: archiveKey, syncing: false, incomplete: true });
+      }
+    };
+
+    void runArchiveSync();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTenantId, buildTaskCacheRows, convex, isOnline, refData, taskQuery.archiveEnabled]);
 
   // ---------------------------------------------------------------------------
   // Determine loading / sync state
@@ -1200,12 +1508,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     syncProgress: null as number | null,
     isInitialSync: isLoading,
     hasMoreTaskRows,
+    isTaskPageLoading,
+    isTaskPageIncomplete,
+    isArchiveSyncing: archiveSyncState.syncing,
+    isArchiveIncomplete: archiveSyncState.incomplete,
+    taskCacheVersion,
     loadMoreTaskRows,
     setTaskQuery,
     refresh,
     forceResync,
     dataManager: null,
-  }), [effectiveData, sharedTaskIds, sharedCount, rawSharedToMe, approvals, approvalApprovers, taskApprovalInstances, userTeamsData, rolesData, isSyncing, hasEverSynced, syncError, isLoading, hasMoreTaskRows, loadMoreTaskRows, setTaskQuery, refresh, forceResync]);
+  }), [effectiveData, sharedTaskIds, sharedCount, rawSharedToMe, approvals, approvalApprovers, taskApprovalInstances, userTeamsData, rolesData, isSyncing, hasEverSynced, syncError, isLoading, hasMoreTaskRows, isTaskPageLoading, isTaskPageIncomplete, archiveSyncState.syncing, archiveSyncState.incomplete, taskCacheVersion, loadMoreTaskRows, setTaskQuery, refresh, forceResync]);
 
   return (
     <DataContext.Provider value={contextValue}>

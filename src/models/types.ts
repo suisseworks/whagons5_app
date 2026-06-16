@@ -53,6 +53,8 @@ export interface TaskItem {
   workspaceId?: string | number | null;
   assignees: Assignee[];
   createdAt: string;
+  completedAt?: number | null;
+  updatedAt?: number | null;
   tags: string[];
   approval?: string | null;
   sla?: string | null;

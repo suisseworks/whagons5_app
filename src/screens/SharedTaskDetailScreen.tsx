@@ -154,9 +154,13 @@ export const SharedTaskDetailScreen: React.FC = () => {
   }, [hasApproval, approvalId, task.id, taskApprovalInstances, approvalApprovers, userMap, teamMap, taskConvexId]);
 
   const approvalProgress = useMemo(
-    () => getApprovalProgressSummary(approverDetails),
-    [approverDetails],
+    () => getApprovalProgressSummary(approverDetails, approval),
+    [approverDetails, approval],
   );
+  const showApprovalProgressBadge = approvalPending && approvalProgress.total > 1;
+  const showApproverMemberProgress = showApprovalProgressBadge
+    && approvalProgress.total === approvalProgress.eligibleTotal
+    && approverDetails.length > 1;
 
   // canAct: can the current user approve/reject?
   const canAct = useMemo(() => {
@@ -447,7 +451,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('sharedTask.sectionApprovers')}</Text>
-              {approvalProgress.total > 0 ? (
+              {showApprovalProgressBadge ? (
                 <View style={[styles.ackProgressBadge, {
                   backgroundColor: approvalProgress.approved === approvalProgress.total ? '#F0FDF4' : '#FFF7ED',
                 }]}>
@@ -467,6 +471,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
                 isDark={isDarkMode}
                 tertiaryText={tertiaryText}
                 t={t}
+                showMemberProgress={showApproverMemberProgress}
               />
             ))}
           </View>
@@ -638,7 +643,8 @@ const ApproverRow: React.FC<{
   isDark: boolean;
   tertiaryText: string;
   t: (key: string) => string;
-}> = ({ detail, colors, isDark, tertiaryText, t }) => {
+  showMemberProgress?: boolean;
+}> = ({ detail, colors, isDark, tertiaryText, t, showMemberProgress = false }) => {
   const memberDetails = detail.memberDetails ?? [];
   const memberApproved = memberDetails.filter((member) => member.status === 'approved').length;
   const statusIcon = detail.status === 'approved' ? 'check-circle' as const
@@ -661,7 +667,7 @@ const ApproverRow: React.FC<{
       <View style={approverStyles.info}>
         <View style={approverStyles.nameRow}>
           <Text style={[approverStyles.name, { color: colors.text, flex: 1 }]} numberOfLines={1}>{detail.name}</Text>
-          {memberDetails.length > 0 ? (
+          {showMemberProgress && memberDetails.length > 0 ? (
             <Text style={[approverStyles.memberProgress, {
               color: memberApproved === memberDetails.length ? '#16A34A' : '#EA580C',
               backgroundColor: memberApproved === memberDetails.length ? '#F0FDF4' : '#FFF7ED',

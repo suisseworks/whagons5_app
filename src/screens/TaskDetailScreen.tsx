@@ -912,17 +912,21 @@ export const TaskDetailScreen: React.FC = () => {
     };
   }, [approvalsList, data.users, data.teams]);
 
+  const sourceApproval = useMemo(
+    () => sourceApprovalId ? approvalLookupMaps.approvalMap[String(sourceApprovalId)] : null,
+    [approvalLookupMaps.approvalMap, sourceApprovalId],
+  );
+
   const derivedSourceApprovalStatus = useMemo(() => {
     if (!sourceApprovalId) return null;
-    const approval = approvalLookupMaps.approvalMap[String(sourceApprovalId)];
     return computeApprovalStatusForTask({
       taskId: String(task.id),
       taskConvexId: convexTaskId ?? undefined,
       approvalId: sourceApprovalId,
-      approval,
+      approval: sourceApproval,
       taskApprovalInstances: taskApprovalInstances as any[],
     });
-  }, [sourceApprovalId, approvalLookupMaps.approvalMap, task.id, convexTaskId, taskApprovalInstances]);
+  }, [sourceApprovalId, task.id, convexTaskId, sourceApproval, taskApprovalInstances]);
   const sourceApprovalBlocksStatusChange = Boolean(
     !isActionTask && sourceApprovalId && derivedSourceApprovalStatus !== 'approved',
   );
@@ -954,9 +958,13 @@ export const TaskDetailScreen: React.FC = () => {
   ]);
 
   const sourceApprovalProgress = useMemo(
-    () => getApprovalProgressSummary(sourceApproverDetails),
-    [sourceApproverDetails],
+    () => getApprovalProgressSummary(sourceApproverDetails, sourceApproval),
+    [sourceApproverDetails, sourceApproval],
   );
+  const showSourceApprovalProgressBadge = derivedSourceApprovalStatus === 'pending' && sourceApprovalProgress.total > 1;
+  const showSourceApproverMemberProgress = showSourceApprovalProgressBadge
+    && sourceApprovalProgress.total === sourceApprovalProgress.eligibleTotal
+    && sourceApproverDetails.length > 1;
 
   const shouldLoadSourceAcknowledgmentProgress = Boolean(
     tenantId
@@ -2308,7 +2316,7 @@ export const TaskDetailScreen: React.FC = () => {
             <Text style={[styles.sectionLabel, { color: tertiaryText, marginBottom: 0 }]}>
               {t('sharedTask.sectionApprovers')}
             </Text>
-            {sourceApprovalProgress.total > 0 ? (
+            {showSourceApprovalProgressBadge ? (
               <View style={[styles.ackProgressBadge, {
                 backgroundColor: sourceApprovalProgress.approved === sourceApprovalProgress.total
                   ? '#F0FDF4'
@@ -2335,6 +2343,7 @@ export const TaskDetailScreen: React.FC = () => {
               : detail.status === 'skipped' ? t('approvals.ui.statusSkipped')
               : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
               : t('sharedTask.ackStatusPending');
+            const showMemberProgress = showSourceApproverMemberProgress && memberDetails.length > 0;
             return (
               <View key={String(detail.id)} style={[styles.approverBlock, { borderBottomColor: cardBorder }]}>
                 <View style={[styles.communicationRow, { borderBottomColor: 'transparent', paddingBottom: memberDetails.length > 0 ? 4 : 8 }]}>
@@ -2344,7 +2353,7 @@ export const TaskDetailScreen: React.FC = () => {
                       <Text style={[styles.communicationName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
                         {detail.name}
                       </Text>
-                      {memberDetails.length > 0 ? (
+                      {showMemberProgress ? (
                         <Text style={[styles.approverProgressPill, {
                           color: memberApproved === memberDetails.length ? '#16A34A' : '#EA580C',
                           backgroundColor: memberApproved === memberDetails.length ? '#F0FDF4' : '#FFF7ED',

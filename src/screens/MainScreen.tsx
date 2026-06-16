@@ -193,15 +193,17 @@ export const MainScreen: React.FC = () => {
   const {
     tasks,
     unfilteredTasks,
-    totalTaskCount,
     loadMoreTasks,
     hasMoreTasks,
+    isTaskListLoading,
+    isTaskListIncomplete,
     workingTasks,
     cardDensity,
     selectedWorkspace,
     workspaces,
     workspaceObjects,
     workspaceTaskCounts,
+    taskStatusCounts,
     sharedCount,
     finalStatus,
     getAllowedStatuses,
@@ -213,6 +215,8 @@ export const MainScreen: React.FC = () => {
     hasActiveFilters,
     filters,
     setFilters,
+    searchQuery,
+    setSearchQuery,
     availableStatuses,
   } = useTasks();
 
@@ -233,19 +237,6 @@ export const MainScreen: React.FC = () => {
     isAuthenticated && tenantId ? { tenantId, slug: 'scheduling' } : 'skip',
   );
   const markBoardNotificationsRead = useOfflineMutation(api.boards.markBoardNotificationsRead, 'boards.markBoardNotificationsRead');
-  const allTaskSummaryCounts = useQuery(
-    api.bulk.taskSummaryCounts,
-    isAuthenticated && tenantId ? { tenantId } : 'skip',
-  );
-  const scopedTaskSummaryCounts = useQuery(
-    api.bulk.taskSummaryCounts,
-    isAuthenticated && tenantId && selectedWorkspaceConvexId
-      ? {
-        tenantId,
-        workspaceId: selectedWorkspaceConvexId,
-      }
-      : 'skip',
-  );
 
   const isCleaningEnabled = useMemo(() => {
     const plugin = data.plugins.find((p: any) => p.slug === 'cleaning');
@@ -359,13 +350,13 @@ export const MainScreen: React.FC = () => {
   const [assigneePickerVisible, setAssigneePickerVisible] = useState(false);
   const [assigneePickerTask, setAssigneePickerTask] = useState<TaskItem | null>(null);
   const [colabInChat, setColabInChat] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
   const [initialConversationId, setInitialConversationId] = useState<string | number | undefined>(undefined);
   const [hideSharedWithMe, setHideSharedWithMe] = useState(false);
   // Status chip selection is now driven by filters.statuses from context
   // so it stays in sync with the filter sheet
   const [tasksTab, setTasksTab] = useState<'everything' | 'workspaces' | 'workspace'>('everything');
   const tasksTabTranslateX = useRef(new Animated.Value(0)).current;
+  const taskLoadingLineOpacity = useRef(new Animated.Value(0)).current;
   const tasksTabDragStartX = useRef(0);
   const statusChipTouchActiveRef = useRef(false);
 
@@ -384,6 +375,35 @@ export const MainScreen: React.FC = () => {
     setTasksTab(workspaceName === 'Everything' ? 'everything' : 'workspace');
   }, [setSelectedWorkspace]);
   const selectedNavKey = navItems[selectedNav]?.key ?? 'tasks';
+  const showTaskLoadingLine = selectedNavKey === 'tasks' && isTaskListIncomplete && !isInitialSync;
+
+  useEffect(() => {
+    if (!showTaskLoadingLine) {
+      taskLoadingLineOpacity.stopAnimation();
+      taskLoadingLineOpacity.setValue(0);
+      return;
+    }
+
+    taskLoadingLineOpacity.setValue(isTaskListLoading ? 1 : 0.55);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(taskLoadingLineOpacity, {
+          toValue: 1,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+        Animated.timing(taskLoadingLineOpacity, {
+          toValue: 0.55,
+          duration: 650,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+    };
+  }, [isTaskListLoading, showTaskLoadingLine, taskLoadingLineOpacity]);
 
   useEffect(() => {
     if (selectedNavKey === 'tasks' && tasksTab !== 'workspace') {
@@ -601,65 +621,29 @@ export const MainScreen: React.FC = () => {
   }, [refresh]);
 
   const statusChips = useMemo(() => {
-    const summary = selectedWorkspace === 'Shared'
-      ? undefined
-      : (selectedWorkspaceConvexId ? scopedTaskSummaryCounts : allTaskSummaryCounts);
-    const source = unfilteredTasks;
-    const useLocalCounts = source.length > 0;
-    const counts = new Map<string, { count: number; color: string }>();
-
-    if (!useLocalCounts && summary?.byStatus) {
-      for (const entry of Object.values(summary.byStatus as Record<string, { name: string; color: string | null; count: number }>)) {
-        counts.set(entry.name.toLowerCase(), { count: entry.count, color: entry.color || '#9CA3AF' });
-      }
-    } else {
-      for (const item of source) {
-        const key = item.status.toLowerCase();
-        const existing = counts.get(key);
-        if (existing) {
-          existing.count++;
-        } else {
-          counts.set(key, { count: 1, color: item.statusColor || '#9CA3AF' });
-        }
-      }
-    }
-
+    const allCount = Array.from(taskStatusCounts.values()).reduce((sum, count) => sum + count, 0);
     const chips: { label: string; statusKey: string; color: string; count: number }[] = [
-      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: useLocalCounts ? source.length : (summary?.total ?? source.length) },
+      { label: t('common.all'), statusKey: '', color: isDarkMode ? '#E0E0E0' : '#1A1A1A', count: allCount },
     ];
+    const selectedStatusKeys = new Set(filters.statuses.map((status) => status.toLowerCase()));
     const seen = new Set<string>();
     for (const s of availableStatuses) {
       const key = s.name.toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
-      const entry = counts.get(key);
+      const count = taskStatusCounts.get(key) ?? 0;
+      if (count === 0 && !selectedStatusKeys.has(key)) continue;
       chips.push({
         label: s.name,
         statusKey: key,
         color: s.color || '#9CA3AF',
-        count: entry?.count ?? 0,
+        count,
       });
     }
     return chips;
-  }, [unfilteredTasks, availableStatuses, isDarkMode, allTaskSummaryCounts, scopedTaskSummaryCounts, selectedWorkspace, selectedWorkspaceConvexId, t]);
+  }, [availableStatuses, filters.statuses, isDarkMode, taskStatusCounts, t]);
 
-  // Client-side search filter (status filtering is already handled by context filters)
-  const displayedTasks = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return tasks;
-    // Support searching by task ID (e.g. "123" or "#123")
-    const idTerm = q.startsWith('#') ? q.slice(1) : q;
-    const isIdSearch = /^\d+$/.test(idTerm);
-    return tasks.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.spot.toLowerCase().includes(q) ||
-        t.status.toLowerCase().includes(q) ||
-        t.assignees.some((a) => a.name.toLowerCase().includes(q)) ||
-        t.tags.some((tag) => tag.toLowerCase().includes(q)) ||
-        (isIdSearch && t.id != null && String(t.id) === idTerm),
-    );
-  }, [tasks, searchQuery]);
+  const displayedTasks = tasks;
 
 
   const handleTaskPress = useCallback(
@@ -834,7 +818,7 @@ export const MainScreen: React.FC = () => {
   }, [filters, setFilters, availableStatuses]);
 
   const renderListHeader = () => {
-    const showChips = unfilteredTasks.length > 0 && statusChips.length > 1;
+    const showChips = (unfilteredTasks.length > 0 || (statusChips[0]?.count ?? 0) > 0) && statusChips.length > 1;
     if (!showChips) return null;
 
     return (
@@ -1090,17 +1074,16 @@ export const MainScreen: React.FC = () => {
 
     for (const ws of workspaceObjects) {
       const convexId = (ws as any)._id;
-      const summaryCount = convexId ? allTaskSummaryCounts?.byWorkspace?.[String(convexId)] : undefined;
       const visibleCount = workspaceTaskCounts.get(ws.id);
-      const count = typeof visibleCount === 'number' && visibleCount > 0
+      const count = typeof visibleCount === 'number'
         ? visibleCount
-        : (typeof summaryCount === 'number' ? summaryCount : 0);
+        : 0;
       counts.set(ws.id, count);
       if (convexId) counts.set(String(convexId), count);
     }
 
     return counts;
-  }, [allTaskSummaryCounts, workspaceObjects, workspaceTaskCounts]);
+  }, [workspaceObjects, workspaceTaskCounts]);
 
   const renderWorkspacesList = () => {
     const wsItems = workspaceObjects;
@@ -1213,6 +1196,24 @@ export const MainScreen: React.FC = () => {
     <View style={{ flex: 1 }}>
       {/* Status chips + sync pill pinned above the list */}
       {renderListHeader()}
+      {showTaskLoadingLine && (
+        <View
+          style={[
+            styles.taskLoadingLineTrack,
+            { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.08)' : `${primaryColor}24` },
+          ]}
+        >
+          <Animated.View
+            style={[
+              styles.taskLoadingLineFill,
+              {
+                backgroundColor: primaryColor,
+                opacity: taskLoadingLineOpacity,
+              },
+            ]}
+          />
+        </View>
+      )}
       <FlatList
         data={displayedTasks}
         renderItem={renderTaskItem}
@@ -1224,6 +1225,13 @@ export const MainScreen: React.FC = () => {
         ]}
         ListEmptyComponent={renderTasksEmpty}
         ItemSeparatorComponent={ItemSeparator}
+        ListFooterComponent={
+          hasMoreTasks && displayedTasks.length > 0 ? (
+            <View style={styles.listFooterLoading}>
+              <ActivityIndicator size="small" color={primaryColor} />
+            </View>
+          ) : null
+        }
         windowSize={7}
         maxToRenderPerBatch={10}
         updateCellsBatchingPeriod={50}
@@ -1802,6 +1810,15 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH,
     flex: 1,
   },
+  taskLoadingLineTrack: {
+    height: 3,
+    overflow: 'hidden',
+  },
+  taskLoadingLineFill: {
+    height: '100%',
+    width: '100%',
+    borderRadius: 999,
+  },
   searchBarContainer: {
     paddingHorizontal: 16,
     paddingTop: 4,
@@ -1960,6 +1977,11 @@ const styles = StyleSheet.create({
   },
   listContentEmpty: {
     flexGrow: 1,
+    justifyContent: 'center' as const,
+  },
+  listFooterLoading: {
+    paddingVertical: spacing.lg,
+    alignItems: 'center' as const,
     justifyContent: 'center' as const,
   },
   // Empty / syncing states

@@ -15,7 +15,7 @@
 import { openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 
 const DB_NAME = 'whagons_sync.db';
-const DB_VERSION = 5;
+const DB_VERSION = 8;
 
 let _db: SQLiteDatabase | null = null;
 
@@ -168,6 +168,160 @@ async function migrate(db: SQLiteDatabase): Promise<void> {
     `);
   }
 
+  if (currentVersion < 6) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS task_cache (
+        id          TEXT PRIMARY KEY,
+        workspace_id TEXT,
+        status_name  TEXT,
+        status_id    TEXT,
+        sort_id      INTEGER NOT NULL DEFAULT 0,
+        deleted_at   TEXT,
+        data         TEXT NOT NULL
+      );
+    `);
+
+    const columns = await db.getAllAsync<{ name: string }>(
+      `PRAGMA table_info('task_cache')`,
+    );
+    const columnNames = new Set(columns.map((column) => column.name));
+
+    if (!columnNames.has('tenant_id')) {
+      await db.execAsync(`ALTER TABLE task_cache ADD COLUMN tenant_id TEXT;`);
+    }
+    if (!columnNames.has('bucket')) {
+      await db.execAsync(`ALTER TABLE task_cache ADD COLUMN bucket TEXT NOT NULL DEFAULT 'live';`);
+    }
+    if (!columnNames.has('finished_at')) {
+      await db.execAsync(`ALTER TABLE task_cache ADD COLUMN finished_at INTEGER;`);
+    }
+    if (!columnNames.has('updated_at')) {
+      await db.execAsync(`ALTER TABLE task_cache ADD COLUMN updated_at INTEGER;`);
+    }
+    if (!columnNames.has('search_text')) {
+      await db.execAsync(`ALTER TABLE task_cache ADD COLUMN search_text TEXT;`);
+    }
+
+    await db.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_bucket_sort
+        ON task_cache(tenant_id, bucket, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_workspace_bucket_sort
+        ON task_cache(tenant_id, workspace_id, bucket, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_status_bucket_sort
+        ON task_cache(tenant_id, status_name, bucket, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_finished
+        ON task_cache(tenant_id, finished_at DESC);
+    `);
+  }
+
+  if (currentVersion < 7) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS task_cache_workspaces (
+        task_id       TEXT NOT NULL,
+        tenant_id     TEXT,
+        bucket        TEXT NOT NULL DEFAULT 'live',
+        workspace_key TEXT NOT NULL,
+        PRIMARY KEY(task_id, workspace_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspaces_lookup
+        ON task_cache_workspaces(tenant_id, workspace_key, bucket, task_id);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspaces_task
+        ON task_cache_workspaces(task_id);
+    `);
+  }
+
+  if (currentVersion < 8) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS task_cache_v8 (
+        id           TEXT NOT NULL,
+        tenant_id    TEXT NOT NULL DEFAULT '',
+        bucket       TEXT NOT NULL DEFAULT 'live',
+        workspace_id TEXT,
+        status_name  TEXT,
+        status_id    TEXT,
+        sort_id      INTEGER NOT NULL DEFAULT 0,
+        finished_at  INTEGER,
+        updated_at   INTEGER,
+        search_text  TEXT,
+        deleted_at   TEXT,
+        data         TEXT NOT NULL,
+        PRIMARY KEY (tenant_id, id, bucket)
+      );
+
+      INSERT OR REPLACE INTO task_cache_v8
+        (id, tenant_id, bucket, workspace_id, status_name, status_id, sort_id, finished_at, updated_at, search_text, deleted_at, data)
+      SELECT
+        id,
+        COALESCE(tenant_id, ''),
+        COALESCE(bucket, 'live'),
+        workspace_id,
+        status_name,
+        status_id,
+        sort_id,
+        finished_at,
+        updated_at,
+        search_text,
+        deleted_at,
+        data
+      FROM task_cache;
+
+      DROP TABLE task_cache;
+      ALTER TABLE task_cache_v8 RENAME TO task_cache;
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_status_sort
+        ON task_cache(status_name, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspace_status_sort
+        ON task_cache(workspace_id, status_name, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspace_sort
+        ON task_cache(workspace_id, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_bucket_sort
+        ON task_cache(tenant_id, bucket, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_workspace_bucket_sort
+        ON task_cache(tenant_id, workspace_id, bucket, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_status_bucket_sort
+        ON task_cache(tenant_id, status_name, bucket, sort_id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_tenant_finished
+        ON task_cache(tenant_id, finished_at DESC);
+
+      CREATE TABLE IF NOT EXISTS task_cache_workspaces_v8 (
+        task_id       TEXT NOT NULL,
+        tenant_id     TEXT NOT NULL DEFAULT '',
+        bucket        TEXT NOT NULL DEFAULT 'live',
+        workspace_key TEXT NOT NULL,
+        PRIMARY KEY(tenant_id, bucket, task_id, workspace_key)
+      );
+
+      INSERT OR REPLACE INTO task_cache_workspaces_v8
+        (task_id, tenant_id, bucket, workspace_key)
+      SELECT
+        task_id,
+        COALESCE(tenant_id, ''),
+        COALESCE(bucket, 'live'),
+        workspace_key
+      FROM task_cache_workspaces;
+
+      DROP TABLE task_cache_workspaces;
+      ALTER TABLE task_cache_workspaces_v8 RENAME TO task_cache_workspaces;
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspaces_lookup
+        ON task_cache_workspaces(tenant_id, workspace_key, bucket, task_id);
+
+      CREATE INDEX IF NOT EXISTS idx_task_cache_workspaces_task
+        ON task_cache_workspaces(tenant_id, bucket, task_id);
+    `);
+  }
+
   if (currentVersion < DB_VERSION) {
     await db.execAsync(`PRAGMA user_version = ${DB_VERSION};`);
   }
@@ -298,7 +452,7 @@ export async function clearTable(table: string): Promise<void> {
 /** Drop all synced data (used on logout or forced resync). */
 export async function clearAllData(): Promise<void> {
   const db = await getDb();
-  await db.execAsync(`DELETE FROM sync_data; DELETE FROM sync_meta; DELETE FROM task_cache; DELETE FROM mutation_queue; DELETE FROM mutation_history;`);
+  await db.execAsync(`DELETE FROM sync_data; DELETE FROM sync_meta; DELETE FROM task_cache; DELETE FROM task_cache_workspaces; DELETE FROM mutation_queue; DELETE FROM mutation_history;`);
 }
 
 /** Get count of rows for a given table. */
@@ -315,18 +469,59 @@ export async function getRowCount(table: string): Promise<number> {
 
 export interface CachedTaskRecord {
   id?: string | number;
+  tenant_id?: string | null;
+  tenantId?: string | null;
+  bucket?: TaskCacheBucket;
   status?: string | null;
   status_id?: string | number | null;
   workspace_id?: string | number | null;
+  workspaceId?: string | number | null;
+  source_workspace_id?: string | number | null;
+  sourceWorkspaceId?: string | number | null;
+  active_workspace_context?: any;
+  activeWorkspaceContext?: any;
+  workspace_contexts?: any;
+  workspaceContexts?: any;
+  completed_at?: string | number | null;
+  completedAt?: string | number | null;
+  updated_at?: string | number | null;
+  updatedAt?: string | number | null;
+  search_text?: string | null;
   deleted_at?: string | null;
   [key: string]: unknown;
 }
 
+export type TaskCacheBucket = 'live' | 'archive';
+
 export interface TaskCacheQuery {
+  tenantId?: string | null;
+  buckets?: TaskCacheBucket[];
   workspaceId?: string | number | null;
   statuses?: string[];
+  excludeStatuses?: string[];
+  search?: string;
   limit: number;
   offset?: number;
+}
+
+export interface TaskCacheSummaryQuery {
+  tenantId?: string | null;
+  buckets?: TaskCacheBucket[];
+  workspaceId?: string | number | null;
+  statuses?: string[];
+  excludeStatuses?: string[];
+  search?: string;
+}
+
+export interface TaskCacheSummary {
+  total: number;
+  byWorkspace: Record<string, number>;
+  byStatus: Record<string, { name: string; count: number }>;
+}
+
+export interface TaskCacheWriteOptions {
+  tenantId?: string | null;
+  bucket?: TaskCacheBucket;
 }
 
 function numericSortId(id: unknown): number {
@@ -334,51 +529,225 @@ function numericSortId(id: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export async function upsertTaskCacheRows(rows: CachedTaskRecord[]): Promise<void> {
+function readEpochMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeTaskSearchText(row: CachedTaskRecord): string {
+  if (typeof row.search_text === 'string' && row.search_text.trim().length > 0) {
+    return row.search_text.toLowerCase();
+  }
+
+  const values = [
+    row.id,
+    row.name,
+    row.description,
+    row.status,
+    row.status_id,
+    row.workspace_id,
+    row.spot_id,
+    row.spot,
+    row.priority,
+  ];
+
+  return values
+    .filter((value) => value != null && value !== '')
+    .map((value) => String(value).toLowerCase())
+    .join(' ');
+}
+
+function normalizeTaskTenantId(value: string | null | undefined): string {
+  return value ?? '';
+}
+
+function resolveTaskTenantId(row: CachedTaskRecord, options?: TaskCacheWriteOptions): string {
+  return normalizeTaskTenantId(options?.tenantId ?? row.tenant_id ?? row.tenantId ?? null);
+}
+
+function resolveTaskBucket(row: CachedTaskRecord, options?: TaskCacheWriteOptions): TaskCacheBucket {
+  const candidate = options?.bucket ?? row.bucket;
+  return candidate === 'archive' ? 'archive' : 'live';
+}
+
+function readTaskWorkspaceKeys(row: CachedTaskRecord): string[] {
+  const keys = new Set<string>();
+  const addKey = (value: unknown) => {
+    if (value != null && value !== '') keys.add(String(value));
+  };
+
+  const activeContext = row.activeWorkspaceContext ?? row.active_workspace_context ?? null;
+  const activeContextKind = String(activeContext?.kind ?? '').toLowerCase();
+  const isActionContext = activeContextKind === 'approval' || activeContextKind === 'acknowledgment';
+
+  if (!isActionContext) {
+    addKey(row.workspace_id);
+    addKey(row.workspaceId);
+    addKey(row.source_workspace_id);
+    addKey(row.sourceWorkspaceId);
+  }
+
+  addKey(activeContext?.workspaceId);
+  addKey(activeContext?.workspace_id);
+
+  const contexts = row.workspaceContexts ?? row.workspace_contexts ?? [];
+  if (Array.isArray(contexts)) {
+    for (const context of contexts) {
+      addKey(context?.workspaceId);
+      addKey(context?.workspace_id);
+    }
+  }
+
+  return [...keys];
+}
+
+async function writeTaskCacheRows(
+  db: SQLiteDatabase,
+  rows: CachedTaskRecord[],
+  options?: TaskCacheWriteOptions,
+): Promise<void> {
+  for (const row of rows) {
+    if (row.id == null) continue;
+    const rowId = String(row.id);
+    const tenantId = resolveTaskTenantId(row, options);
+    const bucket = resolveTaskBucket(row, options);
+    const finishedAt = readEpochMs(row.completed_at ?? row.completedAt);
+    const updatedAt = readEpochMs(row.updated_at ?? row.updatedAt);
+    await db.runAsync(
+      `INSERT OR REPLACE INTO task_cache
+        (id, tenant_id, bucket, workspace_id, status_name, status_id, sort_id, finished_at, updated_at, search_text, deleted_at, data)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        rowId,
+        tenantId,
+        bucket,
+        row.workspace_id == null ? null : String(row.workspace_id),
+        row.status == null ? null : String(row.status),
+        row.status_id == null ? null : String(row.status_id),
+        numericSortId(row.id),
+        finishedAt,
+        updatedAt,
+        normalizeTaskSearchText(row),
+        row.deleted_at == null ? null : String(row.deleted_at),
+        JSON.stringify({ ...row, tenant_id: tenantId, bucket }),
+      ],
+    );
+    await db.runAsync(
+      `DELETE FROM task_cache_workspaces WHERE tenant_id = ? AND bucket = ? AND task_id = ?`,
+      [tenantId, bucket, rowId],
+    );
+    for (const workspaceKey of readTaskWorkspaceKeys(row)) {
+      await db.runAsync(
+        `INSERT OR REPLACE INTO task_cache_workspaces
+          (task_id, tenant_id, bucket, workspace_key)
+         VALUES (?, ?, ?, ?)`,
+        [rowId, tenantId, bucket, workspaceKey],
+      );
+    }
+  }
+}
+
+export async function upsertTaskCacheRows(rows: CachedTaskRecord[], options?: TaskCacheWriteOptions): Promise<void> {
   if (rows.length === 0) return;
   const db = await getDb();
   await db.withTransactionAsync(async () => {
-    for (const row of rows) {
-      if (row.id == null) continue;
-      await db.runAsync(
-        `INSERT OR REPLACE INTO task_cache
-          (id, workspace_id, status_name, status_id, sort_id, deleted_at, data)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          String(row.id),
-          row.workspace_id == null ? null : String(row.workspace_id),
-          row.status == null ? null : String(row.status),
-          row.status_id == null ? null : String(row.status_id),
-          numericSortId(row.id),
-          row.deleted_at == null ? null : String(row.deleted_at),
-          JSON.stringify(row),
-        ],
-      );
-    }
+    await writeTaskCacheRows(db, rows, options);
   });
 }
 
-export async function queryTaskCache<T = CachedTaskRecord>({
+export async function replaceTaskCacheBucketRows(rows: CachedTaskRecord[], options: TaskCacheWriteOptions & { bucket: TaskCacheBucket }): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `DELETE FROM task_cache WHERE tenant_id = ? AND bucket = ?`,
+      [normalizeTaskTenantId(options.tenantId), options.bucket],
+    );
+    await db.runAsync(
+      `DELETE FROM task_cache_workspaces WHERE tenant_id = ? AND bucket = ?`,
+      [normalizeTaskTenantId(options.tenantId), options.bucket],
+    );
+    await writeTaskCacheRows(db, rows, options);
+  });
+}
+
+function buildTaskCacheWhere({
+  tenantId,
+  buckets,
   workspaceId,
   statuses,
-  limit,
-  offset = 0,
-}: TaskCacheQuery): Promise<{ rows: T[]; total: number }> {
-  const db = await getDb();
-  const where: string[] = [`(deleted_at IS NULL OR deleted_at = '')`];
+  excludeStatuses,
+  search,
+}: TaskCacheSummaryQuery): { whereSql: string; params: unknown[] } {
+  const where: string[] = [`(task_cache.deleted_at IS NULL OR task_cache.deleted_at = '')`];
   const params: unknown[] = [];
 
+  if (tenantId) {
+    where.push(`task_cache.tenant_id = ?`);
+    params.push(normalizeTaskTenantId(tenantId));
+  }
+
+  if (buckets && buckets.length > 0) {
+    where.push(`task_cache.bucket IN (${buckets.map(() => '?').join(', ')})`);
+    params.push(...buckets);
+  }
+
   if (workspaceId != null) {
-    where.push(`workspace_id = ?`);
-    params.push(String(workspaceId));
+    where.push(`(
+      EXISTS (
+        SELECT 1
+          FROM task_cache_workspaces tcw_filter
+         WHERE tcw_filter.task_id = task_cache.id
+           AND tcw_filter.tenant_id = task_cache.tenant_id
+           AND tcw_filter.bucket = task_cache.bucket
+           AND tcw_filter.workspace_key = ?
+      )
+      OR (
+        task_cache.workspace_id = ?
+        AND NOT EXISTS (
+          SELECT 1
+           FROM task_cache_workspaces tcw_any
+           WHERE tcw_any.task_id = task_cache.id
+             AND tcw_any.tenant_id = task_cache.tenant_id
+             AND tcw_any.bucket = task_cache.bucket
+        )
+      )
+    )`);
+    params.push(String(workspaceId), String(workspaceId));
   }
 
   if (statuses && statuses.length > 0) {
-    where.push(`status_name IN (${statuses.map(() => '?').join(', ')})`);
+    where.push(`task_cache.status_name IN (${statuses.map(() => '?').join(', ')})`);
     params.push(...statuses);
   }
 
+  if (excludeStatuses && excludeStatuses.length > 0) {
+    where.push(`(task_cache.status_name IS NULL OR task_cache.status_name NOT IN (${excludeStatuses.map(() => '?').join(', ')}))`);
+    params.push(...excludeStatuses);
+  }
+
+  const terms = (search ?? '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+  for (const term of terms) {
+    where.push(`task_cache.search_text LIKE ?`);
+    params.push(`%${term}%`);
+  }
+
   const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : '';
+  return { whereSql, params };
+}
+
+export async function queryTaskCache<T = CachedTaskRecord>({
+  limit,
+  offset = 0,
+  ...filters
+}: TaskCacheQuery): Promise<{ rows: T[]; total: number }> {
+  const db = await getDb();
+  const { whereSql, params } = buildTaskCacheWhere(filters);
   const countRow = await db.getFirstAsync<{ cnt: number }>(
     `SELECT COUNT(*) as cnt FROM task_cache ${whereSql}`,
     params as any[],
@@ -391,6 +760,55 @@ export async function queryTaskCache<T = CachedTaskRecord>({
   return {
     total: countRow?.cnt ?? 0,
     rows: rows.map((row) => JSON.parse(row.data) as T),
+  };
+}
+
+export async function queryTaskCacheSummary(filters: TaskCacheSummaryQuery): Promise<TaskCacheSummary> {
+  const db = await getDb();
+  const { whereSql, params } = buildTaskCacheWhere(filters);
+  const countRow = await db.getFirstAsync<{ cnt: number }>(
+    `SELECT COUNT(*) as cnt FROM task_cache ${whereSql}`,
+    params as any[],
+  );
+  const workspaceKeyExpr = `COALESCE(tcw.workspace_key, task_cache.workspace_id)`;
+  const workspaceWhereSql = whereSql
+    ? `${whereSql} AND ${workspaceKeyExpr} IS NOT NULL AND ${workspaceKeyExpr} != ''`
+    : `WHERE ${workspaceKeyExpr} IS NOT NULL AND ${workspaceKeyExpr} != ''`;
+  const workspaceRows = await db.getAllAsync<{ workspace_key: string | null; cnt: number }>(
+    `SELECT ${workspaceKeyExpr} as workspace_key, COUNT(DISTINCT task_cache.id) as cnt
+       FROM task_cache
+       LEFT JOIN task_cache_workspaces tcw
+         ON tcw.task_id = task_cache.id
+        AND tcw.tenant_id = task_cache.tenant_id
+        AND tcw.bucket = task_cache.bucket
+       ${workspaceWhereSql}
+       GROUP BY workspace_key`,
+    params as any[],
+  );
+  const statusRows = await db.getAllAsync<{ status_name: string | null; cnt: number }>(
+    `SELECT status_name, COUNT(*) as cnt
+       FROM task_cache
+       ${whereSql}
+       GROUP BY status_name`,
+    params as any[],
+  );
+
+  const byWorkspace: Record<string, number> = {};
+  for (const row of workspaceRows) {
+    if (!row.workspace_key) continue;
+    byWorkspace[String(row.workspace_key)] = row.cnt;
+  }
+
+  const byStatus: Record<string, { name: string; count: number }> = {};
+  for (const row of statusRows) {
+    if (!row.status_name) continue;
+    byStatus[row.status_name] = { name: row.status_name, count: row.cnt };
+  }
+
+  return {
+    total: countRow?.cnt ?? 0,
+    byWorkspace,
+    byStatus,
   };
 }
 

@@ -15,16 +15,12 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useTheme } from '../context/ThemeContext';
 import { useTasks } from '../context/TaskContext';
 import { useAuth } from '../context/AuthContext';
-import { useData } from '../context/DataContext';
 import { useNotifications } from '../context/NotificationContext';
 import { RootStackParamList, CardDensity } from '../models/types';
 import { DEFAULT_WORKSPACE_COLOR } from '../utils/helpers';
 import { fontFamilies, fontSizes, radius, spacing } from '../config/designTokens';
 import { useLanguage } from '../context/LanguageContext';
 import { getOptimizedImageUrl } from '../utils/imgproxy';
-import { useQuery } from 'convex/react';
-import { api } from '../../../convex/_generated/api';
-import { useTenant } from '../hooks/useTenant';
 
 type DrawerNavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -37,15 +33,17 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
   const navigation = useNavigation<DrawerNavigationProp>();
   const { isDarkMode, toggleDarkMode, primaryColor, colors } = useTheme();
   const { t } = useLanguage();
-  const { cardDensity, setCardDensity, selectedWorkspace, setSelectedWorkspace, workspaceObjects, totalTaskCount } = useTasks();
+  const {
+    cardDensity,
+    setCardDensity,
+    selectedWorkspace,
+    setSelectedWorkspace,
+    workspaceObjects,
+    workspaceTaskCounts,
+    taskUniverseCount,
+  } = useTasks();
   const { logout, user, subdomain } = useAuth();
-  const { data } = useData();
   const { unreadCount: notificationCount } = useNotifications();
-  const { tenantId } = useTenant();
-  const taskSummaryCounts = useQuery(
-    api.bulk.taskSummaryCounts,
-    tenantId ? { tenantId } : 'skip',
-  );
 
   const surfaceSecondary = isDarkMode ? '#2A2A2A' : '#F5F5F7';
   const borderTertiary = isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
@@ -55,30 +53,17 @@ export const AppDrawer: React.FC<AppDrawerProps> = ({ onClose, onWorkspaceSelect
   const taskCountsByWorkspace = useMemo(() => {
     const counts = new Map<string | number, number>();
 
-    if (taskSummaryCounts?.byWorkspace) {
-      for (const ws of workspaceObjects) {
-        const convexId = (ws as any)._id;
-        const count = convexId ? taskSummaryCounts.byWorkspace[String(convexId)] : undefined;
-        if (typeof count === 'number') {
-          counts.set(ws.id, count);
-          if (convexId) counts.set(String(convexId), count);
-        }
-      }
-      return counts;
+    for (const ws of workspaceObjects) {
+      const convexId = (ws as any)._id;
+      const count = workspaceTaskCounts.get(ws.id) ?? (convexId ? workspaceTaskCounts.get(String(convexId)) : undefined) ?? 0;
+      counts.set(ws.id, count);
+      if (convexId) counts.set(String(convexId), count);
     }
 
-    for (const task of data.tasks) {
-      const wsId = (task as any).workspace_id;
-      if (wsId != null) {
-        counts.set(wsId, (counts.get(wsId) || 0) + 1);
-      }
-    }
     return counts;
-  }, [data.tasks, taskSummaryCounts, workspaceObjects]);
+  }, [workspaceObjects, workspaceTaskCounts]);
 
-  const aggregateTotalTaskCount = useMemo<number>(() => {
-    return taskSummaryCounts?.total ?? data.tasks.length ?? totalTaskCount;
-  }, [data.tasks.length, taskSummaryCounts?.total, totalTaskCount]);
+  const aggregateTotalTaskCount = taskUniverseCount;
 
   const handleNavigate = (screen: keyof RootStackParamList) => {
     onClose();

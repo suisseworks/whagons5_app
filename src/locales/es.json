@@ -28,6 +28,9 @@
     "create": "Crear",
     "creating": "Creando..."
   },
+  "errors": {
+    "noPermissionChangeStatus": "No se pudo cambiar el estado de la tarea"
+  },
   "attachmentPicker": {
     "title": "Adjuntar archivo",
     "subtitle": "Elige la forma mas rapida de compartir una foto o archivo.",
@@ -570,6 +573,9 @@
     "sectionTaskCreation": "Creación de Tareas",
     "captureGpsLocation": "Capturar Ubicación GPS",
     "captureGpsLocationSubtitle": "Adjuntar ubicación del dispositivo al crear tareas",
+    "sectionTaskLists": "Listas de tareas",
+    "showFinishedTasks": "Incluir tareas finalizadas",
+    "showFinishedTasksSubtitle": "Carga las tareas finalizadas en la caché local sin hacer pesada la lista en vivo",
     "sectionWorkspaces": "Espacios",
     "hideSharedWithMe": "Ocultar Compartido conmigo",
     "hideSharedWithMeSubtitle": "Quitar Compartido conmigo de la lista de Espacios",
@@ -744,6 +750,7 @@
       "categoryLabel": "Categoría",
       "categoryAll": "Todos",
       "sectionStatus": "Estado",
+      "noStatusesForCategory": "No hay estados disponibles para esta categoría",
       "sectionPriority": "Prioridad",
       "sectionAssignee": "Asignado",
       "sectionTags": "Etiquetas",

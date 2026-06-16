@@ -28,6 +28,9 @@
     "create": "Create",
     "creating": "Creating..."
   },
+  "errors": {
+    "noPermissionChangeStatus": "Failed to change task status"
+  },
   "attachmentPicker": {
     "title": "Attach something",
     "subtitle": "Choose the fastest way to share a photo or file.",
@@ -570,6 +573,9 @@
     "sectionTaskCreation": "Task Creation",
     "captureGpsLocation": "Capture GPS Location",
     "captureGpsLocationSubtitle": "Attach device location when creating tasks",
+    "sectionTaskLists": "Task Lists",
+    "showFinishedTasks": "Include finished tasks",
+    "showFinishedTasksSubtitle": "Loads finalized tasks into the local cache while keeping the live list lightweight",
     "sectionWorkspaces": "Workspaces",
     "hideSharedWithMe": "Hide Shared with me",
     "hideSharedWithMeSubtitle": "Remove Shared with me from the Workspaces list",
@@ -744,6 +750,7 @@
       "categoryLabel": "Category",
       "categoryAll": "All",
       "sectionStatus": "Status",
+      "noStatusesForCategory": "No statuses available for this category",
       "sectionPriority": "Priority",
       "sectionAssignee": "Assignee",
       "sectionTags": "Tags",

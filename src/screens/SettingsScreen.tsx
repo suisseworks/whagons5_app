@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { APP_VERSION, BUILD_NUMBER, GIT_HASH, VERSION_DISPLAY } from '../config/version';
 import { BUNDLED_RELEASE_NOTES } from '../config/releaseNotes';
 import { useData } from '../context/DataContext';
+import { useTasks } from '../context/TaskContext';
 import { useLanguage, SupportedLanguage } from '../context/LanguageContext';
 import { useMutationQueue } from '../context/MutationQueueContext';
 import { fontFamilies, fontSizes, radius, shadows } from '../config/designTokens';
@@ -93,6 +94,7 @@ export const SettingsScreen: React.FC = () => {
   const { preferences, updatePreferences, hasPermission } = useNotifications();
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
+  const { showFinishedTasks, setShowFinishedTasks } = useTasks();
   const { pendingCount, failedCount } = useMutationQueue();
   const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
   const submitBugReport = useMutation(api.bugReports.submit);
@@ -490,6 +492,18 @@ export const SettingsScreen: React.FC = () => {
             subtitle: t('settings.captureGpsLocationSubtitle'),
             value: gpsCaptureEnabled,
             onValueChange: handleGpsToggle,
+          })}
+        </View>
+
+        {/* Task Lists Section */}
+        <SectionHeader title={t('settings.sectionTaskLists')} />
+        <View style={cardStyle}>
+          {renderSwitchTile({
+            icon: 'done-all',
+            title: t('settings.showFinishedTasks'),
+            subtitle: t('settings.showFinishedTasksSubtitle'),
+            value: showFinishedTasks,
+            onValueChange: setShowFinishedTasks,
           })}
         </View>
 

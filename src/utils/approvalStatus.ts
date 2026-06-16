@@ -8,6 +8,35 @@ function field(row: any, snake: string, camel: string): any {
   return row?.[snake] ?? row?.[camel];
 }
 
+function mergeStatus(statuses: string[]): string {
+  if (statuses.includes('rejected')) return 'rejected';
+  if (statuses.includes('approved')) return 'approved';
+  if (statuses.some((status) => status === 'pending' || status === 'not started')) return 'pending';
+  if (statuses.includes('skipped')) return 'skipped';
+  return statuses[0] ?? 'pending';
+}
+
+function collapseInstancesByApprover(instances: any[]): any[] {
+  const grouped = new Map<string, any[]>();
+  instances.forEach((instance, index) => {
+    const key = String(field(instance, 'approver_user_id', 'approverUserId') ?? instance?.userId ?? index);
+    const group = grouped.get(key) ?? [];
+    group.push(instance);
+    grouped.set(key, group);
+  });
+
+  return [...grouped.values()].map((group) => {
+    const first = group[0] ?? {};
+    const isRequired = group.some((instance) => field(instance, 'is_required', 'isRequired') !== false);
+    return {
+      ...first,
+      is_required: isRequired,
+      isRequired,
+      status: mergeStatus(group.map((instance) => normStatus(instance?.status || 'pending'))),
+    };
+  });
+}
+
 export function computeApprovalStatusForTask(opts: {
   taskId: number | string;
   taskConvexId?: string;
@@ -29,8 +58,9 @@ export function computeApprovalStatusForTask(opts: {
 
   if (instances.length === 0) return null;
 
-  const required = instances.filter((i: any) => field(i, 'is_required', 'isRequired') !== false);
-  const requiredSet = required.length > 0 ? required : instances;
+  const uniqueInstances = collapseInstancesByApprover(instances);
+  const required = uniqueInstances.filter((i: any) => field(i, 'is_required', 'isRequired') !== false);
+  const requiredSet = required.length > 0 ? required : uniqueInstances;
 
   const hasReject = requiredSet.some((i: any) => normStatus(i?.status) === 'rejected');
   if (hasReject) return 'rejected';
@@ -38,10 +68,11 @@ export function computeApprovalStatusForTask(opts: {
   const approvedCount = requiredSet.filter((i: any) => normStatus(i?.status) === 'approved').length;
   const totalRequired = requiredSet.length;
 
-  const approvalType = normStatus(approval?.approval_type || 'all');
-  const requireAll = approval?.require_all !== false;
-  const minimumApprovals = Number.isFinite(Number(approval?.minimum_approvals))
-    ? Number(approval.minimum_approvals)
+  const approvalType = normStatus((approval?.approval_type ?? approval?.approvalType) || 'all');
+  const requireAll = (approval?.require_all ?? approval?.requireAll) !== false;
+  const rawMinimumApprovals = approval?.minimum_approvals ?? approval?.minimumApprovals;
+  const minimumApprovals = Number.isFinite(Number(rawMinimumApprovals))
+    ? Number(rawMinimumApprovals)
     : totalRequired;
 
   const isComplete = (() => {
@@ -55,7 +86,7 @@ export function computeApprovalStatusForTask(opts: {
         return approvedCount >= totalRequired;
       case 'all':
       default:
-        return requireAll ? approvedCount >= totalRequired : approvedCount >= Math.max(1, minimumApprovals);
+        return requireAll ? approvedCount >= totalRequired : approvedCount >= Math.max(1, Math.min(minimumApprovals, totalRequired));
     }
   })();
 
@@ -88,24 +119,61 @@ export interface ApproverDetail {
 
 export interface ApprovalProgressSummary {
   total: number;
+  eligibleTotal: number;
   approved: number;
   rejected: number;
   pending: number;
   skipped: number;
 }
 
-export function getApprovalProgressSummary(approverDetails: ApproverDetail[] = []): ApprovalProgressSummary {
-  return approverDetails
-    .flatMap((detail) => detail.memberDetails?.length ? detail.memberDetails : [detail])
-    .reduce<ApprovalProgressSummary>((summary, detail) => {
-      const status = normStatus(detail.status || 'pending');
-      summary.total += 1;
-      if (status === 'approved') summary.approved += 1;
-      else if (status === 'rejected') summary.rejected += 1;
-      else if (status === 'skipped') summary.skipped += 1;
-      else summary.pending += 1;
-      return summary;
-    }, { total: 0, approved: 0, rejected: 0, pending: 0, skipped: 0 });
+function getApprovalMinimumApprovals(approval: any): number | null {
+  const raw = approval?.minimumApprovals ?? approval?.minimum_approvals;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function getApprovalRequirementTarget(approval: any, eligibleTotal: number): number {
+  if (eligibleTotal <= 0) return 0;
+  const requireAll = approval?.requireAll ?? approval?.require_all;
+  if (requireAll === false) {
+    return Math.min(eligibleTotal, getApprovalMinimumApprovals(approval) ?? 1);
+  }
+  return eligibleTotal;
+}
+
+export function getApprovalProgressSummary(approverDetails: ApproverDetail[] = [], approval?: any): ApprovalProgressSummary {
+  const expandedDetails = approverDetails.flatMap((detail) => {
+    if (detail.isRequired === false) return [];
+    return detail.memberDetails?.length ? detail.memberDetails : [detail];
+  });
+  const statusByApproverId = new Map<string, string>();
+
+  expandedDetails.forEach((detail: any, index) => {
+    const key = String(detail.approverUserId ?? detail.id ?? index);
+    const nextStatus = normStatus(detail.status || 'pending');
+    const existingStatus = statusByApproverId.get(key);
+    statusByApproverId.set(key, mergeStatus([existingStatus, nextStatus].filter(Boolean) as string[]));
+  });
+
+  const eligibleTotal = statusByApproverId.size;
+  const requiredTotal = getApprovalRequirementTarget(approval, eligibleTotal);
+  const rawSummary = [...statusByApproverId.values()].reduce<ApprovalProgressSummary>((summary, status) => {
+    summary.eligibleTotal += 1;
+    if (status === 'approved') summary.approved += 1;
+    else if (status === 'rejected') summary.rejected += 1;
+    else if (status === 'skipped') summary.skipped += 1;
+    else summary.pending += 1;
+    return summary;
+  }, { total: requiredTotal, eligibleTotal: 0, approved: 0, rejected: 0, pending: 0, skipped: 0 });
+
+  const closedCount = Math.min(rawSummary.approved + rawSummary.rejected + rawSummary.skipped, requiredTotal);
+  return {
+    ...rawSummary,
+    approved: Math.min(rawSummary.approved, requiredTotal),
+    rejected: Math.min(rawSummary.rejected, requiredTotal),
+    skipped: Math.min(rawSummary.skipped, requiredTotal),
+    pending: Math.max(0, requiredTotal - closedCount),
+  };
 }
 
 export function buildApproverDetails(
