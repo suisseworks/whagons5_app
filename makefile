@@ -12,7 +12,7 @@ else
     SED_INPLACE = sed -i
 endif
 
-REMOTE_REPO := $(shell git remote get-url origin)
+REMOTE_REPO ?= origin
 OPENROUTER_MODEL ?= moonshotai/kimi-k2.5
 IMAGEMAGICK ?= $(shell command -v magick 2>/dev/null || command -v convert 2>/dev/null)
 CLIENT_ROOT ?= ..

@@ -3,7 +3,7 @@
     "name": "Whagons",
     "slug": "whagons",
     "scheme": "whagons",
-    "version": "5.1.22",
+    "version": "5.1.23",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,7 +16,7 @@
     "ios": {
       "icon": "./assets/icon.png",
       "supportsTablet": true,
-      "buildNumber": "38",
+      "buildNumber": "39",
       "bundleIdentifier": "com.whagons.v5",
       "usesAppleSignIn": true,
       "googleServicesFile": "./GoogleService-Info.plist",
