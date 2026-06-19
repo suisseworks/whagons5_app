@@ -499,6 +499,8 @@ export interface TaskCacheQuery {
   workspaceId?: string | number | null;
   statuses?: string[];
   excludeStatuses?: string[];
+  recentFinishedStatuses?: string[];
+  recentFinishedSince?: number | null;
   search?: string;
   limit: number;
   offset?: number;
@@ -510,6 +512,8 @@ export interface TaskCacheSummaryQuery {
   workspaceId?: string | number | null;
   statuses?: string[];
   excludeStatuses?: string[];
+  recentFinishedStatuses?: string[];
+  recentFinishedSince?: number | null;
   search?: string;
 }
 
@@ -678,6 +682,8 @@ function buildTaskCacheWhere({
   workspaceId,
   statuses,
   excludeStatuses,
+  recentFinishedStatuses,
+  recentFinishedSince,
   search,
 }: TaskCacheSummaryQuery): { whereSql: string; params: unknown[] } {
   const where: string[] = [`(task_cache.deleted_at IS NULL OR task_cache.deleted_at = '')`];
@@ -727,10 +733,20 @@ function buildTaskCacheWhere({
     params.push(...excludeStatuses);
   }
 
+  if (recentFinishedStatuses && recentFinishedStatuses.length > 0 && Number.isFinite(recentFinishedSince ?? NaN)) {
+    where.push(`(
+      task_cache.status_name IS NULL
+      OR task_cache.status_name NOT IN (${recentFinishedStatuses.map(() => '?').join(', ')})
+      OR (task_cache.finished_at IS NOT NULL AND task_cache.finished_at >= ?)
+    )`);
+    params.push(...recentFinishedStatuses, recentFinishedSince);
+  }
+
   const terms = (search ?? '')
     .trim()
     .toLowerCase()
     .split(/\s+/)
+    .map((term) => (/^#\d+$/.test(term) ? term.slice(1) : term))
     .filter(Boolean);
   for (const term of terms) {
     where.push(`task_cache.search_text LIKE ?`);

@@ -21,14 +21,17 @@ import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { useMutationQueue } from './MutationQueueContext';
 import { useNetwork } from './NetworkContext';
 import { useLanguage } from './LanguageContext';
-import { SHOW_FINISHED_TASKS_STORAGE_KEY } from '../config/storageKeys';
+import { FINALIZED_TASK_WINDOW_DAYS_STORAGE_KEY } from '../config/storageKeys';
 import * as DB from '../store/database';
 import type { TimeFormatPreference } from './LanguageContext';
 
 const WORKING_TASKS_STORAGE_KEY = '@whagons/working_task_ids';
 const CARD_DENSITY_STORAGE_KEY = '@whagons/card_density';
-const SHOW_FINISHED_TASKS_ARCHIVE_DEFAULT_KEY = '@whagons/show_finished_tasks_archive_default_v2';
 const MAX_WORKING_TASKS = 5;
+const FINALIZED_TASK_WINDOW_OPTIONS = [7, 30, 90, 'all'] as const;
+export type FinalizedTaskWindowValue = typeof FINALIZED_TASK_WINDOW_OPTIONS[number];
+const DEFAULT_FINALIZED_TASK_WINDOW_VALUE: FinalizedTaskWindowValue = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 // SQLite is the default list source (Phase 2): the indexed in-memory path is
 // only a fallback. Set to 0 so the SQLite-backed list is used whenever no
 // memory-only filters are active — this hydrates instantly from the on-disk
@@ -118,6 +121,14 @@ function normalizeCardDensity(value: unknown): CardDensity | null {
   return value === 'normal' || value === 'detailed' ? value : null;
 }
 
+function normalizeFinalizedTaskWindowValue(value: unknown): FinalizedTaskWindowValue | null {
+  if (value === 'all') return 'all';
+  const numeric = typeof value === 'number' ? value : Number(value);
+  return FINALIZED_TASK_WINDOW_OPTIONS.includes(numeric as FinalizedTaskWindowValue)
+    ? numeric as FinalizedTaskWindowValue
+    : null;
+}
+
 function readStringValue(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
@@ -154,6 +165,15 @@ function taskMatchesSearchQuery(task: TaskItem, query: string): boolean {
     task.tags.some((tag) => tag.toLowerCase().includes(q)) ||
     (isIdSearch && task.id != null && String(task.id) === idTerm)
   );
+}
+
+function parseExactTaskIdSearch(query: string): number | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+  const candidate = trimmed.startsWith('#') ? trimmed.slice(1) : trimmed;
+  if (!/^\d+$/.test(candidate)) return null;
+  const parsed = Number(candidate);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function resolveTaskStatusMeta(
@@ -493,7 +513,7 @@ export interface CreatedTaskResult {
 
 interface TaskContextType {
   tasks: TaskItem[];
-  taskListMode: 'hot' | 'all';
+  taskListMode: 'hot' | 'recent' | 'all';
   taskUniverseCount: number;
   totalTaskCount: number;
   loadMoreTasks: () => void;
@@ -525,8 +545,9 @@ interface TaskContextType {
   setCardDensity: (density: CardDensity) => void;
   toggleCompactCards: () => void;
   compactCards: boolean;
-  showFinishedTasks: boolean;
-  setShowFinishedTasks: (show: boolean) => void;
+  finalizedTaskWindowValue: FinalizedTaskWindowValue;
+  finalizedTaskWindowOptions: readonly FinalizedTaskWindowValue[];
+  setFinalizedTaskWindowValue: (value: FinalizedTaskWindowValue) => void;
   setSelectedWorkspace: (workspace: string) => void;
   filters: TaskFilters;
   setFilters: (filters: TaskFilters) => void;
@@ -572,7 +593,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const activeTenantId = token ? tenantId : null;
   const [storedTenantId, setStoredTenantId] = useState<string | null>(null);
   const [cardDensity, setCardDensityState] = useState<CardDensity>('normal');
-  const [showFinishedTasks, setShowFinishedTasksState] = useState(false);
+  const [finalizedTaskWindowValue, setFinalizedTaskWindowValueState] = useState<FinalizedTaskWindowValue>(DEFAULT_FINALIZED_TASK_WINDOW_VALUE);
   const [searchQuery, setSearchQueryState] = useState('');
   const convexUser = useQuery(api.users.me, activeTenantId ? { tenantId: activeTenantId } : 'skip');
   const { queue } = useMutationQueue();
@@ -680,23 +701,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [tenantId, updateMeMutation]);
 
   useEffect(() => {
-    AsyncStorage.multiGet([SHOW_FINISHED_TASKS_ARCHIVE_DEFAULT_KEY, SHOW_FINISHED_TASKS_STORAGE_KEY])
-      .then((entries) => {
-        const migrated = entries.find(([key]) => key === SHOW_FINISHED_TASKS_ARCHIVE_DEFAULT_KEY)?.[1] === 'true';
-        const raw = entries.find(([key]) => key === SHOW_FINISHED_TASKS_STORAGE_KEY)?.[1];
-
-        if (!migrated) {
-          setShowFinishedTasksState(false);
-          AsyncStorage.multiSet([
-            [SHOW_FINISHED_TASKS_STORAGE_KEY, 'false'],
-            [SHOW_FINISHED_TASKS_ARCHIVE_DEFAULT_KEY, 'true'],
-          ]).catch(() => {});
-          return;
-        }
-
-        if (raw === 'true' || raw === 'false') {
-          setShowFinishedTasksState(raw === 'true');
-        }
+    AsyncStorage.getItem(FINALIZED_TASK_WINDOW_DAYS_STORAGE_KEY)
+      .then((raw) => {
+        const storedWindow = normalizeFinalizedTaskWindowValue(raw);
+        if (storedWindow) setFinalizedTaskWindowValueState(storedWindow);
       })
       .catch(() => {});
   }, []);
@@ -704,20 +712,23 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     if (!convexUser) return;
     const settings = (convexUser as any).settings ?? {};
-    const serverShowFinished = settings.showFinishedTasks ?? settings.show_finished_tasks;
-    if (serverShowFinished === false) {
-      AsyncStorage.setItem(SHOW_FINISHED_TASKS_STORAGE_KEY, 'false').catch(() => {});
+    const serverWindow = normalizeFinalizedTaskWindowValue(
+      settings.finalizedTaskWindowDays ?? settings.finalized_task_window_days,
+    );
+    if (serverWindow) {
+      setFinalizedTaskWindowValueState(serverWindow);
+      AsyncStorage.setItem(FINALIZED_TASK_WINDOW_DAYS_STORAGE_KEY, String(serverWindow)).catch(() => {});
     }
   }, [convexUser]);
 
-  const setShowFinishedTasks = useCallback((show: boolean) => {
-    const next = show === true;
-    setShowFinishedTasksState(next);
-    AsyncStorage.setItem(SHOW_FINISHED_TASKS_STORAGE_KEY, String(next)).catch(() => {});
+  const setFinalizedTaskWindowValue = useCallback((value: FinalizedTaskWindowValue) => {
+    const next = normalizeFinalizedTaskWindowValue(value) ?? DEFAULT_FINALIZED_TASK_WINDOW_VALUE;
+    setFinalizedTaskWindowValueState(next);
+    AsyncStorage.setItem(FINALIZED_TASK_WINDOW_DAYS_STORAGE_KEY, String(next)).catch(() => {});
     if (!tenantId) return;
     updateMeMutation({
       tenantId,
-      settings: { showFinishedTasks: next },
+      settings: { finalizedTaskWindowDays: next },
     }).catch(() => {});
   }, [tenantId, updateMeMutation]);
 
@@ -725,7 +736,18 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setSearchQueryState(query);
   }, []);
 
-  const taskListMode = showFinishedTasks ? 'all' as const : 'hot' as const;
+  const recentFinishedSince = useMemo(
+    () => finalizedTaskWindowValue === 'all' ? null : Date.now() - finalizedTaskWindowValue * DAY_MS,
+    [finalizedTaskWindowValue],
+  );
+  const taskListMode = finalizedTaskWindowValue === 'all' ? 'all' as const : 'recent' as const;
+  const exactSearchPgId = useMemo(() => parseExactTaskIdSearch(searchQuery), [searchQuery]);
+  const serverSearchTask = useQuery(
+    (api.bulk as any).taskByPgId,
+    activeTenantId && exactSearchPgId != null
+      ? { tenantId: activeTenantId, pgId: exactSearchPgId }
+      : 'skip',
+  );
 
   const [selectedWorkspace, setSelectedWorkspace] = useState('Everything');
   const [filters, setFilters] = useState<TaskFilters>(emptyFilters);
@@ -1105,6 +1127,46 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     );
   }, [activeTasks, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, userMap, userPictureMap, tagNameMap, formatTaskDate]);
 
+  const serverSearchTaskItem = useMemo(() => {
+    if (!serverSearchTask || typeof serverSearchTask !== 'object') return null;
+    const rawTask = serverSearchTask as any;
+    const resolveId = (items: any[], rawId: any) => {
+      if (rawId == null) return null;
+      const match = items.find((item: any) => String(item?._id ?? '') === String(rawId));
+      return match?.id ?? rawId;
+    };
+    const resolveIds = (items: any[], rawIds: unknown) => (
+      readIdArray(rawIds)
+        .map((rawId) => resolveId(items, rawId))
+        .filter((rawId) => rawId != null)
+    );
+    const activeWorkspaceContext = rawTask.activeWorkspaceContext ?? rawTask.active_workspace_context ?? null;
+    const sourceWorkspaceId = resolveId(data.workspaces, rawTask.workspaceId ?? rawTask.workspace_id);
+    const overlayWorkspaceId = activeWorkspaceContext
+      ? resolveId(data.workspaces, activeWorkspaceContext.workspaceId ?? activeWorkspaceContext.workspace_id)
+      : sourceWorkspaceId;
+    const syncedTask: SyncedTask = {
+      ...rawTask,
+      id: rawTask.pgId ?? rawTask.id ?? rawTask._id,
+      source_workspace_id: sourceWorkspaceId,
+      workspace_id: overlayWorkspaceId,
+      category_id: resolveId(data.categories, rawTask.categoryId ?? rawTask.category_id),
+      status_id: resolveId(data.statuses, rawTask.statusId ?? rawTask.status_id),
+      priority_id: resolveId(data.priorities, rawTask.priorityId ?? rawTask.priority_id),
+      approval_id: resolveId(approvalsList, rawTask.approvalId ?? rawTask.approval_id) ?? rawTask.approvalId ?? rawTask.approval_id ?? null,
+      spot_id: resolveId(data.spots, rawTask.spotId ?? rawTask.spot_id),
+      template_id: resolveId(data.templates, rawTask.templateId ?? rawTask.template_id),
+      created_by: resolveId(data.users, rawTask.createdBy ?? rawTask.created_by),
+      user_ids: resolveIds(data.users, rawTask.userIds ?? rawTask.user_ids),
+      tag_ids: resolveIds(data.tags, rawTask.tagIds ?? rawTask.tag_ids),
+      deleted_at: rawTask.deletedAt ? new Date(rawTask.deletedAt).toISOString() : rawTask.deleted_at ?? null,
+      completed_at: rawTask.completedAt ? new Date(rawTask.completedAt).toISOString() : rawTask.completed_at ?? null,
+      created_at: rawTask.createdAt ? new Date(rawTask.createdAt).toISOString() : (rawTask._creationTime ? new Date(rawTask._creationTime).toISOString() : rawTask.created_at ?? null),
+      updated_at: rawTask.updatedAt ? new Date(rawTask.updatedAt).toISOString() : (rawTask._creationTime ? new Date(rawTask._creationTime).toISOString() : rawTask.updated_at ?? null),
+    };
+    return mapTaskToItem(syncedTask, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, userMap, userPictureMap, tagNameMap, formatTaskDate);
+  }, [approvalsList, assigneeMap, categoryInfoMap, commentSummaryMap, data.categories, data.priorities, data.spots, data.statuses, data.tags, data.templates, data.users, data.workspaces, formInfoMap, formatTaskDate, initialStatus, priorityMap, serverSearchTask, spotMap, statusMap, tagMap, tagNameMap, templateFormMap, userFlagMap, userMap, userPictureMap]);
+
   const approvalMap = useMemo(() => {
     const m: Record<string, any> = {};
     for (const a of approvalsList) {
@@ -1260,15 +1322,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [mappedActiveTasks, pendingCreatedTasks.length]);
 
   const allMappedTasks = useMemo(() => {
-    const baseTasks = sharedMappedTasks.length > 0
+    const visibleBaseTasks = sharedMappedTasks.length > 0
       ? [...mappedActiveTasks, ...sharedMappedTasks]
       : mappedActiveTasks;
-    const visibleBaseTasks = showFinishedTasks
-      ? baseTasks
-      : baseTasks.filter((task) => !isFinishedListTask(task, statusMap));
-    const visiblePendingTasks = showFinishedTasks
-      ? pendingCreatedTasks
-      : pendingCreatedTasks.filter((task) => !isFinishedListTask(task, statusMap));
+    const visiblePendingTasks = pendingCreatedTasks;
     const withApprovalStatus = (tasks: TaskItem[]) => tasks.map((task) => {
       const approvalStatus = task.approvalStatus ?? getTaskApprovalStatus(task);
       return approvalStatus ? { ...task, approvalStatus } : task;
@@ -1280,7 +1337,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const syncedKeys = new Set(visibleBaseTasks.map((task) => pendingTaskHeuristicKey(task)));
     const pending = visiblePendingTasks.filter((task) => !syncedKeys.has(pendingTaskHeuristicKey(task)));
     return withApprovalStatus([...visibleBaseTasks, ...pending]);
-  }, [getTaskApprovalStatus, mappedActiveTasks, pendingCreatedTasks, sharedMappedTasks, showFinishedTasks, statusMap]);
+  }, [getTaskApprovalStatus, mappedActiveTasks, pendingCreatedTasks, sharedMappedTasks]);
 
   const taskIdByConvexId = useMemo(() => {
     const map = new Map<string, string>();
@@ -1523,7 +1580,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     () => allMappedTasks.filter((task) => !isSharedOnlyTask(task) && taskMatchesVisibleSpot(task, visibleSpotKeySet, spotScopeRestricted, currentUserNames)),
     [allMappedTasks, currentUserNames, isSharedOnlyTask, spotScopeRestricted, visibleSpotKeySet],
   );
-  const liveTaskUniverseCount = workspaceVisibleMappedTasks.length;
+  const countableWorkspaceVisibleMappedTasks = useMemo(
+    () => workspaceVisibleMappedTasks.filter((task) => !isFinishedListTask(task, statusMap)),
+    [statusMap, workspaceVisibleMappedTasks],
+  );
+  const liveTaskUniverseCount = countableWorkspaceVisibleMappedTasks.length;
 
   const liveWorkspaceTaskCounts = useMemo(() => {
     const counts = new Map<string | number, number>();
@@ -1534,7 +1595,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const convexId = (workspace as any)?._id;
 
       let count = 0;
-      for (const task of workspaceVisibleMappedTasks) {
+      for (const task of countableWorkspaceVisibleMappedTasks) {
         if (taskMatchesWorkspace(task, workspace)) count++;
       }
 
@@ -1547,7 +1608,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     return counts;
-  }, [workspaceObjects, workspaceVisibleMappedTasks]);
+  }, [countableWorkspaceVisibleMappedTasks, workspaceObjects]);
 
   // ---------------------------------------------------------------------------
   // Filter + paginate
@@ -1589,9 +1650,11 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const shouldUseSqlTaskList = canUseIndexedTaskList && allMappedTasks.length >= TASK_SQL_THRESHOLD;
 
-  // When the show-finished toggle is on we must NOT exclude finished statuses from
-  // the large-tenant SQL path, otherwise finished tasks never appear there.
-  const sqlExcludeStatuses = showFinishedTasks ? EMPTY_STRINGS : finishedStatusNames;
+  // Finished rows are limited by finalized timestamp unless the user selects
+  // the full finalized history.
+  const sqlExcludeStatuses = EMPTY_STRINGS;
+  const sqlRecentFinishedStatuses = finalizedTaskWindowValue === 'all' ? EMPTY_STRINGS : finishedStatusNames;
+  const sqlRecentFinishedSince = recentFinishedSince;
 
   const sqlFilterKey = useMemo(() => {
     if (!shouldUseSqlTaskList) return '';
@@ -1600,13 +1663,15 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       workspaceId: sqlFilterWorkspaceId ?? null,
       statuses: filters.statuses,
       excludeStatuses: sqlExcludeStatuses,
+      recentFinishedStatuses: sqlRecentFinishedStatuses,
+      recentFinishedSince: sqlRecentFinishedSince,
       search: searchQuery.trim().toLowerCase(),
       limit: sqlQueryLimit,
       // Re-run the SQLite query when the local cache is rewritten so the list
       // reflects synced/optimistic changes in (near) real time.
       cacheVersion: taskCacheVersion,
     });
-  }, [effectiveTenantId, filters.statuses, sqlExcludeStatuses, searchQuery, taskCacheVersion, shouldUseSqlTaskList, sqlFilterWorkspaceId, sqlQueryLimit]);
+  }, [effectiveTenantId, filters.statuses, sqlExcludeStatuses, sqlRecentFinishedSince, sqlRecentFinishedStatuses, searchQuery, taskCacheVersion, shouldUseSqlTaskList, sqlFilterWorkspaceId, sqlQueryLimit]);
 
   const [sqlFilteredState, setSqlFilteredState] = useState<{
     key: string;
@@ -1627,6 +1692,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       workspaceId: sqlFilterWorkspaceId ?? undefined,
       statuses: filters.statuses,
       excludeStatuses: sqlExcludeStatuses,
+      recentFinishedStatuses: sqlRecentFinishedStatuses,
+      recentFinishedSince: sqlRecentFinishedSince,
       search: searchQuery.trim() || undefined,
       limit: sqlQueryLimit,
     })
@@ -1656,6 +1723,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     commentSummaryMap,
     effectiveTenantId,
     sqlExcludeStatuses,
+    sqlRecentFinishedSince,
+    sqlRecentFinishedStatuses,
     searchQuery,
     formatTaskDate,
     filters.statuses,
@@ -1680,8 +1749,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const activeSqlFilteredState = sqlFilteredState?.key === sqlFilterKey ? sqlFilteredState : null;
 
   const computedFilteredTasks = useMemo(() => {
-    if (activeSqlFilteredState) return activeSqlFilteredState.tasks;
-    if (allMappedTasks.length === 0) return EMPTY_TASKS;
+    if (activeSqlFilteredState) {
+      return activeSqlFilteredState.tasks.length === 0 && serverSearchTaskItem
+        ? [serverSearchTaskItem]
+        : activeSqlFilteredState.tasks;
+    }
+    if (allMappedTasks.length === 0) return serverSearchTaskItem ? [serverSearchTaskItem] : EMPTY_TASKS;
 
     let result: TaskItem[];
     if (selectedWorkspace === 'Everything') {
@@ -1745,6 +1818,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       result = result.filter((task) => taskMatchesSearchQuery(task, searchQuery));
     }
 
+    if (result.length === 0 && serverSearchTaskItem) {
+      result = [serverSearchTaskItem];
+    }
+
     if (shouldShowPendingTaskState && queuedTaskOverrides.size > 0) {
       result = result.map((t) => {
         const override = queuedTaskOverrides.get(String(t.id ?? ''));
@@ -1777,15 +1854,15 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return result;
-  }, [activeSqlFilteredState, allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, searchQuery, sharedTaskIds, sharedEnrichmentMap, workspaceVisibleMappedTasks]);
+  }, [activeSqlFilteredState, allMappedTasks, data.workspaces, selectedWorkspace, localOverrides, queuedTaskOverrides, shouldShowPendingTaskState, filters, hasActiveFilters, searchQuery, serverSearchTaskItem, sharedTaskIds, sharedEnrichmentMap, workspaceVisibleMappedTasks]);
 
   const filteredTaskViewKey = useMemo(() => JSON.stringify({
     workspace: selectedWorkspace,
     filters,
     searchQuery,
-    showFinishedTasks,
+    finalizedTaskWindowValue,
     taskListMode,
-  }), [filters, searchQuery, selectedWorkspace, showFinishedTasks, taskListMode]);
+  }), [filters, finalizedTaskWindowValue, searchQuery, selectedWorkspace, taskListMode]);
   const filteredTaskViewCacheRef = useRef<Map<string, TaskItem[]>>(new Map());
   const canUseCachedFilteredTasks = isTaskPageLoading || isTaskPageIncomplete;
   const cachedFilteredTasks = filteredTaskViewCacheRef.current.get(filteredTaskViewKey);
@@ -1837,9 +1914,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const wsFilteredTaskViewKey = useMemo(() => JSON.stringify({
     workspace: selectedWorkspace,
     searchQuery,
-    showFinishedTasks,
+    finalizedTaskWindowValue,
     taskListMode,
-  }), [searchQuery, selectedWorkspace, showFinishedTasks, taskListMode]);
+  }), [finalizedTaskWindowValue, searchQuery, selectedWorkspace, taskListMode]);
   const wsFilteredTaskViewCacheRef = useRef<Map<string, TaskItem[]>>(new Map());
   const cachedWsFilteredTasks = wsFilteredTaskViewCacheRef.current.get(wsFilteredTaskViewKey);
   const wsFilteredTasks = computedWsFilteredTasks.length === 0 && canUseCachedFilteredTasks && cachedWsFilteredTasks
@@ -1862,7 +1939,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // offline), then the authoritative server counts override them as soon as they
   // arrive. In-memory is the last resort.
   const searchActiveForCounts = searchQuery.trim().length > 0;
-  const countsMode = showFinishedTasks ? ('all' as const) : ('hot' as const);
+  const countsMode = 'hot' as const;
+  const countExcludeStatuses = finishedStatusNames;
+  const statusPillMode = taskListMode;
 
   // Server: all-workspaces summary → sidebar (every workspace) + "Everything" totals.
   const serverAllSummary = useQuery(
@@ -1884,9 +1963,24 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       : 'skip',
   );
 
+  // Status pills describe the visible task list, so they include finalized
+  // statuses inside the selected finalized-date window.
+  const serverStatusSummary = useQuery(
+    api.bulk.taskSummaryCounts,
+    effectiveTenantId
+      ? {
+          tenantId: effectiveTenantId,
+          ...(scopedWorkspaceCountId ? { workspaceId: scopedWorkspaceCountId } : {}),
+          mode: statusPillMode,
+          ...(statusPillMode === 'recent' && recentFinishedSince != null ? { recentFinishedSince } : {}),
+        }
+      : 'skip',
+  );
+
   const serverViewSummary = scopedWorkspaceCountId ? serverScopedSummary : serverAllSummary;
   // The server query has no text-search term, so when searching we rely on the cache.
   const serverCountsUsable = selectedWorkspace !== 'Shared' && !searchActiveForCounts;
+  const serverStatusCountsUsable = serverCountsUsable && serverStatusSummary?.exact === true;
 
   // Cache counts apply for any non-"Shared" view without memory-only filters. This is
   // deliberately NOT gated on online/pending state (unlike the SQL list path) so the
@@ -1903,11 +1997,13 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return JSON.stringify({
       tenantId: effectiveTenantId,
       workspaceId: sqlFilterWorkspaceId ?? null,
-      excludeStatuses: sqlExcludeStatuses,
+      excludeStatuses: countExcludeStatuses,
+      statusPillMode,
+      recentFinishedSince: statusPillMode === 'recent' ? recentFinishedSince : null,
       search: searchQuery.trim().toLowerCase(),
       cacheVersion: taskCacheVersion,
     });
-  }, [canUseCacheCounts, effectiveTenantId, sqlFilterWorkspaceId, sqlExcludeStatuses, searchQuery, taskCacheVersion]);
+  }, [canUseCacheCounts, countExcludeStatuses, effectiveTenantId, recentFinishedSince, sqlFilterWorkspaceId, searchQuery, statusPillMode, taskCacheVersion]);
 
   const [cacheCounts, setCacheCounts] = useState<{
     key: string;
@@ -1924,11 +2020,27 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     let cancelled = false;
     const search = searchQuery.trim();
     const buckets: DB.TaskCacheBucket[] = ['live'];
+    const statusPillSummaryArgs = statusPillMode === 'recent'
+      ? {
+          tenantId: effectiveTenantId,
+          buckets,
+          workspaceId: sqlFilterWorkspaceId ?? undefined,
+          recentFinishedStatuses: finishedStatusNames,
+          recentFinishedSince,
+          search,
+        }
+      : {
+          tenantId: effectiveTenantId,
+          buckets,
+          workspaceId: sqlFilterWorkspaceId ?? undefined,
+          search,
+        };
     Promise.all([
       // Sidebar: per-workspace counts across all workspaces (no workspace filter).
-      DB.queryTaskCacheSummary({ tenantId: effectiveTenantId, buckets, excludeStatuses: sqlExcludeStatuses, search }),
-      // Status pills + scoped total: scoped to the selected workspace.
-      DB.queryTaskCacheSummary({ tenantId: effectiveTenantId, buckets, workspaceId: sqlFilterWorkspaceId ?? undefined, excludeStatuses: sqlExcludeStatuses, search }),
+      DB.queryTaskCacheSummary({ tenantId: effectiveTenantId, buckets, excludeStatuses: countExcludeStatuses, search }),
+      // Status pills: scoped to the selected workspace and aligned to the visible
+      // finalized-task window.
+      DB.queryTaskCacheSummary(statusPillSummaryArgs),
     ])
       .then(([allSummary, scopedSummary]) => {
         if (cancelled) return;
@@ -1957,7 +2069,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return () => {
       cancelled = true;
     };
-  }, [cacheCountsKey, effectiveTenantId, sqlFilterWorkspaceId, sqlExcludeStatuses, searchQuery, workspaceObjects]);
+  }, [cacheCountsKey, countExcludeStatuses, effectiveTenantId, finishedStatusNames, recentFinishedSince, searchQuery, sqlFilterWorkspaceId, statusPillMode, workspaceObjects]);
 
   const resolvedCacheCounts = cacheCounts?.key === cacheCountsKey ? cacheCounts : null;
   // Only trust the cache result when it actually has data, OR when there is nothing in
@@ -1996,8 +2108,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [serverCountsUsable, serverAllSummary, serverScopedSummary, scopedWorkspaceCountId, workspaceObjects]);
 
   const serverTaskStatusCounts = useMemo(() => {
-    if (!serverCountsUsable) return null;
-    const byStatus = serverViewSummary?.byStatus;
+    if (!serverStatusCountsUsable) return null;
+    const byStatus = serverStatusSummary?.byStatus;
     if (!byStatus) return null;
     const counts = new Map<string, number>();
     for (const entry of Object.values(byStatus) as Array<{ name?: string; count?: number }>) {
@@ -2006,7 +2118,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Empty byStatus = large-tenant materialized fallback on the server; fall through
     // to the cache so the pills still show (best-effort) counts.
     return counts.size > 0 ? counts : null;
-  }, [serverCountsUsable, serverViewSummary]);
+  }, [serverStatusCountsUsable, serverStatusSummary]);
 
   const serverAllTotal = (serverCountsUsable && serverAllSummary && typeof serverAllSummary.total === 'number')
     ? serverAllSummary.total
@@ -2057,6 +2169,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const availableStatuses: StatusOption[] = useMemo(() => {
     const wsFiltered = wsFilteredTasks;
+    const presentStatusNames = new Set(wsFiltered.map((task) => task.status.toLowerCase()).filter(Boolean));
 
     const catIds = new Set<AnyId>();
     for (const t of wsFiltered) {
@@ -2075,28 +2188,26 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (statusIds.size === 0) return statuses;
 
-    return statuses.filter((s) => statusIds.has(s.id));
+    return statuses.filter((s) => statusIds.has(s.id) || presentStatusNames.has(s.name.toLowerCase()));
   }, [categoryStatusIdsMap, statuses, wsFilteredTasks]);
 
   useEffect(() => {
-    // Drive the reactive task query from the show-finished toggle. Previously this
-    // was hardcoded to 'hot' (so finished tasks were never fetched into the normal
-    // list) and relied on a separate, unreliable SQLite "archive sync" loop for
-    // finished tasks — which is why the toggle appeared to do nothing. Finished
-    // tasks now flow through the normal path via mode 'all'.
+    // Finished tasks flow through the normal list query, scoped by the selected
+    // finalized-date window or the full history when "All" is selected.
     setTaskQuery({
       mode: taskListMode,
+      recentFinishedSince: taskListMode === 'recent' ? recentFinishedSince : undefined,
       archiveEnabled: false,
     });
-  }, [setTaskQuery, taskListMode]);
+  }, [recentFinishedSince, setTaskQuery, taskListMode]);
 
-  const prevShowFinishedRef = useRef(showFinishedTasks);
+  const prevFinishedWindowRef = useRef(finalizedTaskWindowValue);
   useEffect(() => {
-    if (prevShowFinishedRef.current !== showFinishedTasks) {
+    if (prevFinishedWindowRef.current !== finalizedTaskWindowValue) {
       setVisibleCount(PAGE_SIZE);
-      prevShowFinishedRef.current = showFinishedTasks;
+      prevFinishedWindowRef.current = finalizedTaskWindowValue;
     }
-  }, [showFinishedTasks]);
+  }, [finalizedTaskWindowValue]);
 
   // Pagination
   const prevWorkspaceRef = useRef(selectedWorkspace);
@@ -2125,7 +2236,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [searchQuery]);
 
   const tasks = useMemo(() => filteredTasks.slice(0, visibleCount), [filteredTasks, visibleCount]);
-  const totalTaskCount = activeSqlFilteredState?.total ?? filteredTasks.length;
+  const totalTaskCount = activeSqlFilteredState
+    ? Math.max(activeSqlFilteredState.total, filteredTasks.length)
+    : filteredTasks.length;
   const hasMoreTasks = visibleCount < totalTaskCount || (!activeSqlFilteredState && hasMoreTaskRows);
   const isTaskListLoading = !activeSqlFilteredState && isTaskPageLoading;
   const isTaskListIncomplete = !activeSqlFilteredState && isTaskPageIncomplete;
@@ -2872,8 +2985,9 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       isTaskWorking,
       setCardDensity,
       toggleCompactCards,
-      showFinishedTasks,
-      setShowFinishedTasks,
+      finalizedTaskWindowValue,
+      finalizedTaskWindowOptions: FINALIZED_TASK_WINDOW_OPTIONS,
+      setFinalizedTaskWindowValue,
       setSelectedWorkspace,
       filters,
       setFilters,
@@ -2925,8 +3039,8 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       completeWorkingTask,
       isTaskWorking,
       setCardDensity,
-      showFinishedTasks,
-      setShowFinishedTasks,
+      finalizedTaskWindowValue,
+      setFinalizedTaskWindowValue,
       filters,
       searchQuery,
       setSearchQuery,

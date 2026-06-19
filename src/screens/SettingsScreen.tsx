@@ -94,7 +94,11 @@ export const SettingsScreen: React.FC = () => {
   const { preferences, updatePreferences, hasPermission } = useNotifications();
   const { user, logout, subdomain, switchTenant } = useAuth();
   const { forceResync } = useData();
-  const { showFinishedTasks, setShowFinishedTasks } = useTasks();
+  const {
+    finalizedTaskWindowValue,
+    finalizedTaskWindowOptions,
+    setFinalizedTaskWindowValue,
+  } = useTasks();
   const { pendingCount, failedCount } = useMutationQueue();
   const { language, timeFormat, setLanguage, setTimeFormat, t } = useLanguage();
   const submitBugReport = useMutation(api.bugReports.submit);
@@ -105,6 +109,7 @@ export const SettingsScreen: React.FC = () => {
   const [switchTenantModalVisible, setSwitchTenantModalVisible] = useState(false);
   const [languageModalVisible, setLanguageModalVisible] = useState(false);
   const [bugReportModalVisible, setBugReportModalVisible] = useState(false);
+  const [finalizedWindowModalVisible, setFinalizedWindowModalVisible] = useState(false);
   const [bugReportText, setBugReportText] = useState('');
   const [bugReportSubmitting, setBugReportSubmitting] = useState(false);
   const [passwordResetModalVisible, setPasswordResetModalVisible] = useState(false);
@@ -188,6 +193,21 @@ export const SettingsScreen: React.FC = () => {
 
   const handleShowReleaseNotes = () => {
     setReleaseNotesModalVisible(true);
+  };
+
+  const finalizedTaskWindowLabel = (value: typeof finalizedTaskWindowValue) => {
+    switch (value) {
+      case 7:
+        return t('settings.finalizedTaskWindow1Week');
+      case 30:
+        return t('settings.finalizedTaskWindow1Month');
+      case 90:
+        return t('settings.finalizedTaskWindow3Months');
+      case 'all':
+        return t('settings.finalizedTaskWindowAll');
+      default:
+        return t('settings.finalizedTaskWindowDays', { count: value });
+    }
   };
 
   const handleChangePassword = () => {
@@ -498,13 +518,13 @@ export const SettingsScreen: React.FC = () => {
         {/* Task Lists Section */}
         <SectionHeader title={t('settings.sectionTaskLists')} />
         <View style={cardStyle}>
-          {renderSwitchTile({
-            icon: 'done-all',
-            title: t('settings.showFinishedTasks'),
-            subtitle: t('settings.showFinishedTasksSubtitle'),
-            value: showFinishedTasks,
-            onValueChange: setShowFinishedTasks,
-          })}
+          <ListTile
+            icon="date-range"
+            title={t('settings.finalizedTaskWindow')}
+            subtitle={t('settings.finalizedTaskWindowSubtitle')}
+            trailing={<Text style={[styles.listTileValue, { color: colors.textSecondary }]}>{finalizedTaskWindowLabel(finalizedTaskWindowValue)}</Text>}
+            onPress={() => setFinalizedWindowModalVisible(true)}
+          />
         </View>
 
         {/* Workspaces Section */}
@@ -713,6 +733,69 @@ export const SettingsScreen: React.FC = () => {
               ]}
               activeOpacity={0.85}
               onPress={() => setLanguageModalVisible(false)}
+            >
+              <Text style={[styles.languageCancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={finalizedWindowModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFinalizedWindowModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <Pressable style={styles.modalScrim} onPress={() => setFinalizedWindowModalVisible(false)} />
+          <View
+            style={[
+              styles.languageSheet,
+              {
+                backgroundColor: colors.surface,
+                borderColor: isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+              },
+            ]}
+          >
+            <View style={[styles.languageHandle, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.10)' }]} />
+            <Text style={[styles.languageTitle, { color: colors.text }]}>{t('settings.finalizedTaskWindow')}</Text>
+            <Text style={[styles.languageSubtitle, { color: colors.textSecondary }]}>{t('settings.finalizedTaskWindowMessage')}</Text>
+            {finalizedTaskWindowOptions.map((value) => {
+              const selected = finalizedTaskWindowValue === value;
+              return (
+                <TouchableOpacity
+                  key={String(value)}
+                  style={[
+                    styles.languageOption,
+                    {
+                      borderColor: selected ? primaryColor : (isDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'),
+                      backgroundColor: selected ? `${primaryColor}12` : (isDarkMode ? 'rgba(255,255,255,0.03)' : '#FFFFFF'),
+                    },
+                  ]}
+                  onPress={() => {
+                    setFinalizedTaskWindowValue(value);
+                    setFinalizedWindowModalVisible(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.languageOptionContent}>
+                    <Text style={[styles.languageOptionTitle, { color: colors.text }]}>{finalizedTaskWindowLabel(value)}</Text>
+                    <Text style={[styles.languageOptionDescription, { color: colors.textSecondary }]}>
+                      {t('settings.finalizedTaskWindowOptionSubtitle', { label: finalizedTaskWindowLabel(value) })}
+                    </Text>
+                  </View>
+                  {selected && (
+                    <View style={[styles.languageCheck, { backgroundColor: primaryColor }]}>
+                      <MaterialIcons name="check" size={18} color="#FFFFFF" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[styles.languageCancel, { borderColor: isDarkMode ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)' }]}
+              onPress={() => setFinalizedWindowModalVisible(false)}
+              activeOpacity={0.7}
             >
               <Text style={[styles.languageCancelText, { color: colors.text }]}>{t('common.cancel')}</Text>
             </TouchableOpacity>
@@ -1177,6 +1260,13 @@ const styles = StyleSheet.create({
     fontFamily: fontFamilies.bodyRegular,
     color: '#6C746F',
     marginTop: 2,
+  },
+  listTileValue: {
+    maxWidth: 112,
+    marginLeft: 12,
+    fontSize: fontSizes.sm,
+    fontFamily: fontFamilies.bodyMedium,
+    textAlign: 'right',
   },
   textDisabled: {
     color: '#BDBDBD',

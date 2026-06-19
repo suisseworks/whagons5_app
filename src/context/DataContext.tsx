@@ -375,7 +375,8 @@ export interface SyncedData {
 
 export interface TaskQueryOptions {
   workspaceId?: string;
-  mode?: 'hot' | 'all' | 'archive';
+  mode?: 'hot' | 'recent' | 'all' | 'archive' | 'olderFinalized';
+  recentFinishedSince?: number | null;
   statusIds?: string[];
   archiveEnabled?: boolean;
 }
@@ -889,12 +890,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (
         prev.workspaceId === query.workspaceId
         && prev.mode === nextMode
+        && prev.recentFinishedSince === query.recentFinishedSince
         && prev.archiveEnabled === query.archiveEnabled
         && sameStatusIds
       ) return prev;
       return {
         workspaceId: query.workspaceId,
         mode: nextMode,
+        recentFinishedSince: query.recentFinishedSince,
         statusIds: nextStatusIds.length > 0 ? nextStatusIds : undefined,
         archiveEnabled: query.archiveEnabled === true,
       };
@@ -956,17 +959,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     return {
       tenantId: activeTenantId,
       mode: taskQuery.mode ?? 'hot',
+      ...(Number.isFinite(taskQuery.recentFinishedSince ?? NaN) ? { recentFinishedSince: taskQuery.recentFinishedSince } : {}),
       ...(taskQuery.workspaceId ? { workspaceId: taskQuery.workspaceId } : {}),
       ...(taskQuery.statusIds && taskQuery.statusIds.length > 0 ? { statusIds: taskQuery.statusIds } : {}),
     };
-  }, [activeTenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
+  }, [activeTenantId, taskQuery.mode, taskQuery.recentFinishedSince, taskQuery.workspaceId, taskStatusIdsKey]);
 
   const taskQueryKey = useMemo(() => JSON.stringify({
     tenantId: activeTenantId ?? null,
     mode: taskQuery.mode ?? 'hot',
+    recentFinishedSince: taskQuery.recentFinishedSince ?? null,
     workspaceId: taskQuery.workspaceId ?? null,
     statusIds: taskQuery.statusIds ?? [],
-  }), [activeTenantId, taskQuery.mode, taskQuery.workspaceId, taskStatusIdsKey]);
+  }), [activeTenantId, taskQuery.mode, taskQuery.recentFinishedSince, taskQuery.workspaceId, taskStatusIdsKey]);
 
   const taskRowsByQueryRef = useRef<Map<string, any[]>>(new Map());
   const lastTaskRowsRef = useRef<any[] | undefined>(undefined);

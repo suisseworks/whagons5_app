@@ -6,6 +6,7 @@ export interface TaskNoteResponse {
   uuid: string;
   task_id: number;
   note: string;
+  source?: 'comment' | 'task_attachment';
   user_id: number;
   created_at: string;
   updated_at: string;

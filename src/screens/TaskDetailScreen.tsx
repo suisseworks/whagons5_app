@@ -49,6 +49,7 @@ import { FormFiller } from '../components/FormFiller';
 import { TaskFindingsTab } from '../components/TaskFindingsTab';
 import { SignatureModal } from '../components/SignatureModal';
 import { RejectCommentModal } from '../components/RejectCommentModal';
+import { isTaskAttachmentNote, isVisibleTaskNote } from '../utils/taskNotes';
 
 /** Error-safe wrapper so a MapView crash never takes down TaskDetail */
 class TaskNavigationMapSafe extends React.Component<
@@ -190,6 +191,7 @@ interface TaskNoteResponse {
   taskId?: string;
   task_id?: number;
   note?: string;
+  source?: 'comment' | 'task_attachment';
   userId?: string;
   user_id?: number;
   _creationTime?: number;
@@ -850,7 +852,14 @@ export const TaskDetailScreen: React.FC = () => {
   const decideTaskWorkspaceApprovalContext = useOfflineMutation(api.tasks.decideTaskWorkspaceApprovalContext, 'tasks.decideTaskWorkspaceApprovalContext');
   const acknowledgeTaskAckActionTask = useOfflineMutation(api.tasks.acknowledgeTaskAckActionTask, 'tasks.acknowledgeTaskAckActionTask');
   const acknowledgeTaskWorkspaceContext = useOfflineMutation(api.tasks.acknowledgeTaskWorkspaceContext, 'tasks.acknowledgeTaskWorkspaceContext');
-  const taskDocumentAssociableId = task.id ? String(task.id) : (task.convexId ?? task.taskConvexId ?? '');
+  const taskDocumentAssociableIds = useMemo(() => {
+    const ids = [
+      task.id != null ? String(task.id) : '',
+      task.convexId ? String(task.convexId) : '',
+      task.taskConvexId ? String(task.taskConvexId) : '',
+    ].filter(Boolean);
+    return [...new Set(ids)];
+  }, [task.id, task.convexId, task.taskConvexId]);
   // Only query if convexTaskId looks like a valid Convex ID (not a number)
   const hasValidConvexId = convexTaskId && typeof convexTaskId === 'string' && isNaN(Number(convexTaskId));
   const actionTaskKind = useQuery(
@@ -1012,9 +1021,9 @@ export const TaskDetailScreen: React.FC = () => {
   const approvalActionRequiresSignature = approvalActionRequirement?.requireSignature === true || task.requiresSignature === true;
   const shouldLoadTaskHistory = Boolean(tenantId && hasValidConvexId && task.spotId);
   const taskDocumentAssociations = useQuery(
-    api.documents.listAssociationsByEntity,
-    tenantId && taskDocumentAssociableId
-      ? { tenantId, associableType: 'task', associableId: taskDocumentAssociableId }
+    api.documents.listAssociationsByEntityIds,
+    tenantId && taskDocumentAssociableIds.length > 0
+      ? { tenantId, associableType: 'task', associableIds: taskDocumentAssociableIds }
       : 'skip'
   ) as TaskDocumentAssociation[] | undefined;
   const taskHistory = useQuery(
@@ -1090,14 +1099,16 @@ export const TaskDetailScreen: React.FC = () => {
 
   const notes: TaskNoteResponse[] = useMemo(() => {
     if (!noteRows.length) return [];
-    return noteRows.map((n: any) => ({
-      ...n,
-      id: n._id,
-      task_id: n.taskId,
-      user_id: n.userId,
-      created_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
-      updated_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
-    }));
+    return noteRows
+      .filter(isVisibleTaskNote)
+      .map((n: any) => ({
+        ...n,
+        id: n._id,
+        task_id: n.taskId,
+        user_id: n.userId,
+        created_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
+        updated_at: n._creationTime ? new Date(n._creationTime).toISOString() : '',
+      }));
   }, [noteRows]);
   const [pendingNotes, setPendingNotes] = useState<TaskNoteResponse[]>([]);
 
@@ -1172,10 +1183,51 @@ export const TaskDetailScreen: React.FC = () => {
     setTaskActionsVisible(true);
   }, []);
 
-  const taskDocuments = useMemo(
-    () => (taskDocumentAssociations ?? []).map((association) => association.document).filter(Boolean),
-    [taskDocumentAssociations]
+  const taskDocuments = useMemo(() => {
+    const seen = new Set<string>();
+    const documents: TaskDocumentAssociation['document'][] = [];
+
+    for (const association of taskDocumentAssociations ?? []) {
+      const document = association.document;
+      if (!document) continue;
+      const key = String(document._id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      documents.push(document);
+    }
+
+    return documents;
+  }, [taskDocumentAssociations]);
+  const taskFileAttachments = useMemo(() => {
+    const attachments: Array<NoteAttachmentData & { key: string; createdAt: number }> = [];
+
+    for (const note of noteRows) {
+      if (!isTaskAttachmentNote(note)) continue;
+      for (const [index, attachment] of (note.attachments ?? []).entries()) {
+        if (!attachment?.storageId) continue;
+        attachments.push({
+          storageId: attachment.storageId,
+          fileName: attachment.fileName,
+          fileSize: attachment.fileSize,
+          fileType: attachment.fileType,
+          key: `${note._id ?? note.id ?? 'note'}-${attachment.storageId}-${index}`,
+          createdAt: note._creationTime ?? 0,
+        });
+      }
+    }
+
+    return attachments.sort((left, right) => right.createdAt - left.createdAt);
+  }, [noteRows]);
+  const taskFileStorageIds = useMemo(
+    () => taskFileAttachments.map((attachment) => attachment.storageId as any),
+    [taskFileAttachments],
   );
+  const taskFileUrlMap = useQuery(
+    api.files.getFileUrls,
+    tenantId && taskFileStorageIds.length > 0
+      ? { tenantId, storageIds: taskFileStorageIds }
+      : 'skip',
+  ) as Record<string, string | null> | undefined;
   const latestTaskSignature = useMemo(() => {
     if (!taskSignatures || taskSignatures.length === 0) return null;
     const sorted = [...taskSignatures].sort((a, b) => {
@@ -1760,6 +1812,7 @@ export const TaskDetailScreen: React.FC = () => {
       taskId: convexTaskId ? String(convexTaskId) : undefined,
       task_id: Number(task.id) || undefined,
       note: text || undefined,
+      source: 'comment',
       userId: currentUserConvexId ?? ((authUser as any)?._id ? String((authUser as any)._id) : undefined),
       user_id: authUser?.id != null && Number.isFinite(Number(authUser.id)) ? Number(authUser.id) : undefined,
       created_at: nowIso,
@@ -1777,6 +1830,7 @@ export const TaskDetailScreen: React.FC = () => {
         tenantId,
         taskId: convexTaskId as any,
         note: text || undefined,
+        source: 'comment',
         attachments: queuedAttachments.length > 0
           ? queuedAttachments.map((a) => ({
               storageId: a.storageId as any,
@@ -2594,7 +2648,7 @@ export const TaskDetailScreen: React.FC = () => {
         </>
       )}
 
-      {taskDocuments.length > 0 && (
+      {(taskDocuments.length > 0 || taskFileAttachments.length > 0) && (
         <View style={styles.descriptionAttachmentsSection}>
           <Text style={[styles.sectionLabel, { color: tertiaryText }]}>Attachments</Text>
           <View style={styles.descriptionAttachmentsList}>
@@ -2629,6 +2683,46 @@ export const TaskDetailScreen: React.FC = () => {
                     {!!document.fileSize && (
                       <Text style={[styles.descriptionAttachmentMeta, { color: colors.textSecondary }]}>
                         {(document.fileSize / (1024 * 1024)).toFixed(document.fileSize >= 1024 * 1024 ? 1 : 2)} MB
+                      </Text>
+                    )}
+                  </View>
+                  <MaterialIcons name="open-in-new" size={16} color={colors.textSecondary} />
+                </TouchableOpacity>
+              );
+            })}
+            {taskFileAttachments.map((attachment) => {
+              const fileUrl = taskFileUrlMap?.[attachment.storageId]
+                ? fixConvexStorageUrl(taskFileUrlMap[attachment.storageId]!)
+                : null;
+              const extension = attachment.fileName.split('.').pop()?.toLowerCase() ?? '';
+              const isImage = attachment.fileType.startsWith('image/') || ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].includes(extension);
+
+              return (
+                <TouchableOpacity
+                  key={attachment.key}
+                  style={[
+                    styles.descriptionAttachmentItem,
+                    { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' },
+                  ]}
+                  activeOpacity={0.75}
+                  disabled={!fileUrl}
+                  onPress={() => {
+                    if (!fileUrl) return;
+                    if (isImage) {
+                      setImageViewerUri(fileUrl);
+                    } else {
+                      Linking.openURL(fileUrl).catch(() => {});
+                    }
+                  }}
+                >
+                  <MaterialIcons name="insert-drive-file" size={18} color={colors.textSecondary} />
+                  <View style={styles.descriptionAttachmentTextWrap}>
+                    <Text style={[styles.descriptionAttachmentName, { color: colors.text }]} numberOfLines={1}>
+                      {attachment.fileName}
+                    </Text>
+                    {!!attachment.fileSize && (
+                      <Text style={[styles.descriptionAttachmentMeta, { color: colors.textSecondary }]}>
+                        {(attachment.fileSize / (1024 * 1024)).toFixed(attachment.fileSize >= 1024 * 1024 ? 1 : 2)} MB
                       </Text>
                     )}
                   </View>
