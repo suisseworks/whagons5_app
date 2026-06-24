@@ -161,6 +161,15 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const showApproverMemberProgress = showApprovalProgressBadge
     && approvalProgress.total === approvalProgress.eligibleTotal
     && approverDetails.length > 1;
+  // "Any-of" approval: fewer approvals are needed than there are eligible
+  // approvers (e.g. 1 approval needed from a whole team). Listing every
+  // eligible person is noisy, so the pending pool collapses behind a toggle.
+  const isAnyOfApproval = approvalPending
+    && approvalProgress.total > 0
+    && approvalProgress.total < approvalProgress.eligibleTotal;
+  const anyOfHint = approvalProgress.total === 1
+    ? t('sharedTask.approverAnyOfHintOne')
+    : t('sharedTask.approverAnyOfHintMany', { count: approvalProgress.total });
 
   // canAct: can the current user approve/reject?
   const canAct = useMemo(() => {
@@ -463,6 +472,17 @@ export const SharedTaskDetailScreen: React.FC = () => {
                 </View>
               ) : null}
             </View>
+            {isAnyOfApproval ? (
+              <View style={[styles.anyOfHint, {
+                backgroundColor: isDarkMode ? 'rgba(234,88,12,0.12)' : '#FFF7ED',
+                borderColor: isDarkMode ? 'rgba(234,88,12,0.3)' : '#FED7AA',
+              }]}>
+                <MaterialCommunityIcons name="account-group-outline" size={15} color="#EA580C" />
+                <Text style={[styles.anyOfHintText, { color: isDarkMode ? '#FDBA74' : '#9A3412' }]}>
+                  {anyOfHint}
+                </Text>
+              </View>
+            ) : null}
             {approverDetails.map((d) => (
               <ApproverRow
                 key={d.id}
@@ -472,6 +492,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
                 tertiaryText={tertiaryText}
                 t={t}
                 showMemberProgress={showApproverMemberProgress}
+                collapsePending={isAnyOfApproval}
               />
             ))}
           </View>
@@ -642,18 +663,32 @@ const ApproverRow: React.FC<{
   colors: any;
   isDark: boolean;
   tertiaryText: string;
-  t: (key: string) => string;
+  t: (key: string, options?: Record<string, any>) => string;
   showMemberProgress?: boolean;
-}> = ({ detail, colors, isDark, tertiaryText, t, showMemberProgress = false }) => {
+  collapsePending?: boolean;
+}> = ({ detail, colors, isDark, tertiaryText, t, showMemberProgress = false, collapsePending = false }) => {
+  const [showAllMembers, setShowAllMembers] = useState(false);
   const memberDetails = detail.memberDetails ?? [];
   const memberApproved = memberDetails.filter((member) => member.status === 'approved').length;
+  const respondedMembers = memberDetails.filter((member) => member.status === 'approved' || member.status === 'rejected');
+  const pendingMembers = memberDetails.filter((member) => !(member.status === 'approved' || member.status === 'rejected'));
+  // Keep responders visible; hide the pending pool behind a toggle for any-of.
+  const collapseMembers = collapsePending && !showAllMembers && pendingMembers.length > 0;
+  const visibleMembers = collapseMembers ? respondedMembers : memberDetails;
+  const isPending = (status: string) => !['approved', 'rejected', 'skipped'].includes(status);
+  // In an any-of approval these people aren't obligated to act — any one of them
+  // can approve — so an individual approver row reads "Eligible" rather than
+  // "Pending". Team rows keep their aggregate label; their members relabel below.
+  const isDetailEligible = collapsePending && memberDetails.length === 0 && isPending(detail.status);
   const statusIcon = detail.status === 'approved' ? 'check-circle' as const
     : detail.status === 'rejected' ? 'close-circle' as const
+    : isDetailEligible ? 'account-outline' as const
     : 'clock-outline' as const;
 
   const statusLabel = detail.status === 'approved' ? t('sharedTask.statusApproved')
     : detail.status === 'rejected' ? t('sharedTask.statusRejected')
     : detail.status === 'skipped' ? t('approvals.ui.statusSkipped')
+    : isDetailEligible ? t('sharedTask.approverEligible')
     : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
     : t('sharedTask.ackStatusPending');
 
@@ -685,32 +720,54 @@ const ApproverRow: React.FC<{
             "{detail.comment}"
           </Text>
         )}
-        {memberDetails.length > 0 ? (
+        {visibleMembers.length > 0 ? (
           <View style={[approverStyles.memberList, {
             borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
             backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
           }]}>
-            {memberDetails.map((member) => {
+            {visibleMembers.map((member) => {
+              const memberEligible = collapsePending && isPending(member.status);
               const memberIcon = member.status === 'approved' ? 'check-circle' as const
                 : member.status === 'rejected' ? 'close-circle' as const
+                : memberEligible ? 'account-outline' as const
                 : 'clock-outline' as const;
               const memberLabel = member.status === 'approved' ? t('sharedTask.statusApproved')
                 : member.status === 'rejected' ? t('sharedTask.statusRejected')
                 : member.status === 'skipped' ? t('approvals.ui.statusSkipped')
+                : memberEligible ? t('sharedTask.approverEligible')
                 : t('sharedTask.ackStatusPending');
+              const memberColor = memberEligible ? tertiaryText : member.statusColor;
               return (
                 <View key={String(member.id)} style={approverStyles.memberRow}>
                   <Text style={[approverStyles.memberName, { color: colors.text }]} numberOfLines={1}>
                     {member.name}
                   </Text>
                   <View style={approverStyles.statusRow}>
-                    <MaterialCommunityIcons name={memberIcon} size={13} color={member.statusColor} />
-                    <Text style={[approverStyles.memberStatus, { color: member.statusColor }]}>{memberLabel}</Text>
+                    <MaterialCommunityIcons name={memberIcon} size={13} color={memberColor} />
+                    <Text style={[approverStyles.memberStatus, { color: memberColor }]}>{memberLabel}</Text>
                   </View>
                 </View>
               );
             })}
           </View>
+        ) : null}
+        {collapsePending && pendingMembers.length > 0 ? (
+          <TouchableOpacity
+            style={approverStyles.memberToggle}
+            onPress={() => setShowAllMembers((prev) => !prev)}
+            activeOpacity={0.7}
+          >
+            <Text style={[approverStyles.memberToggleText, { color: tertiaryText }]}>
+              {showAllMembers
+                ? t('sharedTask.approverHideEligible')
+                : t('sharedTask.approverShowEligible', { count: pendingMembers.length })}
+            </Text>
+            <MaterialCommunityIcons
+              name={showAllMembers ? 'chevron-up' : 'chevron-down'}
+              size={15}
+              color={tertiaryText}
+            />
+          </TouchableOpacity>
         ) : null}
       </View>
       {detail.signatureStorageId && (
@@ -769,6 +826,15 @@ const approverStyles = StyleSheet.create({
   },
   memberName: { flex: 1, fontSize: 12, fontFamily: fontFamilies.bodyMedium },
   memberStatus: { fontSize: 11, fontFamily: fontFamilies.bodyMedium },
+  memberToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 6,
+    paddingVertical: 6,
+  },
+  memberToggleText: { fontSize: 12, fontFamily: fontFamilies.bodyMedium },
 });
 
 // ---------------------------------------------------------------------------
@@ -833,6 +899,22 @@ const styles = StyleSheet.create({
   ackProgressText: {
     fontSize: 12,
     fontFamily: fontFamilies.bodySemibold,
+  },
+  anyOfHint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: radius.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  anyOfHintText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
+    fontFamily: fontFamilies.bodyMedium,
   },
   ackGroup: {
     paddingVertical: 4,

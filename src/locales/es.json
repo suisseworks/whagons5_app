@@ -430,7 +430,12 @@
     "fallbackUnknown": "Desconocido",
     "ackByLabel": "Por",
     "ackTimeLabel": "Hora",
-    "ackRemainingLabel": "Faltan %{count}"
+    "ackRemainingLabel": "Faltan %{count}",
+    "approverEligible": "Elegible",
+    "approverAnyOfHintOne": "Solo se necesita 1 aprobación — cualquier aprobador elegible puede aprobar.",
+    "approverAnyOfHintMany": "Solo se necesitan %{count} aprobaciones — cualquier aprobador elegible puede aprobar.",
+    "approverShowEligible": "Ver %{count} aprobadores elegibles",
+    "approverHideEligible": "Ocultar aprobadores elegibles"
   },
   "approvals": {
     "ui": {

@@ -974,6 +974,24 @@ export const TaskDetailScreen: React.FC = () => {
   const showSourceApproverMemberProgress = showSourceApprovalProgressBadge
     && sourceApprovalProgress.total === sourceApprovalProgress.eligibleTotal
     && sourceApproverDetails.length > 1;
+  // "Any-of" approval: fewer approvals needed than eligible approvers (e.g. 1
+  // approval from a whole team). Collapse the pending pool behind a toggle so
+  // we don't list every possible approver by default.
+  const isSourceAnyOfApproval = derivedSourceApprovalStatus === 'pending'
+    && sourceApprovalProgress.total > 0
+    && sourceApprovalProgress.total < sourceApprovalProgress.eligibleTotal;
+  const sourceAnyOfHint = sourceApprovalProgress.total === 1
+    ? t('sharedTask.approverAnyOfHintOne')
+    : t('sharedTask.approverAnyOfHintMany', { count: sourceApprovalProgress.total });
+  const [expandedApproverTeams, setExpandedApproverTeams] = useState<Set<string>>(() => new Set());
+  const toggleApproverTeam = useCallback((teamId: string) => {
+    setExpandedApproverTeams((current) => {
+      const next = new Set(current);
+      if (next.has(teamId)) next.delete(teamId);
+      else next.add(teamId);
+      return next;
+    });
+  }, []);
 
   const shouldLoadSourceAcknowledgmentProgress = Boolean(
     tenantId
@@ -2386,22 +2404,46 @@ export const TaskDetailScreen: React.FC = () => {
               </View>
             ) : null}
           </View>
+          {isSourceAnyOfApproval ? (
+            <View style={[styles.approverAnyOfHint, {
+              backgroundColor: isDarkMode ? 'rgba(234,88,12,0.12)' : '#FFF7ED',
+              borderColor: isDarkMode ? 'rgba(234,88,12,0.3)' : '#FED7AA',
+            }]}>
+              <MaterialCommunityIcons name="account-group-outline" size={15} color="#EA580C" />
+              <Text style={[styles.approverAnyOfHintText, { color: isDarkMode ? '#FDBA74' : '#9A3412' }]}>
+                {sourceAnyOfHint}
+              </Text>
+            </View>
+          ) : null}
           {sourceApproverDetails.map((detail) => {
             const memberDetails = detail.memberDetails ?? [];
             const memberApproved = memberDetails.filter((member) => member.status === 'approved').length;
+            const respondedMembers = memberDetails.filter((member) => member.status === 'approved' || member.status === 'rejected');
+            const pendingMembers = memberDetails.filter((member) => !(member.status === 'approved' || member.status === 'rejected'));
+            const isTeamExpanded = expandedApproverTeams.has(String(detail.id));
+            const collapseMembers = isSourceAnyOfApproval && !isTeamExpanded && pendingMembers.length > 0;
+            const visibleMembers = collapseMembers ? respondedMembers : memberDetails;
+            const isApproverPending = (status: string) => !['approved', 'rejected', 'skipped'].includes(status);
+            // In an any-of approval these people aren't obligated to act — any one
+            // can approve — so an individual approver row reads "Eligible" rather
+            // than "Pending". Team rows keep the aggregate label; members relabel below.
+            const isDetailEligible = isSourceAnyOfApproval && memberDetails.length === 0 && isApproverPending(detail.status);
             const statusIcon = detail.status === 'approved' ? 'check-circle' as const
               : detail.status === 'rejected' ? 'close-circle' as const
+              : isDetailEligible ? 'account-outline' as const
               : 'clock-outline' as const;
             const statusLabel = detail.status === 'approved' ? t('sharedTask.statusApproved')
               : detail.status === 'rejected' ? t('sharedTask.statusRejected')
               : detail.status === 'skipped' ? t('approvals.ui.statusSkipped')
+              : isDetailEligible ? t('sharedTask.approverEligible')
               : detail.status === 'not started' ? t('sharedTask.approverStatusNotStarted')
               : t('sharedTask.ackStatusPending');
+            const statusColor = isDetailEligible ? tertiaryText : detail.statusColor;
             const showMemberProgress = showSourceApproverMemberProgress && memberDetails.length > 0;
             return (
               <View key={String(detail.id)} style={[styles.approverBlock, { borderBottomColor: cardBorder }]}>
                 <View style={[styles.communicationRow, { borderBottomColor: 'transparent', paddingBottom: memberDetails.length > 0 ? 4 : 8 }]}>
-                  <MaterialCommunityIcons name={statusIcon} size={18} color={detail.statusColor} />
+                  <MaterialCommunityIcons name={statusIcon} size={18} color={statusColor} />
                   <View style={{ flex: 1 }}>
                     <View style={styles.approverNameRow}>
                       <Text style={[styles.communicationName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
@@ -2416,30 +2458,34 @@ export const TaskDetailScreen: React.FC = () => {
                         </Text>
                       ) : null}
                     </View>
-                    <Text style={[styles.communicationStatus, { color: detail.statusColor }]}>{statusLabel}</Text>
+                    <Text style={[styles.communicationStatus, { color: statusColor }]}>{statusLabel}</Text>
                   </View>
                 </View>
-                {memberDetails.length > 0 ? (
+                {visibleMembers.length > 0 ? (
                   <View style={[styles.approverMemberList, {
                     backgroundColor: isDarkMode ? 'rgba(255,255,255,0.03)' : '#F9FAFB',
                     borderColor: cardBorder,
                   }]}>
-                    {memberDetails.map((member) => {
+                    {visibleMembers.map((member) => {
+                      const memberEligible = isSourceAnyOfApproval && isApproverPending(member.status);
                       const memberIcon = member.status === 'approved' ? 'check-circle' as const
                         : member.status === 'rejected' ? 'close-circle' as const
+                        : memberEligible ? 'account-outline' as const
                         : 'clock-outline' as const;
                       const memberLabel = member.status === 'approved' ? t('sharedTask.statusApproved')
                         : member.status === 'rejected' ? t('sharedTask.statusRejected')
                         : member.status === 'skipped' ? t('approvals.ui.statusSkipped')
+                        : memberEligible ? t('sharedTask.approverEligible')
                         : t('sharedTask.ackStatusPending');
+                      const memberColor = memberEligible ? tertiaryText : member.statusColor;
                       return (
                         <View key={String(member.id)} style={styles.approverMemberRow}>
                           <Text style={[styles.approverMemberName, { color: colors.text }]} numberOfLines={1}>
                             {member.name}
                           </Text>
                           <View style={styles.approverMemberStatus}>
-                            <MaterialCommunityIcons name={memberIcon} size={13} color={member.statusColor} />
-                            <Text style={[styles.approverMemberStatusText, { color: member.statusColor }]}>
+                            <MaterialCommunityIcons name={memberIcon} size={13} color={memberColor} />
+                            <Text style={[styles.approverMemberStatusText, { color: memberColor }]}>
                               {memberLabel}
                             </Text>
                           </View>
@@ -2447,6 +2493,24 @@ export const TaskDetailScreen: React.FC = () => {
                       );
                     })}
                   </View>
+                ) : null}
+                {collapseMembers || (isSourceAnyOfApproval && isTeamExpanded && pendingMembers.length > 0) ? (
+                  <TouchableOpacity
+                    style={styles.approverMemberToggle}
+                    onPress={() => toggleApproverTeam(String(detail.id))}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.approverMemberToggleText, { color: tertiaryText }]}>
+                      {isTeamExpanded
+                        ? t('sharedTask.approverHideEligible')
+                        : t('sharedTask.approverShowEligible', { count: pendingMembers.length })}
+                    </Text>
+                    <MaterialCommunityIcons
+                      name={isTeamExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={15}
+                      color={tertiaryText}
+                    />
+                  </TouchableOpacity>
                 ) : null}
               </View>
             );
@@ -4314,6 +4378,35 @@ const styles = StyleSheet.create({
   },
   approverMemberStatusText: {
     fontSize: 11,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  approverMemberToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginLeft: 28,
+    marginBottom: 6,
+    paddingVertical: 6,
+  },
+  approverMemberToggleText: {
+    fontSize: 12,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  approverAnyOfHint: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  approverAnyOfHintText: {
+    flex: 1,
+    fontSize: 12,
+    lineHeight: 16,
     fontFamily: fontFamilies.bodyMedium,
   },
   ackProgressBadge: {

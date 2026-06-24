@@ -430,7 +430,12 @@
     "fallbackUnknown": "Unknown",
     "ackByLabel": "By",
     "ackTimeLabel": "Time",
-    "ackRemainingLabel": "%{count} left"
+    "ackRemainingLabel": "%{count} left",
+    "approverEligible": "Eligible",
+    "approverAnyOfHintOne": "Only 1 approval is needed — any eligible approver can approve.",
+    "approverAnyOfHintMany": "Only %{count} approvals are needed — any eligible approver can approve.",
+    "approverShowEligible": "Show %{count} eligible approvers",
+    "approverHideEligible": "Hide eligible approvers"
   },
   "approvals": {
     "ui": {

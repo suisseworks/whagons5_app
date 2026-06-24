@@ -187,6 +187,25 @@ export function buildApproverDetails(
 ): ApproverDetail[] {
   let approverDetails: ApproverDetail[] = [];
 
+  const resolveUserRecord = (userId: any): any => {
+    if (userId == null) return null;
+    return userMap?.[Number(userId)] || userMap?.[String(userId)] || null;
+  };
+  const instanceHasResponse = (inst: any): boolean => {
+    const status = normStatus(inst?.status || 'pending');
+    return status === 'approved' || status === 'rejected';
+  };
+  // An instance references a user that is no longer on the active roster
+  // (deleted user). We hide such rows while they are still pending so stale
+  // "Approver N" entries don't clutter the eligible pool, but keep any that
+  // already recorded a decision so the audit trail stays intact.
+  const isDeletedPendingInstance = (inst: any): boolean => {
+    const userId = field(inst, 'approver_user_id', 'approverUserId');
+    if (userId == null) return false;
+    if (resolveUserRecord(userId)) return false;
+    return !instanceHasResponse(inst);
+  };
+
   if (approvalId && taskApprovalInstances.length > 0) {
     const instances = taskApprovalInstances
       .filter((inst: any) => {
@@ -215,13 +234,17 @@ export function buildApproverDetails(
       if (isTeamBased) {
         const teamId = field(sourceApprover, 'approver_id', 'approverId');
         const teamName = teamMap?.[String(teamId)]?.name || teamMap?.[Number(teamId)]?.name || 'Team';
-        const approvedCount = group.filter((i: any) => (i.status || '').toLowerCase() === 'approved').length;
-        const rejectedCount = group.filter((i: any) => (i.status || '').toLowerCase() === 'rejected').length;
-        const pendingCount = group.filter((i: any) => ['pending', 'not started', ''].includes((i.status || 'pending').toLowerCase())).length;
+        // Drop deleted members that never responded so the team doesn't list
+        // stale "Approver N" placeholders as eligible approvers.
+        const visibleGroup = group.filter((i: any) => !isDeletedPendingInstance(i));
+        if (visibleGroup.length === 0) continue;
+        const approvedCount = visibleGroup.filter((i: any) => (i.status || '').toLowerCase() === 'approved').length;
+        const rejectedCount = visibleGroup.filter((i: any) => (i.status || '').toLowerCase() === 'rejected').length;
+        const pendingCount = visibleGroup.filter((i: any) => ['pending', 'not started', ''].includes((i.status || 'pending').toLowerCase())).length;
         const hasReject = rejectedCount > 0;
         const aggregateStatus = hasReject ? 'rejected' : pendingCount > 0 ? 'pending' : approvedCount > 0 ? 'approved' : 'skipped';
-        const memberUserIds = group.map((i: any) => field(i, 'approver_user_id', 'approverUserId')).filter(Boolean);
-        const memberDetails = group.map((i: any, idx: number) => {
+        const memberUserIds = visibleGroup.map((i: any) => field(i, 'approver_user_id', 'approverUserId')).filter(Boolean);
+        const memberDetails = visibleGroup.map((i: any, idx: number) => {
           const approverUserId = field(i, 'approver_user_id', 'approverUserId');
           const userRecord = approverUserId != null
             ? ((userMap?.[Number(approverUserId)]) || (userMap?.[String(approverUserId)]) || null)
@@ -244,19 +267,22 @@ export function buildApproverDetails(
           name: teamName,
           status: aggregateStatus,
           statusColor: aggregateStatus === 'approved' ? '#16a34a' : aggregateStatus === 'rejected' ? '#dc2626' : '#2563eb',
-          isRequired: group.some((i: any) => field(i, 'is_required', 'isRequired') !== false),
+          isRequired: visibleGroup.some((i: any) => field(i, 'is_required', 'isRequired') !== false),
           step: ++stepIdx,
-          respondedAt: group.map((i: any) => field(i, 'responded_at', 'respondedAt')).find(Boolean) || null,
-          comment: group.map((i: any) => field(i, 'response_comment', 'responseComment')).find(Boolean) || null,
+          respondedAt: visibleGroup.map((i: any) => field(i, 'responded_at', 'respondedAt')).find(Boolean) || null,
+          comment: visibleGroup.map((i: any) => field(i, 'response_comment', 'responseComment')).find(Boolean) || null,
           approverUserId: null,
           approverTeamId: teamId,
           memberUserIds,
           memberDetails,
-          signatureStorageId: group.find((i: any) => i.signatureStorageId || i.signature_storage_id)?.signatureStorageId
-            || group.find((i: any) => i.signature_storage_id)?.signature_storage_id || null,
+          signatureStorageId: visibleGroup.find((i: any) => i.signatureStorageId || i.signature_storage_id)?.signatureStorageId
+            || visibleGroup.find((i: any) => i.signature_storage_id)?.signature_storage_id || null,
         });
       } else {
         for (const inst of group) {
+          // Skip deleted users that never responded and carry no stored name,
+          // which would otherwise render as a meaningless "Approver N" row.
+          if (isDeletedPendingInstance(inst) && !inst.approver_name) continue;
           const approverUserId = field(inst, 'approver_user_id', 'approverUserId');
           const userRecord = approverUserId != null
             ? ((userMap?.[Number(approverUserId)]) || (userMap?.[String(approverUserId)]) || null)
@@ -292,6 +318,15 @@ export function buildApproverDetails(
   if (approverDetails.length === 0 && approvalId && Array.isArray(approvalApprovers)) {
     const configuredApprovers = approvalApprovers
       .filter((ap: any) => field(ap, 'approval_id', 'approvalId') != null && String(field(ap, 'approval_id', 'approvalId')) === String(approvalId))
+      .filter((ap: any) => {
+        // Hide configured user approvers whose account was deleted (and that
+        // carry no stored label), so they don't appear as "Approver N".
+        const type = field(ap, 'approver_type', 'approverType');
+        if (type !== 'user') return true;
+        const id = field(ap, 'approver_id', 'approverId');
+        if (id == null) return true;
+        return Boolean(resolveUserRecord(id) || ap.approver_label);
+      })
       .sort((a: any, b: any) => (field(a, 'order_index', 'orderIndex') ?? 0) - (field(b, 'order_index', 'orderIndex') ?? 0));
     if (configuredApprovers.length > 0) {
       approverDetails = configuredApprovers.map((config: any, idx: number) => {
