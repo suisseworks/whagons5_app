@@ -218,10 +218,11 @@ export const LoginScreen: React.FC = () => {
     }
 
     setIsLoading(true);
+    const startedAt = Date.now();
     try {
       console.log('[LoginScreen] Email button pressed:', `${email.trim().slice(0, 2)}***@${email.trim().split('@')[1] ?? 'unknown'}`);
       await signInWithEmail({ email: email.trim(), password });
-      console.log('[LoginScreen] Email sign-in call completed');
+      console.log('[LoginScreen] Email sign-in call completed:', Date.now() - startedAt, 'ms');
       // Navigation handled by effect above when auth resolves
     } catch (err: any) {
       console.error('[LoginScreen] Email sign-in failed:', err);

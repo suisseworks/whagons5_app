@@ -17,13 +17,58 @@ import { openDatabaseAsync, SQLiteDatabase } from 'expo-sqlite';
 const DB_NAME = 'whagons_sync.db';
 const DB_VERSION = 8;
 
-let _db: SQLiteDatabase | null = null;
+/**
+ * Single-flight promise for the ONE shared connection (open + migrate).
+ * Every caller awaits the SAME promise, so the same database file is never
+ * opened twice. This is the whole fix: concurrent opens create multiple
+ * SQLiteDatabase instances for one file, and those are what caused both the
+ * Android `prepareAsync` NullPointerException storm AND the use-after-free
+ * SIGSEGV in libexpo-sqlite (a prepared statement finalized on one thread
+ * while bound/read on another). With a single instance, expo-sqlite
+ * serializes all access internally and stays safe.
+ *
+ * We deliberately do NOT reopen-on-error or closeAsync() a live handle:
+ * closing finalizes prepared statements out from under in-flight queries,
+ * which is exactly the native crash we hit. A dead handle only really
+ * happens on a dev Fast Refresh, surfaces as a catchable JS error that
+ * callers already handle, and clears on the next full app start.
+ */
+let _dbPromise: Promise<SQLiteDatabase> | null = null;
+
+async function openAndMigrate(): Promise<SQLiteDatabase> {
+  const db = await openDatabaseAsync(DB_NAME);
+  await migrate(db);
+  return db;
+}
+
+function getRaw(): Promise<SQLiteDatabase> {
+  if (!_dbPromise) {
+    _dbPromise = openAndMigrate().catch((err) => {
+      _dbPromise = null; // let the next caller retry a failed open
+      throw err;
+    });
+  }
+  return _dbPromise;
+}
+
+async function exec<T>(fn: (db: SQLiteDatabase) => Promise<T>): Promise<T> {
+  return fn(await getRaw());
+}
+
+/**
+ * Facade over the SQLiteDatabase methods used in this module, each routed
+ * through exec() so a dead native handle self-heals transparently.
+ */
+const dbFacade = {
+  runAsync: (...args: any[]) => exec((db) => (db.runAsync as any)(...args)),
+  getAllAsync: (...args: any[]) => exec((db) => (db.getAllAsync as any)(...args)),
+  getFirstAsync: (...args: any[]) => exec((db) => (db.getFirstAsync as any)(...args)),
+  execAsync: (...args: any[]) => exec((db) => (db.execAsync as any)(...args)),
+  withTransactionAsync: (task: any) => exec((db) => db.withTransactionAsync(task)),
+} as unknown as SQLiteDatabase;
 
 async function getDb(): Promise<SQLiteDatabase> {
-  if (_db) return _db;
-  _db = await openDatabaseAsync(DB_NAME);
-  await migrate(_db);
-  return _db;
+  return dbFacade;
 }
 
 async function migrate(db: SQLiteDatabase): Promise<void> {
@@ -333,14 +378,20 @@ async function migrate(db: SQLiteDatabase): Promise<void> {
 
 /** Initialise (open + migrate) the database. Safe to call multiple times. */
 export async function initDb(): Promise<void> {
-  await getDb();
+  await getRaw();
 }
 
 /** Close the database (e.g. on logout). */
 export async function closeDb(): Promise<void> {
-  if (_db) {
-    await _db.closeAsync();
-    _db = null;
+  const stale = _dbPromise;
+  _dbPromise = null;
+  if (stale) {
+    try {
+      const db = await stale;
+      await db.closeAsync();
+    } catch {
+      // already dead/closed — nothing to release
+    }
   }
 }
 

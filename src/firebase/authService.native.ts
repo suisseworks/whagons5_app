@@ -150,10 +150,12 @@ export async function signInWithEmail(
   password: string,
 ): Promise<FirebaseAuthTypes.UserCredential> {
   console.log('[AuthService] Email sign-in start:', maskEmail(email));
+  const startedAt = Date.now();
   const userCredential = await signInWithEmailAndPassword(auth, email, password);
   console.log('[AuthService] Email sign-in success:', {
     uid: userCredential.user.uid,
     emailVerified: userCredential.user.emailVerified,
+    durationMs: Date.now() - startedAt,
   });
 
   // Check email verification (matching web client behaviour).
@@ -216,7 +218,10 @@ export function getCurrentUser(): FirebaseAuthTypes.User | null {
 export async function getIdToken(forceRefresh = false): Promise<string | null> {
   const user = auth.currentUser;
   if (!user) return null;
-  return getFirebaseIdToken(user, forceRefresh);
+  const startedAt = Date.now();
+  const token = await getFirebaseIdToken(user, forceRefresh);
+  console.log('[AuthService] getIdToken:', { forceRefresh, durationMs: Date.now() - startedAt });
+  return token;
 }
 
 /**

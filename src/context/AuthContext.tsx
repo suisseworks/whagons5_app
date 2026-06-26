@@ -391,13 +391,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const signInWithEmail = useCallback(
     async ({ email, password }: { email: string; password: string }) => {
       console.log('[AUTH] Email sign-in requested:', `${email.slice(0, 2)}***@${email.split('@')[1] ?? 'unknown'}`);
+      const startedAt = Date.now();
       loggingOutRef.current = false;
       setIsLoggingOut(false);
       setPendingTenants(null);
       setHasNoTenants(false);
       setTenantResolved(false);
       await fbSignInWithEmail(email, password);
-      console.log('[AUTH] Email sign-in returned from Firebase');
+      console.log('[AUTH] Email sign-in returned from Firebase:', Date.now() - startedAt, 'ms');
       // ConvexProviderWithAuth picks up the Firebase user automatically
     },
     [],
