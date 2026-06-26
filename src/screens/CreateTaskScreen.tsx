@@ -35,6 +35,7 @@ import { FaIcon } from '../components/FaIcon';
 import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSheet';
 import { Toast, ToastRef } from '../components/Toast';
 import { parseWorkspaceIcon } from '../utils/helpers';
+import { getUserTeamIdSet } from '../utils/userTeams';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { GPS_CAPTURE_STORAGE_KEY } from './SettingsScreen';
 
@@ -358,16 +359,17 @@ export const CreateTaskScreen: React.FC = () => {
   // ---------------------------------------------------------------------------
   // User team IDs for reporting-team checks
   // ---------------------------------------------------------------------------
-  const userTeamIds = useMemo(() => {
-    if (!user?.id || !userTeams) return [];
-    return (userTeams as any[])
-      .filter((ut: any) => {
-        const utUserId = ut.user_id ?? ut.userId;
-        return utUserId != null && String(utUserId) === String(user.id);
-      })
-      .map((ut: any) => String(ut.team_id ?? ut.teamId))
-      .filter(Boolean);
-  }, [user, userTeams]);
+  // `user.id` is `pgId ?? _id`, but userTeams rows store `userId` as the Convex
+  // document id. getUserTeamIdSet normalizes the user→team join across both id
+  // spaces AND expands each team to all its id representations, so membership
+  // checks match category.teamId (a Convex `_id`) as well as reportingTeamIds
+  // (which may be stored as Convex `_id`s OR pgIds). Without this, any user with
+  // a pgId matches zero teams and Everything-mode template visibility silently
+  // collapses to empty. See src/utils/userTeams.ts.
+  const userTeamIdSet = useMemo(
+    () => getUserTeamIdSet(user, data.users, userTeams, data.teams),
+    [user, userTeams, data.users, data.teams],
+  );
 
   // ---------------------------------------------------------------------------
   // Resolve categories & initial status
@@ -385,10 +387,10 @@ export const CreateTaskScreen: React.FC = () => {
         try { rtIds = JSON.parse(rtIds); } catch { return false; }
       }
       if (!Array.isArray(rtIds)) return false;
-      return rtIds.some((rtId: any) => userTeamIds.some((utId: any) => String(rtId) === String(utId)));
+      return rtIds.some((rtId: any) => userTeamIdSet.has(String(rtId)));
     });
     return [...own, ...reporting];
-  }, [currentWorkspace, data.categories, userTeamIds]);
+  }, [currentWorkspace, data.categories, userTeamIdSet]);
 
   const workspaceCategoryIds = useMemo(() => {
     return new Set(workspaceCategories.map((c: any) => c._id));
@@ -416,9 +418,9 @@ export const CreateTaskScreen: React.FC = () => {
 
       const categoryTeamId = getCategoryTeamId(category);
       const belongsToUserTeam = categoryTeamId != null
-        && userTeamIds.some((teamId) => String(teamId) === String(categoryTeamId));
+        && userTeamIdSet.has(String(categoryTeamId));
       const isReportableToUserTeam = parseReportingTeamIds(category)
-        .some((teamId) => userTeamIds.some((userTeamId) => String(userTeamId) === teamId));
+        .some((teamId) => userTeamIdSet.has(String(teamId)));
 
       if (!belongsToUserTeam && !isReportableToUserTeam) continue;
 
@@ -427,7 +429,7 @@ export const CreateTaskScreen: React.FC = () => {
       if (category.pgId != null) ids.add(String(category.pgId));
     }
     return ids;
-  }, [data.categories, findWorkspaceByCategory, userTeamIds]);
+  }, [data.categories, findWorkspaceByCategory, userTeamIdSet]);
 
   const everythingTemplates = useMemo(() => {
     if (!isEverythingCreate || everythingAccessibleCategoryIds.size === 0) return [];
@@ -443,8 +445,7 @@ export const CreateTaskScreen: React.FC = () => {
       const templateCategoryId = template.category_id ?? template.categoryId;
       const category = data.categories.find((cat: any) => categoryMatchesRef(cat, templateCategoryId));
       const categoryTeamId = category ? getCategoryTeamId(category) : null;
-      return categoryTeamId != null
-        && userTeamIds.some((teamId) => String(teamId) === String(categoryTeamId));
+      return categoryTeamId != null && userTeamIdSet.has(String(categoryTeamId));
     });
 
     return [...visible].sort((a: any, b: any) => {
@@ -466,7 +467,7 @@ export const CreateTaskScreen: React.FC = () => {
     data.templates,
     data.categories,
     findWorkspaceByCategory,
-    userTeamIds,
+    userTeamIdSet,
   ]);
 
   // Templates for the current workspace's category

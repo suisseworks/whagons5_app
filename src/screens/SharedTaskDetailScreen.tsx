@@ -34,6 +34,7 @@ import { useOfflineMutation } from '../hooks/useOfflineMutation';
 import { SignatureModal } from '../components/SignatureModal';
 import { RejectCommentModal } from '../components/RejectCommentModal';
 import { Toast, ToastRef } from '../components/Toast';
+import { resolveCurrentUserIds } from '../utils/userTeams';
 import type { Id } from '../../../convex/_generated/dataModel';
 
 type SharedTaskDetailRoute = RouteProp<RootStackParamList, 'SharedTaskDetail'>;
@@ -201,17 +202,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const requireSignature = !!(approval?.require_signature ?? approval?.requireSignature);
 
   const currentUserAccess = useMemo(() => {
-    const currentUserIds = new Set<string>();
-    if (authUser?.id) currentUserIds.add(String(authUser.id));
-
-    const userDoc = authUser ? data.users.find((u: any) =>
-      String(u.id) === String(authUser.id) || String(u._id) === String(authUser.id)
-    ) : null;
-
-    if (userDoc) {
-      if ((userDoc as any)._id) currentUserIds.add(String((userDoc as any)._id));
-      if (userDoc.id) currentUserIds.add(String(userDoc.id));
-    }
+    const currentUserIds = resolveCurrentUserIds(authUser, data.users);
 
     const currentUserTeamIds = new Set<string>();
     for (const ut of userTeams) {

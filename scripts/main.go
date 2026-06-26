@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/oauth2/google"
@@ -164,24 +165,59 @@ func runUpload(cmd *cobra.Command, args []string) {
 		log.Fatalf("❌ Failed to create Android Publisher service: %v", err)
 	}
 
+	// Google Play occasionally invalidates an edit mid-flow (the transient
+	// "This Edit has been deleted" failedPrecondition). An edit cannot be
+	// reused once that happens, so we retry the whole lifecycle — each attempt
+	// starts a brand-new edit — instead of failing the entire release run.
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			backoff := time.Duration(attempt-1) * 5 * time.Second
+			fmt.Printf("🔁 Retrying upload (attempt %d/%d) in %s after error: %v\n", attempt, maxAttempts, backoff, lastErr)
+			time.Sleep(backoff)
+		}
+
+		lastErr = attemptUpload(service)
+		if lastErr == nil {
+			if config.Publish {
+				fmt.Println("🎉 App bundle uploaded and published successfully!")
+			} else {
+				fmt.Println("🎉 App bundle uploaded as draft! Go to Google Play Console to review and publish.")
+			}
+			return
+		}
+
+		fmt.Printf("⚠️  Upload attempt %d/%d failed: %v\n", attempt, maxAttempts, lastErr)
+	}
+
+	log.Fatalf("❌ Upload failed after %d attempts: %v", maxAttempts, lastErr)
+}
+
+// attemptUpload runs the full Google Play edit lifecycle once: insert a fresh
+// edit, upload the bundle, set the track release, and commit. A Play edit
+// cannot be reused after Google invalidates it, so callers retry this whole
+// function as a unit — every attempt must begin with a new edit.
+func attemptUpload(service *androidpublisher.Service) error {
 	fmt.Println("📝 Starting edit session...")
 	editId, err := startEdit(service)
 	if err != nil {
-		log.Fatalf("❌ Failed to start edit: %v", err)
+		return fmt.Errorf("failed to start edit: %w", err)
 	}
 	fmt.Printf("✅ Edit session started with ID: %s\n", editId)
 
 	fmt.Println("📦 Uploading app bundle...")
 	versionCode, err := uploadBundle(service, editId)
 	if err != nil {
-		log.Fatalf("❌ Failed to upload bundle: %v", err)
+		_ = deleteEdit(service, editId)
+		return fmt.Errorf("failed to upload bundle: %w", err)
 	}
 	fmt.Printf("✅ Bundle uploaded successfully with version code: %d\n", versionCode)
 
 	fmt.Println("🎯 Creating release...")
-	err = createRelease(service, editId, versionCode)
-	if err != nil {
-		log.Fatalf("❌ Failed to create release: %v", err)
+	if err := createRelease(service, editId, versionCode); err != nil {
+		_ = deleteEdit(service, editId)
+		return err
 	}
 
 	if config.Publish {
@@ -191,16 +227,11 @@ func runUpload(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("💾 Committing changes...")
-	err = commitEdit(service, editId)
-	if err != nil {
-		log.Fatalf("❌ Failed to commit changes: %v", err)
+	if err := commitEdit(service, editId); err != nil {
+		return fmt.Errorf("failed to commit changes: %w", err)
 	}
 
-	if config.Publish {
-		fmt.Println("🎉 App bundle uploaded and published successfully!")
-	} else {
-		fmt.Println("🎉 App bundle uploaded as draft! Go to Google Play Console to review and publish.")
-	}
+	return nil
 }
 
 // ---- upload-listing-image command ----

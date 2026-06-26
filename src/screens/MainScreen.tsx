@@ -306,23 +306,27 @@ export const MainScreen: React.FC = () => {
   const chatUnreadCount = useMemo(() => {
     const currentUserId = authUser?.id ?? 0;
     if (!currentUserId) return 0;
+    // Compare ids as strings: most ids are pgIds, but a user/record without a
+    // pgId carries a Convex `_id` string, and Number("k57ab…") is NaN — and
+    // NaN === NaN is false, which would silently drop that user's own
+    // conversations. String() matches both id spaces (matches ColabScreen).
     const myConvIds = new Set(
       data.conversationParticipants
-        .filter((p: any) => Number(p.user_id) === Number(currentUserId))
-        .map((p: any) => Number(p.conversation_id)),
+        .filter((p: any) => String(p.user_id) === String(currentUserId))
+        .map((p: any) => String(p.conversation_id)),
     );
     let total = 0;
     for (const conv of data.conversations) {
-      if (!myConvIds.has(Number(conv.id))) continue;
+      if (!myConvIds.has(String(conv.id))) continue;
       const myParticipant = data.conversationParticipants.find(
         (p: any) =>
-          Number(p.conversation_id) === Number(conv.id) &&
-          Number(p.user_id) === Number(currentUserId),
+          String(p.conversation_id) === String(conv.id) &&
+          String(p.user_id) === String(currentUserId),
       );
       const otherMsgs = data.directMessages.filter(
         (m: any) =>
-          Number(m.conversation_id) === Number(conv.id) &&
-          Number(m.user_id) !== Number(currentUserId),
+          String(m.conversation_id) === String(conv.id) &&
+          String(m.user_id) !== String(currentUserId),
       );
       if (!myParticipant || !(myParticipant as any).last_read_at) {
         total += otherMsgs.length;
