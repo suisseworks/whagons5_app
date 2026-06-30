@@ -18,6 +18,7 @@ import { api } from '../../../convex/_generated/api';
 import { useTenant } from '../hooks/useTenant';
 import { computeApprovalStatusForTask } from '../utils/approvalStatus';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
+import { useSafeConvexQuery } from '../hooks/useSafeConvexQuery';
 import { useMutationQueue } from './MutationQueueContext';
 import { useNetwork } from './NetworkContext';
 import { useLanguage } from './LanguageContext';
@@ -1978,9 +1979,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const statusPillMode = taskListMode;
 
   // Server: all-workspaces summary → sidebar (every workspace) + "Everything" totals.
-  const serverAllSummary = useQuery(
+  const serverAllSummary = useSafeConvexQuery(
     api.bulk.taskSummaryCounts,
-    effectiveTenantId ? { tenantId: effectiveTenantId, mode: countsMode } : 'skip',
+    effectiveTenantId ? { tenantId: effectiveTenantId, mode: countsMode, preferEstimated: true } : 'skip',
+    'bulk.taskSummaryCounts',
   );
 
   const scopedWorkspaceCountId = useMemo(() => {
@@ -1990,16 +1992,17 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [data.workspaces, selectedWorkspace]);
 
   // Server: workspace-scoped summary → status pills + the current view total.
-  const serverScopedSummary = useQuery(
+  const serverScopedSummary = useSafeConvexQuery(
     api.bulk.taskSummaryCounts,
     effectiveTenantId && scopedWorkspaceCountId
-      ? { tenantId: effectiveTenantId, workspaceId: scopedWorkspaceCountId, mode: countsMode }
+      ? { tenantId: effectiveTenantId, workspaceId: scopedWorkspaceCountId, mode: countsMode, preferEstimated: true }
       : 'skip',
+    'bulk.taskSummaryCounts',
   );
 
   // Status pills describe the visible task list, so they include finalized
   // statuses inside the selected finalized-date window.
-  const serverStatusSummary = useQuery(
+  const serverStatusSummary = useSafeConvexQuery(
     api.bulk.taskSummaryCounts,
     effectiveTenantId
       ? {
@@ -2007,8 +2010,10 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           ...(scopedWorkspaceCountId ? { workspaceId: scopedWorkspaceCountId } : {}),
           mode: statusPillMode,
           ...(statusPillMode === 'recent' && recentFinishedSince != null ? { recentFinishedSince } : {}),
+          preferEstimated: true,
         }
       : 'skip',
+    'bulk.taskSummaryCounts',
   );
 
   const serverViewSummary = scopedWorkspaceCountId ? serverScopedSummary : serverAllSummary;
