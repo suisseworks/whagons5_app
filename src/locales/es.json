@@ -364,6 +364,7 @@
     "findingsUploading": "Subiendo...",
     "findingsNoAttachments": "Sin adjuntos",
     "findingsAttachment": "Adjunto",
+    "findingsAttachmentOpenFailed": "No se pudo abrir el adjunto.",
     "findingsUploadFailed": "No se pudo subir el adjunto.",
     "findingsNotesSection": "Notas",
     "findingsNotesEmpty": "Aún no hay notas.",
@@ -380,7 +381,16 @@
     "findingsTemplateRequired": "El espacio destino requiere una plantilla correctiva o tareas manuales.",
     "findingsCreateNotAuthorized": "No tienes permiso para crear tareas en el espacio destino.",
     "findingsActionPlanNoPending": "No hay hallazgos pendientes para un plan de acción.",
-    "findingsLinkedTaskFallbackTitle": "Tarea vinculada"
+    "findingsLinkedTaskFallbackTitle": "Tarea vinculada",
+    "findingsField": "Hallazgo",
+    "findingsNew": "Agregar hallazgo",
+    "findingsNewTitle": "Nuevo hallazgo",
+    "findingsCategory": "Categoría",
+    "findingsLocation": "Ubicación",
+    "findingsSelectValue": "Seleccionar...",
+    "findingsNoValue": "—",
+    "findingsDescriptionRequired": "Descripción...",
+    "findingsDescriptionOptional": "Descripción (opcional)..."
   },
   "taskShareLink": {
     "eyebrow": "Tarea compartida",

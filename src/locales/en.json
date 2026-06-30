@@ -364,6 +364,7 @@
     "findingsUploading": "Uploading...",
     "findingsNoAttachments": "No attachments",
     "findingsAttachment": "Attachment",
+    "findingsAttachmentOpenFailed": "Could not open the attachment.",
     "findingsUploadFailed": "Could not upload attachment.",
     "findingsNotesSection": "Notes",
     "findingsNotesEmpty": "No notes yet.",
@@ -380,7 +381,16 @@
     "findingsTemplateRequired": "The destination space requires a corrective template or manual task creation.",
     "findingsCreateNotAuthorized": "You do not have permission to create tasks in the destination space.",
     "findingsActionPlanNoPending": "No pending findings are available for an action plan.",
-    "findingsLinkedTaskFallbackTitle": "Linked task"
+    "findingsLinkedTaskFallbackTitle": "Linked task",
+    "findingsField": "Finding",
+    "findingsNew": "Add finding",
+    "findingsNewTitle": "New finding",
+    "findingsCategory": "Category",
+    "findingsLocation": "Location",
+    "findingsSelectValue": "Select...",
+    "findingsNoValue": "—",
+    "findingsDescriptionRequired": "Description...",
+    "findingsDescriptionOptional": "Description (optional)..."
   },
   "taskShareLink": {
     "eyebrow": "Shared task",
