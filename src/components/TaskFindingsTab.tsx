@@ -1053,16 +1053,15 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   return (
     <View style={styles.container}>
       <View style={styles.topSection}>
-        <View style={[styles.progressCard, { backgroundColor: surfaceMuted, borderColor: cardBorder }]}>
-          <View style={styles.progressHeader}>
-            <Text style={[styles.progressTitle, { color: colors.text }]}>{t('taskDetail.findingsTitle')}</Text>
-            <Text style={[styles.progressBadge, { color: colors.textSecondary }]}>{progressPercent}%</Text>
+        <View style={styles.progressBarWrap}>
+          <View style={styles.progressMeta}>
+            <Text style={[styles.progressMetaText, { color: colors.textSecondary }]} numberOfLines={1}>
+              {rows.length === 0
+                ? t('taskDetail.findingsEmptyCounter')
+                : `${resolvedCount}/${rows.length} ${t('taskDetail.findingsResolved')}`}
+            </Text>
+            <Text style={[styles.progressMetaText, { color: colors.textSecondary }]}>{progressPercent}%</Text>
           </View>
-          <Text style={[styles.progressSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-            {taskName} · {rows.length === 0
-              ? t('taskDetail.findingsEmptyCounter')
-              : `${resolvedCount}/${rows.length} ${t('taskDetail.findingsResolved')}`}
-          </Text>
           <View style={[styles.progressTrack, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.12)' : '#E5E5EA' }]}>
             <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: primaryColor }]} />
           </View>
@@ -1695,7 +1694,7 @@ const styles = StyleSheet.create({
   topSection: { gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.md },
   listHeader: { gap: spacing.sm, marginBottom: spacing.sm },
   captureCard: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm },
-  captureAddButton: { alignSelf: 'flex-end' },
+  captureAddButton: { alignSelf: 'stretch' },
   captureLaunchButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1725,6 +1724,9 @@ const styles = StyleSheet.create({
   progressTitle: { fontSize: fontSizes.md, fontFamily: fontFamilies.displaySemibold },
   progressBadge: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodySemibold },
   progressSubtitle: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },
+  progressBarWrap: { gap: 6 },
+  progressMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  progressMetaText: { fontSize: fontSizes.xs, fontFamily: fontFamilies.bodyRegular },
   progressTrack: { height: 6, borderRadius: 999, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 999 },
   addRow: {
