@@ -1132,7 +1132,16 @@ export const TaskDetailScreen: React.FC = () => {
 
   const displayNotes = useMemo(() => {
     const syncedKeys = new Set(notes.map(taskNoteHeuristicKey));
-    const pending = pendingNotes.filter((note) => !syncedKeys.has(taskNoteHeuristicKey(note)));
+    const syncedUuids = new Set(
+      notes.map((note) => (note.uuid ? String(note.uuid) : '')).filter(Boolean),
+    );
+    const pending = pendingNotes.filter((note) => {
+      // Deterministic match: the synced row echoes the pending note's uuid.
+      const noteUuid = note.uuid ? String(note.uuid) : '';
+      if (noteUuid && syncedUuids.has(noteUuid)) return false;
+      // Fallback heuristic for older notes that predate uuid round-tripping.
+      return !syncedKeys.has(taskNoteHeuristicKey(note));
+    });
     return [...notes, ...pending];
   }, [notes, pendingNotes]);
 
@@ -1140,6 +1149,12 @@ export const TaskDetailScreen: React.FC = () => {
     if (pendingNotes.length === 0 || notes.length === 0) return;
 
     setPendingNotes((prev) => prev.filter((pendingNote) => {
+      // Deterministic match by uuid first — independent of userId/body/day.
+      const pendingUuid = pendingNote.uuid ? String(pendingNote.uuid) : '';
+      if (pendingUuid && notes.some((syncedNote) => String(syncedNote.uuid ?? '') === pendingUuid)) {
+        return false;
+      }
+
       const pendingTs = pendingNote.created_at ? new Date(pendingNote.created_at).getTime() : 0;
       const pendingAttachments = new Set((pendingNote.attachments ?? []).map((a) => a.storageId).filter(Boolean));
       const pendingBody = (pendingNote.note ?? '').trim();
@@ -1849,6 +1864,10 @@ export const TaskDetailScreen: React.FC = () => {
         taskId: convexTaskId as any,
         note: text || undefined,
         source: 'comment',
+        // Pass the optimistic id through as the note uuid so the synced row
+        // can be reconciled deterministically with the pending note (instead
+        // of relying on the fragile userId/body/day heuristic key).
+        uuid: pendingNoteId,
         attachments: queuedAttachments.length > 0
           ? queuedAttachments.map((a) => ({
               storageId: a.storageId as any,
