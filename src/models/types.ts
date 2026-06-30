@@ -320,6 +320,7 @@ export type RootStackParamList = {
   NfcProgramTag: { tagId: string; url: string; tenantId?: string };
   NfcManager: undefined;
   TaskDetail: { task: TaskItem };
+  TaskFindingDetail: { taskId: string; taskName: string; findingId: string; readOnly?: boolean };
   SharedTaskDetail: { task: TaskItem };
   CreateTask: undefined;
   VoiceTaskReview: { draftId: string };

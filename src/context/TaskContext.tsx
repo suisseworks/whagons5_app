@@ -140,6 +140,13 @@ function readEpochMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isDeletedTaskRow(task: unknown): boolean {
+  if (!task || typeof task !== 'object') return false;
+  const row = task as Record<string, unknown>;
+  const deletedAt = row.deletedAt ?? row.deleted_at;
+  return deletedAt != null && deletedAt !== '';
+}
+
 function readIdArray(value: unknown): AnyId[] {
   if (Array.isArray(value)) return value.filter((item) => item != null);
   if (typeof value !== 'string' || value.trim().length === 0) return [];
@@ -1095,7 +1102,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---------------------------------------------------------------------------
 
   const activeTasks = useMemo(() => {
-    return data.tasks.filter((t) => !t.deleted_at);
+    return data.tasks.filter((t) => !isDeletedTaskRow(t));
   }, [data.tasks]);
 
   const categoryInfoMap = useMemo(() => {
@@ -1130,6 +1137,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const serverSearchTaskItem = useMemo(() => {
     if (!serverSearchTask || typeof serverSearchTask !== 'object') return null;
     const rawTask = serverSearchTask as any;
+    if (isDeletedTaskRow(rawTask)) return null;
     const resolveId = (items: any[], rawId: any) => {
       if (rawId == null) return null;
       const match = items.find((item: any) => String(item?._id ?? '') === String(rawId));
@@ -1265,7 +1273,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     for (const share of rawSharedToMe) {
       const rawTask = share.task;
-      if (!rawTask || rawTask.deletedAt) continue;
+      if (!rawTask || isDeletedTaskRow(rawTask)) continue;
 
       const taskId = rawTask.id ?? rawTask.pgId ?? rawTask._id;
       if (taskId == null || seen.has(String(taskId))) continue;
@@ -1346,6 +1354,16 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       map.set(String(task.convexId), String(task.id));
     }
     return map;
+  }, [allMappedTasks]);
+
+  const liveTaskKeySet = useMemo(() => {
+    const keys = new Set<string>();
+    for (const task of allMappedTasks) {
+      for (const value of [task.id, task.convexId, task.taskConvexId]) {
+        if (value != null && value !== '') keys.add(String(value));
+      }
+    }
+    return keys;
   }, [allMappedTasks]);
 
   const statusByAnyId = useMemo(() => {
@@ -1703,7 +1721,22 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setSqlFilteredState(null);
           return;
         }
-        const mapped = rows.map((task) => {
+        const visibleRows = liveTaskKeySet.size > 0
+          ? rows.filter((task) => {
+            const keys = [
+              (task as any).id,
+              (task as any)._id,
+              (task as any).convexId,
+              (task as any).taskConvexId,
+            ].filter((value) => value != null && value !== '').map(String);
+            return keys.some((key) => liveTaskKeySet.has(key));
+          })
+          : rows;
+        if (rows.length > 0 && visibleRows.length === 0 && allMappedTasks.length > 0) {
+          setSqlFilteredState(null);
+          return;
+        }
+        const mapped = visibleRows.map((task) => {
           const item = mapTaskToItem(task, spotMap, priorityMap, statusMap, assigneeMap, tagMap, initialStatus, templateFormMap, formInfoMap, userFlagMap, categoryInfoMap, commentSummaryMap, userMap, userPictureMap, tagNameMap, formatTaskDate);
           return selectedWorkspaceObject ? taskWithActiveWorkspaceContext(item, selectedWorkspaceObject) : item;
         });
@@ -1729,6 +1762,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     formatTaskDate,
     filters.statuses,
     initialStatus,
+    liveTaskKeySet,
     priorityMap,
     spotMap,
     sqlFilterKey,
@@ -2127,19 +2161,22 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   // ---- Combine: server (truth) → cache (fast/offline) → in-memory (last resort) ----
   const taskUniverseCount = serverAllTotal != null
     ? serverAllTotal
-    : activeCacheCounts
-      ? activeCacheCounts.total
-      : liveTaskUniverseCount;
+    : allMappedTasks.length > 0
+      ? liveTaskUniverseCount
+      : activeCacheCounts
+        ? activeCacheCounts.total
+        : liveTaskUniverseCount;
 
   const workspaceTaskCounts = useMemo(() => {
     if (serverWorkspaceTaskCounts) return serverWorkspaceTaskCounts;
+    if (allMappedTasks.length > 0) return liveWorkspaceTaskCounts;
     if (activeCacheCounts) return activeCacheCounts.byWorkspace;
     return liveWorkspaceTaskCounts;
-  }, [serverWorkspaceTaskCounts, activeCacheCounts, liveWorkspaceTaskCounts]);
+  }, [serverWorkspaceTaskCounts, allMappedTasks.length, activeCacheCounts, liveWorkspaceTaskCounts]);
 
   const taskStatusCounts = useMemo(() => {
     if (serverTaskStatusCounts) return serverTaskStatusCounts;
-    if (activeCacheCounts) return activeCacheCounts.byStatus;
+    if (activeCacheCounts && allMappedTasks.length === 0) return activeCacheCounts.byStatus;
     const counts = new Map<string, number>();
     const source = searchActiveForCounts
       ? wsFilteredTasks.filter((task) => taskMatchesSearchQuery(task, searchQuery))
@@ -2149,7 +2186,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [serverTaskStatusCounts, activeCacheCounts, searchActiveForCounts, searchQuery, wsFilteredTasks]);
+  }, [serverTaskStatusCounts, activeCacheCounts, allMappedTasks.length, searchActiveForCounts, searchQuery, wsFilteredTasks]);
 
   const availableAssignees = useMemo(() => {
     const names = new Set<string>();

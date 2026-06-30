@@ -14,7 +14,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   Linking,
+  useWindowDimensions,
+  PanResponder,
+  GestureResponderEvent,
+  PanResponderGestureState,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
 import DraggableFlatList, { type RenderItemParams } from 'react-native-draggable-flatlist';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,7 +50,7 @@ import {
   type OptimisticFindingPending,
   type OptimisticFindingResolvedPatch,
 } from '../../../convex/_helpers/optimisticFindings';
-import type { ThemeColors } from '../models/types';
+import type { RootStackParamList, ThemeColors } from '../models/types';
 
 type HallazgoAttributeOption = { key: string; label: string; archived?: boolean };
 type HallazgoAttribute = {
@@ -69,6 +80,17 @@ type HallazgoConfig = {
 };
 
 const HALLAZGO_FALLBACK_TITLE = 'Hallazgo';
+type FindingDetailTab = 'details' | 'notes' | 'history';
+type TaskFindingsNavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+const FINDING_DETAIL_TABS: FindingDetailTab[] = ['details', 'notes', 'history'];
+const TIGHT_TAB_SPRING = {
+  damping: 90,
+  stiffness: 1600,
+  overshootClamping: true,
+  restDisplacementThreshold: 0.5,
+  restSpeedThreshold: 0.5,
+};
 
 function fixConvexStorageUrl(url: string): string {
   const convexUrl = process.env.EXPO_PUBLIC_CONVEX_URL;
@@ -156,6 +178,9 @@ function rowsAreSameForList(left: any[], right: any[]): boolean {
     const other = right[index];
     return row.resolved === other.resolved
       && row.text === other.text
+      && Number(row.noteCount ?? 0) === Number(other.noteCount ?? 0)
+      && (row.evidenceFiles ?? row.evidence_files ?? []).length === (other.evidenceFiles ?? other.evidence_files ?? []).length
+      && Number(row.linkedTask?.attachmentCount ?? 0) === Number(other.linkedTask?.attachmentCount ?? 0)
       && String(row.linkedTask?.statusName ?? '') === String(other.linkedTask?.statusName ?? '')
       && String(row.linkedTask?.statusColor ?? '') === String(other.linkedTask?.statusColor ?? '');
   });
@@ -185,6 +210,14 @@ function getCorrectiveTaskCreateErrorMessage(error: any, t: (key: string, option
   return message || t('taskDetail.findingsTaskCreateFailed');
 }
 
+function getFindingCreateErrorMessage(error: any, t: (key: string, options?: Record<string, any>) => string) {
+  const message = String(error?.message ?? error ?? '');
+  if (message.toLowerCase().includes('task not found')) {
+    return t('taskDetail.findingsTaskMissing');
+  }
+  return message || t('taskDetail.findingsAddFailed');
+}
+
 function toDateInputValue(value: any): string {
   if (!value) return '';
   const date = new Date(Number(value));
@@ -198,6 +231,42 @@ function parseDateInput(value: string): number | null {
   const date = new Date(`${trimmed}T12:00:00`);
   if (Number.isNaN(date.getTime())) return null;
   return date.getTime();
+}
+
+function formatFindingTimestamp(value: unknown): string {
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(numeric));
+  } catch {
+    return new Date(numeric).toLocaleString();
+  }
+}
+
+function getFindingHistoryActionLabel(action: string, t: (key: string, options?: Record<string, any>) => string): string {
+  switch (action) {
+    case 'FINDING_CREATED':
+      return t('taskDetail.findingsHistoryCreated');
+    case 'FINDING_UPDATED':
+      return t('taskDetail.findingsHistoryUpdated');
+    case 'FINDING_DELETED':
+      return t('taskDetail.findingsHistoryDeleted');
+    case 'FINDING_NOTE_ADDED':
+      return t('taskDetail.findingsHistoryNoteAdded');
+    case 'FINDING_NOTE_UPDATED':
+      return t('taskDetail.findingsHistoryNoteUpdated');
+    case 'FINDING_NOTE_DELETED':
+      return t('taskDetail.findingsHistoryNoteDeleted');
+    case 'FINDING_TASK_LINKED':
+      return t('taskDetail.findingsHistoryTaskLinked');
+    default:
+      return t('taskDetail.findingsHistoryUpdated');
+  }
 }
 
 interface SelectorItem {
@@ -214,6 +283,9 @@ interface TaskFindingsTabProps {
   primaryColor: string;
   isDarkMode: boolean;
   onOpenLinkedTask?: (linkedTaskId: string) => void;
+  detailOnly?: boolean;
+  initialFindingId?: string;
+  onClose?: () => void;
 }
 
 export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
@@ -224,7 +296,11 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   primaryColor,
   isDarkMode,
   onOpenLinkedTask,
+  detailOnly = false,
+  initialFindingId,
+  onClose,
 }) => {
+  const navigation = useNavigation<TaskFindingsNavigationProp>();
   const { tenantId } = useTenant();
   const { t } = useLanguage();
   const { user: authUser } = useAuth();
@@ -233,6 +309,7 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   const insets = useSafeAreaInsets();
   const detailTopInset = Math.max(insets.top, spacing.lg);
   const detailBottomInset = Math.max(insets.bottom, spacing.lg);
+  const { width: screenWidth } = useWindowDimensions();
 
   const [draft, setDraft] = useState('');
   const [draftDescription, setDraftDescription] = useState('');
@@ -241,7 +318,8 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   const [captureModalVisible, setCaptureModalVisible] = useState(false);
   const [pendingOptimisticFindings, setPendingOptimisticFindings] = useState<OptimisticFindingPending[]>([]);
   const [optimisticResolvedPatches, setOptimisticResolvedPatches] = useState<OptimisticFindingResolvedPatch[]>([]);
-  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(initialFindingId ?? null);
+  const [titleDraft, setTitleDraft] = useState('');
   const [descriptionDraft, setDescriptionDraft] = useState('');
   const [dueDateDraft, setDueDateDraft] = useState('');
   const [creatingTaskFindingId, setCreatingTaskFindingId] = useState<string | null>(null);
@@ -255,6 +333,9 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   const [noteDraft, setNoteDraft] = useState('');
   const [creatingNote, setCreatingNote] = useState(false);
   const [listData, setListData] = useState<any[]>([]);
+  const [activeDetailTab, setActiveDetailTab] = useState<FindingDetailTab>('details');
+  const detailTabTranslateX = useSharedValue(0);
+  const detailTabDragStartX = useRef(0);
   const isDraggingRef = useRef(false);
   const pendingOrderRef = useRef<string | null>(null);
   const dragSnapshotRef = useRef<any[]>([]);
@@ -321,7 +402,16 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     setDraftAttributeValues({});
     setAttributePicker(null);
     setCaptureModalVisible(false);
-  }, [taskId]);
+    if (!detailOnly) {
+      setSelectedFindingId(null);
+    }
+  }, [detailOnly, taskId]);
+
+  useEffect(() => {
+    if (initialFindingId) {
+      setSelectedFindingId(initialFindingId);
+    }
+  }, [initialFindingId]);
 
   useEffect(() => {
     if (isDraggingRef.current) return;
@@ -353,6 +443,21 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
       ? { tenantId, findingId: selectedFinding._id as any }
       : 'skip',
   ) as any[] | undefined;
+  const findingHistory = useQuery(
+    api.taskFindings.listHistory,
+    tenantId && taskId && selectedFinding?._id
+      ? { tenantId, taskId: taskId as any }
+      : 'skip',
+  ) as any[] | undefined;
+  const selectedFindingHistory = useMemo(() => {
+    if (!selectedFinding?._id || !Array.isArray(findingHistory)) return [];
+    const findingId = String(selectedFinding._id);
+    return findingHistory.filter((entry: any) => {
+      const oldFindingId = entry?.oldValues?.findingId;
+      const newFindingId = entry?.newValues?.findingId;
+      return String(oldFindingId ?? '') === findingId || String(newFindingId ?? '') === findingId;
+    });
+  }, [findingHistory, selectedFinding?._id]);
 
   const selectedEvidenceFiles = useMemo(() => {
     const files = selectedFinding?.evidenceFiles ?? selectedFinding?.evidence_files;
@@ -411,9 +516,6 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     () => hallazgoAttributes.filter((attr) => attr.quickCapture),
     [hallazgoAttributes],
   );
-  const showDescriptionInQuickCapture =
-    quickCaptureAttributes.length === 0 && hallazgoConfig?.showDescriptionInQuickCapture !== false;
-
   const resolveReferenceOptions = useCallback((reference?: HallazgoAttribute['reference']): SelectorItem[] => {
     const rows = reference === 'spots'
       ? data.spots
@@ -535,14 +637,16 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
   [data.users]);
 
   useEffect(() => {
-    setSelectedFindingId(null);
-  }, [taskId]);
-
-  useEffect(() => {
-    if (selectedFindingId && !selectedFinding) {
+    if (!detailOnly) {
       setSelectedFindingId(null);
     }
-  }, [selectedFindingId, selectedFinding]);
+  }, [detailOnly, taskId]);
+
+  useEffect(() => {
+    if (Array.isArray(findings) && selectedFindingId && !selectedFinding) {
+      setSelectedFindingId(null);
+    }
+  }, [findings, selectedFindingId, selectedFinding]);
 
   useEffect(() => {
     if (!selectedFinding) {
@@ -557,10 +661,70 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
 
   useEffect(() => {
     if (!selectedFinding) return;
+    setTitleDraft(String(selectedFinding.text ?? ''));
     setDescriptionDraft(String(selectedFinding.notes ?? ''));
     setDueDateDraft(toDateInputValue(selectedFinding.dueDate ?? selectedFinding.due_date));
     setNoteDraft('');
-  }, [selectedFinding?._id, selectedFinding?.notes, selectedFinding?.dueDate, selectedFinding?.due_date]);
+    setActiveDetailTab('details');
+  }, [selectedFinding?._id, selectedFinding?.text, selectedFinding?.notes, selectedFinding?.dueDate, selectedFinding?.due_date]);
+
+  useEffect(() => {
+    const idx = FINDING_DETAIL_TABS.indexOf(activeDetailTab);
+    detailTabTranslateX.value = withSpring(-idx * screenWidth, { ...TIGHT_TAB_SPRING });
+  }, [activeDetailTab, detailTabTranslateX, screenWidth]);
+
+  const detailTabSlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: detailTabTranslateX.value }],
+  }));
+
+  const finishDetailTabSwipe = useCallback((dx: number, vx: number) => {
+    const currentX = detailTabDragStartX.current + dx;
+    const velocityThreshold = 0.28;
+    const distanceThreshold = screenWidth * 0.16;
+    const idx = FINDING_DETAIL_TABS.indexOf(activeDetailTab);
+    let newIdx = idx;
+
+    if ((vx < -velocityThreshold || dx < -distanceThreshold) && idx < FINDING_DETAIL_TABS.length - 1) {
+      newIdx = idx + 1;
+    } else if ((vx > velocityThreshold || dx > distanceThreshold) && idx > 0) {
+      newIdx = idx - 1;
+    } else {
+      newIdx = Math.round(-currentX / screenWidth);
+      newIdx = Math.max(0, Math.min(FINDING_DETAIL_TABS.length - 1, newIdx));
+    }
+
+    const target = -newIdx * screenWidth;
+    detailTabTranslateX.value = withSpring(target, { ...TIGHT_TAB_SPRING, velocity: vx * screenWidth });
+
+    if (FINDING_DETAIL_TABS[newIdx] !== activeDetailTab) {
+      setActiveDetailTab(FINDING_DETAIL_TABS[newIdx]);
+    }
+  }, [activeDetailTab, detailTabTranslateX, screenWidth]);
+
+  const detailTabPanResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_: GestureResponderEvent, gs: PanResponderGestureState) =>
+          Math.abs(gs.dx) > 8 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.15,
+        onPanResponderGrant: () => {
+          const idx = FINDING_DETAIL_TABS.indexOf(activeDetailTab);
+          detailTabDragStartX.current = -idx * screenWidth;
+        },
+        onPanResponderMove: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          const maxX = 0;
+          const minX = -(FINDING_DETAIL_TABS.length - 1) * screenWidth;
+          const newX = Math.min(maxX, Math.max(minX, detailTabDragStartX.current + gs.dx));
+          detailTabTranslateX.value = newX;
+        },
+        onPanResponderRelease: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          finishDetailTabSwipe(gs.dx, gs.vx);
+        },
+        onPanResponderTerminate: (_: GestureResponderEvent, gs: PanResponderGestureState) => {
+          finishDetailTabSwipe(gs.dx, gs.vx);
+        },
+      }),
+    [activeDetailTab, detailTabTranslateX, finishDetailTabSwipe, screenWidth],
+  );
 
   const handleAddFinding = useCallback(() => {
     if (!tenantId || readOnly) return;
@@ -570,9 +734,7 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
       const hasQuickCaptureAttributes = quickCaptureAttributes.length > 0;
       const description = hasQuickCaptureAttributes
         ? draft.trim()
-        : showDescriptionInQuickCapture
-          ? draftDescription.trim()
-          : '';
+        : '';
       const composedTitle = hasQuickCaptureAttributes && Object.keys(draftAttributeValues).length > 0
         ? composeClientTitle(hallazgoAttributes, draftAttributeValues, hallazgoConfig.titleSeparator)
         : '';
@@ -604,7 +766,7 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
         })
         .catch((error: any) => {
           setPendingOptimisticFindings((current) => current.filter((item) => item.tempId !== pending.tempId));
-          Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsAddFailed'));
+          Alert.alert(t('common.error'), getFindingCreateErrorMessage(error, t));
         });
       return;
     }
@@ -624,7 +786,7 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
       })
       .catch((error: any) => {
         setPendingOptimisticFindings((current) => current.filter((item) => item.tempId !== pending.tempId));
-        Alert.alert(t('common.error'), error?.message || t('taskDetail.findingsAddFailed'));
+        Alert.alert(t('common.error'), getFindingCreateErrorMessage(error, t));
       });
   }, [
     createFinding,
@@ -636,7 +798,6 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     hallazgoConfig,
     quickCaptureAttributes,
     readOnly,
-    showDescriptionInQuickCapture,
     t,
     taskId,
     tenantId,
@@ -750,6 +911,14 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     else delete nextValues[attrId];
     void patchFinding({ values: nextValues as any });
   }, [patchFinding, selectedFinding]);
+
+  const handleSaveTitle = useCallback(() => {
+    if (!selectedFinding) return;
+    const next = titleDraft.trim();
+    const current = String(selectedFinding.text ?? '').trim();
+    if (!next || next === current) return;
+    void patchFinding({ text: next });
+  }, [patchFinding, selectedFinding, titleDraft]);
 
   const handleSaveDescription = useCallback(() => {
     if (!selectedFinding) return;
@@ -929,6 +1098,10 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     const linkedTask = finding.linkedTask;
     const isOptimisticFinding = isOptimisticFindingId(String(finding._id)) || finding._optimistic === true;
     const canDrag = !readOnly && !isOptimisticFinding;
+    const noteCount = Number(finding.noteCount ?? 0);
+    const attachmentCount = linkedTask?._id
+      ? Number(linkedTask.attachmentCount ?? 0)
+      : (finding.evidenceFiles ?? finding.evidence_files ?? []).length;
 
     return (
       <View
@@ -945,7 +1118,17 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
           ]}
           onPress={() => {
             if (isOptimisticFinding) return;
-            setSelectedFindingId(String(finding._id));
+            const findingId = String(finding._id);
+            if (detailOnly) {
+              setSelectedFindingId(findingId);
+            } else {
+              navigation.navigate('TaskFindingDetail', {
+                taskId,
+                taskName,
+                findingId,
+                readOnly,
+              });
+            }
           }}
           onLongPress={canDrag ? drag : undefined}
           delayLongPress={280}
@@ -981,12 +1164,28 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
                 {linkedTask.statusName}
               </Text>
             ) : null}
+            {(noteCount > 0 || attachmentCount > 0) ? (
+              <View style={styles.findingMetaRow}>
+                {noteCount > 0 ? (
+                  <View style={[styles.findingMetaPill, { backgroundColor: surfaceMuted }]}>
+                    <MaterialIcons name="chat-bubble-outline" size={13} color={colors.textSecondary} />
+                    <Text style={[styles.findingMetaText, { color: colors.textSecondary }]}>{noteCount}</Text>
+                  </View>
+                ) : null}
+                {attachmentCount > 0 ? (
+                  <View style={[styles.findingMetaPill, { backgroundColor: surfaceMuted }]}>
+                    <MaterialIcons name="attach-file" size={13} color={colors.textSecondary} />
+                    <Text style={[styles.findingMetaText, { color: colors.textSecondary }]}>{attachmentCount}</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
           </View>
           <MaterialIcons name="chevron-right" size={22} color={colors.textSecondary} />
         </Pressable>
       </View>
     );
-  }, [cardBorder, colors.surface, colors.text, colors.textSecondary, handleToggleResolved, primaryColor, readOnly]);
+  }, [cardBorder, colors.surface, colors.text, colors.textSecondary, detailOnly, handleToggleResolved, navigation, primaryColor, readOnly, surfaceMuted, taskId, taskName]);
 
   const renderListEmpty = useCallback(() => (
     <View style={[styles.emptyCard, { borderColor: cardBorder }]}>
@@ -1050,287 +1249,345 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
     );
   }
 
+  if (sourceTask === null) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.missingTaskCard, { borderColor: cardBorder }]}>
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            {t('taskDetail.findingsTaskMissing')}
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
-      <View style={styles.topSection}>
-        <View style={styles.progressBarWrap}>
-          <View style={styles.progressMeta}>
-            <Text style={[styles.progressMetaText, { color: colors.textSecondary }]} numberOfLines={1}>
-              {rows.length === 0
-                ? t('taskDetail.findingsEmptyCounter')
-                : `${resolvedCount}/${rows.length} ${t('taskDetail.findingsResolved')}`}
-            </Text>
-            <Text style={[styles.progressMetaText, { color: colors.textSecondary }]}>{progressPercent}%</Text>
-          </View>
-          <View style={[styles.progressTrack, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.12)' : '#E5E5EA' }]}>
-            <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: primaryColor }]} />
-          </View>
-        </View>
-
-        {!readOnly && hallazgoConfig && quickCaptureAttributes.length > 0 ? (
-          <TouchableOpacity
-            style={[styles.captureLaunchButton, { backgroundColor: primaryColor }]}
-            onPress={() => setCaptureModalVisible(true)}
-          >
-            <MaterialIcons name="add" size={20} color="#FFFFFF" />
-            <Text style={styles.captureLaunchText}>{t('taskDetail.findingsNew')}</Text>
-          </TouchableOpacity>
-        ) : null}
-
-        {!readOnly && hallazgoConfig && quickCaptureAttributes.length === 0 ? (
-          <View style={[styles.captureCard, { borderColor: cardBorder, backgroundColor: colors.surface }]}>
-            <TextInput
-              style={[styles.fieldInput, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.background }]}
-              placeholder={t('taskDetail.findingsPlaceholder')}
-              placeholderTextColor={colors.textSecondary}
-              value={draft}
-              onChangeText={setDraft}
-              onSubmitEditing={() => void handleAddFinding()}
-              returnKeyType={showDescriptionInQuickCapture ? 'next' : 'done'}
-            />
-            {showDescriptionInQuickCapture ? (
-              <TextInput
-                style={[styles.fieldInput, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.background }]}
-                placeholder={t('taskDetail.findingsDescriptionOptional')}
-                placeholderTextColor={colors.textSecondary}
-                value={draftDescription}
-                onChangeText={setDraftDescription}
-                onSubmitEditing={() => void handleAddFinding()}
-                returnKeyType="done"
-              />
-            ) : null}
-            <TouchableOpacity
-              style={[styles.addButton, styles.captureAddButton, { backgroundColor: primaryColor, opacity: genericCanAdd ? 1 : 0.6 }]}
-              onPress={() => void handleAddFinding()}
-              disabled={!genericCanAdd}
-            >
-              <Text style={styles.addButtonText}>{t('taskDetail.findingsAdd')}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {!readOnly && !hallazgoConfig ? (
-          <View style={[styles.addRow, { borderColor: cardBorder, backgroundColor: colors.surface }]}>
-            <TextInput
-              style={[styles.addInput, { color: colors.text }]}
-              placeholder={t('taskDetail.findingsPlaceholder')}
-              placeholderTextColor={colors.textSecondary}
-              value={draft}
-              onChangeText={setDraft}
-              onSubmitEditing={() => void handleAddFinding()}
-              returnKeyType="done"
-              editable={!readOnly}
-            />
-            <TouchableOpacity
-              style={[styles.addButton, { backgroundColor: primaryColor, opacity: !draft.trim() ? 0.6 : 1 }]}
-              onPress={handleAddFinding}
-              disabled={!draft.trim()}
-            >
-              <Text style={styles.addButtonText}>{t('taskDetail.findingsAdd')}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-
-        {!readOnly && draggableFindingCount > 1 ? (
-          <Text style={[styles.dragHint, { color: colors.textSecondary }]}>
-            {t('taskDetail.findingsDragToReorder')}
-          </Text>
-        ) : null}
-      </View>
-
-      <DraggableFlatList
-        data={listData}
-        keyExtractor={(finding) => String(finding._id)}
-        renderItem={renderFindingRow}
-        onDragBegin={handleFindingDragBegin}
-        onDragEnd={handleFindingDragEnd}
-        activationDistance={12}
-        autoscrollThreshold={72}
-        autoscrollSpeed={160}
-        animationConfig={FINDINGS_DRAG_ANIMATION_CONFIG}
-        containerStyle={styles.container}
-        contentContainerStyle={styles.listContent}
-        keyboardShouldPersistTaps="handled"
-        ListEmptyComponent={renderListEmpty}
-      />
-
-      <Modal
-        visible={selectedFinding != null}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setSelectedFindingId(null)}
-      >
-        {selectedFinding ? (
-          <View style={[styles.detailContainer, { backgroundColor: colors.background }]}>
-            <View style={[styles.detailHeader, { borderBottomColor: cardBorder, paddingTop: detailTopInset }]}>
-              <Text style={[styles.detailTitle, { color: colors.text }]} numberOfLines={2}>
-                {selectedFinding.text}
-              </Text>
-              <TouchableOpacity onPress={() => setSelectedFindingId(null)} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-                <MaterialIcons name="close" size={24} color={colors.text} />
-              </TouchableOpacity>
+      {!detailOnly ? (
+        <>
+          <View style={styles.topSection}>
+            <View style={styles.progressBarWrap}>
+              <View style={styles.progressMeta}>
+                <Text style={[styles.progressMetaText, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {rows.length === 0
+                    ? t('taskDetail.findingsEmptyCounter')
+                    : `${resolvedCount}/${rows.length} ${t('taskDetail.findingsResolved')}`}
+                </Text>
+                <Text style={[styles.progressMetaText, { color: colors.textSecondary }]}>{progressPercent}%</Text>
+              </View>
+              <View style={[styles.progressTrack, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.12)' : '#E5E5EA' }]}>
+                <View style={[styles.progressFill, { width: `${progressPercent}%`, backgroundColor: primaryColor }]} />
+              </View>
             </View>
 
-            <ScrollView
-              style={styles.detailScroll}
-              contentContainerStyle={[styles.detailContent, { paddingBottom: spacing.xl + detailBottomInset }]}
-              keyboardShouldPersistTaps="handled"
-            >
-              {hallazgoConfig && hallazgoAttributes.length > 0 ? (
-                <View style={styles.fieldBlock}>
-                  <FieldLabel icon="tune" label={t('taskDetail.findingsField')} colors={colors} />
-                  {hallazgoAttributes.map((attr) => {
-                    const value = ((selectedFinding.values ?? {}) as Record<string, HallazgoAttributeValue>)[attr.id];
-                    return (
-                      <TouchableOpacity
-                        key={attr.id}
-                        style={[styles.attributeRowButton, { borderColor: cardBorder }]}
-                        onPress={() => !readOnly && setAttributePicker({ attr, target: 'detail' })}
-                        disabled={readOnly}
-                      >
-                        <View style={styles.attributeRowText}>
-                          <Text style={[styles.attributeRowLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-                            {attr.label}{attr.required ? ' *' : ''}
-                          </Text>
-                          <Text
-                            style={[styles.fieldRowValue, { color: value ? colors.text : colors.textSecondary }]}
-                            numberOfLines={1}
-                          >
-                            {value?.label ?? t('taskDetail.findingsNoValue')}
-                          </Text>
-                        </View>
-                        {!readOnly ? <MaterialIcons name="expand-more" size={20} color={colors.textSecondary} /> : null}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              ) : null}
+            {!readOnly && hallazgoConfig && quickCaptureAttributes.length > 0 ? (
+              <TouchableOpacity
+                style={[styles.captureLaunchButton, { backgroundColor: primaryColor }]}
+                onPress={() => setCaptureModalVisible(true)}
+              >
+                <MaterialIcons name="add" size={20} color="#FFFFFF" />
+                <Text style={styles.captureLaunchText}>{t('taskDetail.findingsNew')}</Text>
+              </TouchableOpacity>
+            ) : null}
 
-              <FieldLabel icon="notes" label={t('taskDetail.findingsDescription')} colors={colors} />
-              <TextInput
-                style={[styles.fieldInput, styles.fieldTextArea, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.surface }]}
-                placeholder={t('taskDetail.findingsDescriptionPlaceholder')}
-                placeholderTextColor={colors.textSecondary}
-                value={descriptionDraft}
-                onChangeText={setDescriptionDraft}
-                onBlur={handleSaveDescription}
-                multiline
-                editable={!readOnly}
-              />
-
-              {!hallazgoConfig ? (
-                <FieldRow
-                  icon="place"
-                  label={t('taskDetail.findingsSpot')}
-                  value={spotItems.find((item) => item.id === selectedSpotId)?.name ?? t('taskDetail.findingsNoSpot')}
-                  onPress={() => !readOnly && setSpotPickerVisible(true)}
-                  colors={colors}
-                  disabled={readOnly}
+            {!readOnly && hallazgoConfig && quickCaptureAttributes.length === 0 ? (
+              <View style={[styles.captureCard, { borderColor: cardBorder, backgroundColor: colors.surface }]}>
+                <TextInput
+                  style={[styles.fieldInput, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.background }]}
+                  placeholder={t('taskDetail.findingsPlaceholder')}
+                  placeholderTextColor={colors.textSecondary}
+                  value={draft}
+                  onChangeText={setDraft}
+                  onSubmitEditing={() => void handleAddFinding()}
+                  returnKeyType="done"
                 />
-              ) : null}
+                <TouchableOpacity
+                  style={[styles.addButton, styles.captureAddButton, { backgroundColor: primaryColor, opacity: genericCanAdd ? 1 : 0.6 }]}
+                  onPress={() => void handleAddFinding()}
+                  disabled={!genericCanAdd}
+                >
+                  <Text style={styles.addButtonText}>{t('taskDetail.findingsAdd')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
-              <FieldLabel icon="event" label={t('taskDetail.findingsDueDate')} colors={colors} />
-              <TextInput
-                style={[styles.fieldInput, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.surface }]}
-                placeholder="YYYY-MM-DD"
-                placeholderTextColor={colors.textSecondary}
-                value={dueDateDraft}
-                onChangeText={setDueDateDraft}
-                onBlur={handleSaveDueDate}
-                editable={!readOnly}
-                autoCapitalize="none"
-              />
-
-              <FieldRow
-                icon="flag"
-                label={t('taskDetail.findingsPriority')}
-                value={priorityItems.find((item) => item.id === selectedPriorityId)?.name ?? t('taskDetail.findingsNoPriority')}
-                onPress={() => !readOnly && setPriorityPickerVisible(true)}
-                colors={colors}
-                disabled={readOnly}
-              />
-
-              <FieldRow
-                icon="person"
-                label={t('taskDetail.findingsResponsible')}
-                value={selectedAssigneeLabel}
-                onPress={() => !readOnly && setAssigneePickerVisible(true)}
-                colors={colors}
-                disabled={readOnly}
-              />
-
-              {!hallazgoConfig ? (
-                <FieldRow
-                  icon="label"
-                  label={t('taskDetail.findingsTags')}
-                  value={selectedTagIds.length > 0
-                    ? selectedTagIds
-                      .map((id) => tagItems.find((tag) => tag.id === id)?.name)
-                      .filter(Boolean)
-                      .join(', ')
-                    : t('taskDetail.findingsAddTag')}
-                  onPress={() => !readOnly && setTagPickerVisible(true)}
-                  colors={colors}
-                  disabled={readOnly}
+            {!readOnly && !hallazgoConfig ? (
+              <View style={[styles.addRow, { borderColor: cardBorder, backgroundColor: colors.surface }]}>
+                <TextInput
+                  style={[styles.addInput, { color: colors.text }]}
+                  placeholder={t('taskDetail.findingsPlaceholder')}
+                  placeholderTextColor={colors.textSecondary}
+                  value={draft}
+                  onChangeText={setDraft}
+                  onSubmitEditing={() => void handleAddFinding()}
+                  returnKeyType="done"
+                  editable={!readOnly}
                 />
-              ) : null}
+                <TouchableOpacity
+                  style={[styles.addButton, { backgroundColor: primaryColor, opacity: !draft.trim() ? 0.6 : 1 }]}
+                  onPress={handleAddFinding}
+                  disabled={!draft.trim()}
+                >
+                  <Text style={styles.addButtonText}>{t('taskDetail.findingsAdd')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
-              <View style={styles.attachmentsHeader}>
-                <FieldLabel icon="attach-file" label={t('taskDetail.findingsAttachments')} colors={colors} />
-                {!readOnly ? (
+          </View>
+
+          <DraggableFlatList
+            data={listData}
+            keyExtractor={(finding) => String(finding._id)}
+            renderItem={renderFindingRow}
+            onDragBegin={handleFindingDragBegin}
+            onDragEnd={handleFindingDragEnd}
+            activationDistance={12}
+            autoscrollThreshold={72}
+            autoscrollSpeed={160}
+            animationConfig={FINDINGS_DRAG_ANIMATION_CONFIG}
+            containerStyle={styles.container}
+            contentContainerStyle={styles.listContent}
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={renderListEmpty}
+          />
+        </>
+      ) : null}
+
+      {detailOnly && selectedFinding ? (
+          <View style={[styles.detailContainer, { backgroundColor: colors.background }]}>
+            <View style={[styles.detailHeader, { borderBottomColor: cardBorder, paddingTop: detailTopInset }]}>
+              <TouchableOpacity
+                style={styles.detailBackButton}
+                onPress={() => {
+                  if (detailOnly) onClose?.();
+                  else setSelectedFindingId(null);
+                }}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              >
+                <MaterialIcons name="arrow-back" size={24} color={colors.text} />
+              </TouchableOpacity>
+              <Text style={[styles.detailTitle, { color: colors.text }]} numberOfLines={2}>
+                {titleDraft.trim() || selectedFinding.text}
+              </Text>
+              <View style={styles.detailHeaderSpacer} />
+            </View>
+
+            <View style={[styles.detailTabs, { borderBottomColor: isDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
+              {([
+                ['details', t('taskDetail.findingsTabDetails')],
+                ['notes', `${t('taskDetail.findingsTabNotes')} (${findingNotes?.length ?? Number(selectedFinding.noteCount ?? 0)})`],
+                ['history', `${t('taskDetail.findingsTabHistory')} (${selectedFindingHistory.length})`],
+              ] as Array<[FindingDetailTab, string]>).map(([tab, label]) => {
+                const active = activeDetailTab === tab;
+                return (
                   <TouchableOpacity
-                    style={[styles.smallButton, { borderColor: cardBorder }]}
-                    onPress={() => void handleUploadAttachments()}
-                    disabled={uploadingFindingId === String(selectedFinding._id) || uploading}
+                    key={tab}
+                    style={[
+                      styles.detailTabButton,
+                      active && { borderBottomColor: primaryColor },
+                    ]}
+                    onPress={() => setActiveDetailTab(tab)}
                   >
-                    <Text style={[styles.smallButtonText, { color: primaryColor }]}>
-                      {uploadingFindingId === String(selectedFinding._id) || uploading
-                        ? t('taskDetail.findingsUploading')
-                        : t('taskDetail.findingsAddAttachment')}
+                    <Text style={[
+                      styles.detailTabText,
+                      { color: active ? primaryColor : colors.textSecondary },
+                    ]}>
+                      {label}
                     </Text>
                   </TouchableOpacity>
-                ) : null}
-              </View>
-              {(selectedFinding.evidenceFiles ?? selectedFinding.evidence_files ?? []).length === 0 ? (
-                <Text style={[styles.helperText, { color: colors.textSecondary }]}>
-                  {t('taskDetail.findingsNoAttachments')}
-                </Text>
-              ) : (
-                (selectedFinding.evidenceFiles ?? selectedFinding.evidence_files).map((file: any, index: number) => {
-                  const storageId = String(file.storageId);
-                  const hasUrl = Boolean(evidenceUrlMap?.[storageId]);
-                  return (
-                    <TouchableOpacity
-                      key={`${storageId}-${index}`}
-                      style={[styles.attachmentRow, { borderColor: cardBorder }]}
-                      activeOpacity={0.7}
-                      onPress={() => openEvidenceFile(storageId)}
-                      disabled={!hasUrl}
-                    >
-                      <MaterialIcons name="attach-file" size={16} color={colors.textSecondary} />
-                      <Text style={[styles.attachmentName, { color: colors.text }]} numberOfLines={1}>
-                        {file.fileName || t('taskDetail.findingsAttachment')}
-                      </Text>
-                      {hasUrl ? (
-                        <MaterialIcons name="open-in-new" size={18} color={primaryColor} />
-                      ) : (
-                        <ActivityIndicator size="small" color={colors.textSecondary} />
-                      )}
-                      {!readOnly ? (
-                        <TouchableOpacity
-                          onPress={() => void handleRemoveAttachment(storageId)}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                        >
-                          <MaterialIcons name="close" size={18} color={colors.textSecondary} />
-                        </TouchableOpacity>
-                      ) : null}
-                    </TouchableOpacity>
-                  );
-                })
-              )}
+                );
+              })}
+            </View>
 
-              {!hallazgoConfig ? (
-                <>
+            <View style={styles.detailSwipeViewport}>
+              <Animated.View
+                {...detailTabPanResponder.panHandlers}
+                style={[
+                  styles.detailSwipeRow,
+                  { width: screenWidth * FINDING_DETAIL_TABS.length },
+                  detailTabSlideStyle,
+                ]}
+              >
+                <View style={[styles.detailPane, { width: screenWidth }]}>
+                  <ScrollView
+                    style={styles.detailScroll}
+                    contentContainerStyle={[styles.detailContent, { paddingBottom: spacing.xl + detailBottomInset }]}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                  <FieldLabel icon="title" label={t('taskDetail.findingsName')} colors={colors} />
+                  <TextInput
+                    style={[styles.fieldInput, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.surface }]}
+                    placeholder={t('taskDetail.findingsPlaceholder')}
+                    placeholderTextColor={colors.textSecondary}
+                    value={titleDraft}
+                    onChangeText={setTitleDraft}
+                    onBlur={handleSaveTitle}
+                    onSubmitEditing={handleSaveTitle}
+                    returnKeyType="done"
+                    editable={!readOnly}
+                  />
+
+                  {hallazgoConfig && hallazgoAttributes.length > 0 ? (
+                    <View style={styles.fieldBlock}>
+                      <FieldLabel icon="tune" label={t('taskDetail.findingsField')} colors={colors} />
+                      {hallazgoAttributes.map((attr) => {
+                        const value = ((selectedFinding.values ?? {}) as Record<string, HallazgoAttributeValue>)[attr.id];
+                        return (
+                          <TouchableOpacity
+                            key={attr.id}
+                            style={[styles.attributeRowButton, { borderColor: cardBorder }]}
+                            onPress={() => !readOnly && setAttributePicker({ attr, target: 'detail' })}
+                            disabled={readOnly}
+                          >
+                            <View style={styles.attributeRowText}>
+                              <Text style={[styles.attributeRowLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                                {attr.label}{attr.required ? ' *' : ''}
+                              </Text>
+                              <Text
+                                style={[styles.fieldRowValue, { color: value ? colors.text : colors.textSecondary }]}
+                                numberOfLines={1}
+                              >
+                                {value?.label ?? t('taskDetail.findingsNoValue')}
+                              </Text>
+                            </View>
+                            {!readOnly ? <MaterialIcons name="expand-more" size={20} color={colors.textSecondary} /> : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+
+                  <FieldLabel icon="notes" label={t('taskDetail.findingsDescription')} colors={colors} />
+                  <TextInput
+                    style={[styles.fieldInput, styles.fieldTextArea, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.surface }]}
+                    placeholder={t('taskDetail.findingsDescriptionPlaceholder')}
+                    placeholderTextColor={colors.textSecondary}
+                    value={descriptionDraft}
+                    onChangeText={setDescriptionDraft}
+                    onBlur={handleSaveDescription}
+                    multiline
+                    editable={!readOnly}
+                  />
+
+                  {!hallazgoConfig ? (
+                    <FieldRow
+                      icon="place"
+                      label={t('taskDetail.findingsSpot')}
+                      value={spotItems.find((item) => item.id === selectedSpotId)?.name ?? t('taskDetail.findingsNoSpot')}
+                      onPress={() => !readOnly && setSpotPickerVisible(true)}
+                      colors={colors}
+                      disabled={readOnly}
+                    />
+                  ) : null}
+
+                  <FieldLabel icon="event" label={t('taskDetail.findingsDueDate')} colors={colors} />
+                  <TextInput
+                    style={[styles.fieldInput, { color: colors.text, borderColor: cardBorder, backgroundColor: colors.surface }]}
+                    placeholder="YYYY-MM-DD"
+                    placeholderTextColor={colors.textSecondary}
+                    value={dueDateDraft}
+                    onChangeText={setDueDateDraft}
+                    onBlur={handleSaveDueDate}
+                    editable={!readOnly}
+                    autoCapitalize="none"
+                  />
+
+                  <FieldRow
+                    icon="flag"
+                    label={t('taskDetail.findingsPriority')}
+                    value={priorityItems.find((item) => item.id === selectedPriorityId)?.name ?? t('taskDetail.findingsNoPriority')}
+                    onPress={() => !readOnly && setPriorityPickerVisible(true)}
+                    colors={colors}
+                    disabled={readOnly}
+                  />
+
+                  <FieldRow
+                    icon="person"
+                    label={t('taskDetail.findingsResponsible')}
+                    value={selectedAssigneeLabel}
+                    onPress={() => !readOnly && setAssigneePickerVisible(true)}
+                    colors={colors}
+                    disabled={readOnly}
+                  />
+
+                  {!hallazgoConfig ? (
+                    <FieldRow
+                      icon="label"
+                      label={t('taskDetail.findingsTags')}
+                      value={selectedTagIds.length > 0
+                        ? selectedTagIds
+                          .map((id) => tagItems.find((tag) => tag.id === id)?.name)
+                          .filter(Boolean)
+                          .join(', ')
+                        : t('taskDetail.findingsAddTag')}
+                      onPress={() => !readOnly && setTagPickerVisible(true)}
+                      colors={colors}
+                      disabled={readOnly}
+                    />
+                  ) : null}
+
+                  <View style={styles.attachmentsHeader}>
+                    <FieldLabel icon="attach-file" label={t('taskDetail.findingsAttachments')} colors={colors} />
+                    {!readOnly ? (
+                      <TouchableOpacity
+                        style={[styles.smallButton, { borderColor: cardBorder }]}
+                        onPress={() => void handleUploadAttachments()}
+                        disabled={uploadingFindingId === String(selectedFinding._id) || uploading}
+                      >
+                        <Text style={[styles.smallButtonText, { color: primaryColor }]}>
+                          {uploadingFindingId === String(selectedFinding._id) || uploading
+                            ? t('taskDetail.findingsUploading')
+                            : t('taskDetail.findingsAddAttachment')}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+                  {(selectedFinding.evidenceFiles ?? selectedFinding.evidence_files ?? []).length === 0 ? (
+                    <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+                      {t('taskDetail.findingsNoAttachments')}
+                    </Text>
+                  ) : (
+                    (selectedFinding.evidenceFiles ?? selectedFinding.evidence_files).map((file: any, index: number) => {
+                      const storageId = String(file.storageId);
+                      const hasUrl = Boolean(evidenceUrlMap?.[storageId]);
+                      return (
+                        <TouchableOpacity
+                          key={`${storageId}-${index}`}
+                          style={[styles.attachmentRow, { borderColor: cardBorder }]}
+                          activeOpacity={0.7}
+                          onPress={() => openEvidenceFile(storageId)}
+                          disabled={!hasUrl}
+                        >
+                          <MaterialIcons name="attach-file" size={16} color={colors.textSecondary} />
+                          <Text style={[styles.attachmentName, { color: colors.text }]} numberOfLines={1}>
+                            {file.fileName || t('taskDetail.findingsAttachment')}
+                          </Text>
+                          {hasUrl ? (
+                            <MaterialIcons name="open-in-new" size={18} color={primaryColor} />
+                          ) : (
+                            <ActivityIndicator size="small" color={colors.textSecondary} />
+                          )}
+                          {!readOnly ? (
+                            <TouchableOpacity
+                              onPress={() => void handleRemoveAttachment(storageId)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            >
+                              <MaterialIcons name="close" size={18} color={colors.textSecondary} />
+                            </TouchableOpacity>
+                          ) : null}
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                  </ScrollView>
+                </View>
+
+                <View style={[styles.detailPane, { width: screenWidth }]}>
+                  <ScrollView
+                    style={styles.detailScroll}
+                    contentContainerStyle={[styles.detailContent, { paddingBottom: spacing.xl + detailBottomInset }]}
+                    keyboardShouldPersistTaps="handled"
+                  >
                   <FieldLabel icon="chat-bubble-outline" label={t('taskDetail.findingsNotesSection')} colors={colors} />
                   {findingNotes === undefined ? (
                     <ActivityIndicator size="small" color={primaryColor} />
@@ -1368,10 +1625,63 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
                       </TouchableOpacity>
                     </View>
                   ) : null}
-                </>
-              ) : null}
-            </ScrollView>
+                  </ScrollView>
+                </View>
 
+                <View style={[styles.detailPane, { width: screenWidth }]}>
+                  <ScrollView
+                    style={styles.detailScroll}
+                    contentContainerStyle={[styles.detailContent, { paddingBottom: spacing.xl + detailBottomInset }]}
+                    keyboardShouldPersistTaps="handled"
+                  >
+                  <FieldLabel icon="history" label={t('taskDetail.findingsTabHistory')} colors={colors} />
+                  {findingHistory === undefined ? (
+                    <ActivityIndicator size="small" color={primaryColor} />
+                  ) : selectedFindingHistory.length === 0 ? (
+                    <Text style={[styles.helperText, { color: colors.textSecondary }]}>
+                      {t('taskDetail.findingsHistoryEmpty')}
+                    </Text>
+                  ) : (
+                    selectedFindingHistory.map((entry: any) => {
+                      const timestampLabel = formatFindingTimestamp(entry.timestamp);
+                      const actorName = entry.actorName || t('common.unknown');
+                      const detailText = String(
+                        entry?.newValues?.notePreview ??
+                        entry?.newValues?.text ??
+                        entry?.oldValues?.text ??
+                        '',
+                      ).trim();
+                      return (
+                        <View key={String(entry._id)} style={[styles.historyCard, { backgroundColor: surfaceMuted, borderColor: cardBorder }]}>
+                          <View style={styles.historyHeader}>
+                            <View style={styles.historyTitleWrap}>
+                              <MaterialIcons name="history" size={16} color={colors.textSecondary} />
+                              <Text style={[styles.historyTitle, { color: colors.text }]} numberOfLines={1}>
+                                {getFindingHistoryActionLabel(String(entry.action ?? ''), t)}
+                              </Text>
+                            </View>
+                            {timestampLabel ? (
+                              <Text style={[styles.historyTime, { color: colors.textSecondary }]}>{timestampLabel}</Text>
+                            ) : null}
+                          </View>
+                          <Text style={[styles.historyActor, { color: colors.textSecondary }]} numberOfLines={1}>
+                            {actorName}
+                          </Text>
+                          {detailText ? (
+                            <Text style={[styles.historyDetail, { color: colors.text }]} numberOfLines={3}>
+                              {detailText}
+                            </Text>
+                          ) : null}
+                        </View>
+                      );
+                    })
+                  )}
+                  </ScrollView>
+                </View>
+              </Animated.View>
+            </View>
+
+            {activeDetailTab === 'details' ? (
             <View style={[styles.detailFooter, { borderTopColor: cardBorder, backgroundColor: colors.surface, paddingBottom: detailBottomInset }]}>
               {!selectedHasLinkedTask && selectedCanCreateCorrectiveTask ? (
                 <FieldRow
@@ -1422,9 +1732,9 @@ export const TaskFindingsTab: React.FC<TaskFindingsTabProps> = ({
                 ) : null}
               </View>
             </View>
+            ) : null}
           </View>
-        ) : null}
-      </Modal>
+      ) : null}
 
       <Modal
         visible={captureModalVisible}
@@ -1690,7 +2000,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg },
   centeredText: { marginTop: spacing.sm, fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },
-  listContent: { padding: spacing.md, paddingTop: 0, paddingBottom: spacing.xl },
+  listContent: { padding: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.xl },
   topSection: { gap: spacing.sm, paddingHorizontal: spacing.md, paddingTop: spacing.md },
   listHeader: { gap: spacing.sm, marginBottom: spacing.sm },
   captureCard: { borderWidth: 1, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm },
@@ -1740,7 +2050,21 @@ const styles = StyleSheet.create({
   addInput: { flex: 1, fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular, paddingHorizontal: 8, paddingVertical: 8 },
   addButton: { borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 10, minWidth: 84, alignItems: 'center' },
   addButtonText: { color: '#FFFFFF', fontSize: fontSizes.sm, fontFamily: fontFamilies.bodySemibold },
-  emptyCard: { borderWidth: 1, borderStyle: 'dashed', borderRadius: radius.lg, padding: spacing.lg, alignItems: 'center' },
+  missingTaskCard: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    margin: spacing.md,
+    alignItems: 'center',
+  },
+  emptyCard: {
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderRadius: radius.lg,
+    padding: spacing.lg,
+    alignItems: 'center',
+  },
   emptyText: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular, textAlign: 'center' },
   findingRow: {
     borderWidth: 1,
@@ -1770,18 +2094,53 @@ const styles = StyleSheet.create({
   findingText: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },
   findingTextResolved: { textDecorationLine: 'line-through' },
   linkedTaskMeta: { fontSize: fontSizes.xs, fontFamily: fontFamilies.bodySemibold },
+  findingMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
+  findingMetaPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  findingMetaText: { fontSize: fontSizes.xs, fontFamily: fontFamilies.bodySemibold },
   detailContainer: { flex: 1 },
+  detailPlaceholder: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  detailSwipeViewport: { flex: 1, overflow: 'hidden' },
+  detailSwipeRow: { flex: 1, flexDirection: 'row' },
+  detailPane: { flex: 1 },
   detailScroll: { flex: 1 },
   detailHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
     borderBottomWidth: 1,
   },
+  detailBackButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  detailHeaderSpacer: { width: 36, height: 36 },
   detailTitle: { flex: 1, fontSize: fontSizes.lg, fontFamily: fontFamilies.displaySemibold },
+  detailTabs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 0.5,
+  },
+  detailTabButton: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  detailTabText: { fontSize: 13, fontFamily: fontFamilies.bodyMedium },
   detailContent: { paddingHorizontal: spacing.md, paddingTop: spacing.md, gap: spacing.sm },
   detailFooter: { borderTopWidth: 1, padding: spacing.md, gap: spacing.sm },
   fieldBlock: { gap: 6 },
@@ -1826,6 +2185,13 @@ const styles = StyleSheet.create({
   noteText: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },
   noteComposer: { gap: 8, marginTop: 4 },
   noteAddButton: { alignSelf: 'flex-end', borderRadius: radius.md, paddingHorizontal: 14, paddingVertical: 10 },
+  historyCard: { borderWidth: 1, borderRadius: radius.md, padding: 10, gap: 4 },
+  historyHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  historyTitleWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  historyTitle: { flex: 1, fontSize: fontSizes.sm, fontFamily: fontFamilies.bodySemibold },
+  historyTime: { fontSize: fontSizes.xs, fontFamily: fontFamilies.bodyRegular },
+  historyActor: { fontSize: fontSizes.xs, fontFamily: fontFamilies.bodyRegular },
+  historyDetail: { fontSize: fontSizes.sm, fontFamily: fontFamilies.bodyRegular },
   footerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   primaryAction: {
     flex: 1,
