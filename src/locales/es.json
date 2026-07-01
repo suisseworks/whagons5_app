@@ -319,7 +319,7 @@
     "findingsProgress": "%{corrected}/%{total} corregidos",
     "findingPlaceholder": "Escribe un hallazgo...",
     "findingsLoading": "Cargando hallazgos...",
-    "findingsEmpty": "Captura hallazgos aqui mientras revisas la tarea.",
+    "findingsEmpty": "Todavía no hay hallazgos registrados.",
     "findingCorrected": "Corregido",
     "findingPending": "Pendiente",
     "findingLinkedStatus": "Tarea",
@@ -334,13 +334,9 @@
     "timeMinutesAgo": "hace %{count}m",
     "timeHoursAgo": "hace %{count}h",
     "timeDaysAgo": "hace %{count}d",
-    "findingsTitle": "Hallazgos",
-    "findingsLoading": "Cargando hallazgos...",
-    "findingsEmptyCounter": "Sin hallazgos",
     "findingsResolved": "resueltos",
     "findingsPlaceholder": "Escribe un hallazgo...",
     "findingsAdd": "Agregar",
-    "findingsEmpty": "Todavía no hay hallazgos registrados.",
     "findingsAddFailed": "No se pudo agregar el hallazgo.",
     "findingsTaskMissing": "Esta tarea ya no existe. Vuelve a la lista de tareas e intenta de nuevo.",
     "findingsTabDetails": "Detalles",
@@ -403,7 +399,8 @@
     "findingsSelectValue": "Seleccionar...",
     "findingsNoValue": "—",
     "findingsDescriptionRequired": "Descripción...",
-    "findingsDescriptionOptional": "Descripción (opcional)..."
+    "findingsDescriptionOptional": "Descripción (opcional)...",
+    "commentAuthorYou": "Tú"
   },
   "taskShareLink": {
     "eyebrow": "Tarea compartida",
@@ -458,7 +455,9 @@
     "approverAnyOfHintOne": "Solo se necesita 1 aprobación — cualquier aprobador elegible puede aprobar.",
     "approverAnyOfHintMany": "Solo se necesitan %{count} aprobaciones — cualquier aprobador elegible puede aprobar.",
     "approverShowEligible": "Ver %{count} aprobadores elegibles",
-    "approverHideEligible": "Ocultar aprobadores elegibles"
+    "approverHideEligible": "Ocultar aprobadores elegibles",
+    "sectionComments": "Comentarios",
+    "sectionAttachments": "Adjuntos"
   },
   "approvals": {
     "ui": {

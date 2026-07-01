@@ -315,11 +315,11 @@
     "actionChangeStatus": "Change status",
     "actionOpenComments": "Open comments",
     "findingsTitle": "Findings",
-    "findingsEmptyCounter": "No findings yet",
+    "findingsEmptyCounter": "No findings",
     "findingsProgress": "%{corrected}/%{total} corrected",
     "findingPlaceholder": "Write a finding...",
     "findingsLoading": "Loading findings...",
-    "findingsEmpty": "Capture findings here as you review the task.",
+    "findingsEmpty": "No findings recorded yet.",
     "findingCorrected": "Corrected",
     "findingPending": "Pending",
     "findingLinkedStatus": "Task",
@@ -334,13 +334,9 @@
     "timeMinutesAgo": "%{count}m ago",
     "timeHoursAgo": "%{count}h ago",
     "timeDaysAgo": "%{count}d ago",
-    "findingsTitle": "Findings",
-    "findingsLoading": "Loading findings...",
-    "findingsEmptyCounter": "No findings",
     "findingsResolved": "resolved",
     "findingsPlaceholder": "Write a finding...",
     "findingsAdd": "Add",
-    "findingsEmpty": "No findings recorded yet.",
     "findingsAddFailed": "Could not add finding.",
     "findingsTaskMissing": "This task no longer exists. Return to the task list and try again.",
     "findingsTabDetails": "Details",
@@ -403,7 +399,8 @@
     "findingsSelectValue": "Select...",
     "findingsNoValue": "—",
     "findingsDescriptionRequired": "Description...",
-    "findingsDescriptionOptional": "Description (optional)..."
+    "findingsDescriptionOptional": "Description (optional)...",
+    "commentAuthorYou": "You"
   },
   "taskShareLink": {
     "eyebrow": "Shared task",
@@ -458,7 +455,9 @@
     "approverAnyOfHintOne": "Only 1 approval is needed — any eligible approver can approve.",
     "approverAnyOfHintMany": "Only %{count} approvals are needed — any eligible approver can approve.",
     "approverShowEligible": "Show %{count} eligible approvers",
-    "approverHideEligible": "Hide eligible approvers"
+    "approverHideEligible": "Hide eligible approvers",
+    "sectionComments": "Comments",
+    "sectionAttachments": "Attachments"
   },
   "approvals": {
     "ui": {

@@ -9,6 +9,7 @@ import {
   Alert,
   useWindowDimensions,
   Platform,
+  Linking,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import RenderHtml from 'react-native-render-html';
@@ -35,6 +36,14 @@ import { SignatureModal } from '../components/SignatureModal';
 import { RejectCommentModal } from '../components/RejectCommentModal';
 import { Toast, ToastRef } from '../components/Toast';
 import { resolveCurrentUserIds } from '../utils/userTeams';
+import { TaskCommentsSection } from '../components/TaskCommentsSection';
+import {
+  ImageViewerModal,
+  NoteAttachmentView,
+  fixConvexStorageUrl,
+  type NoteAttachmentData,
+} from '../components/NoteAttachmentView';
+import { isTaskAttachmentNote } from '../utils/taskNotes';
 import type { Id } from '../../../convex/_generated/dataModel';
 
 type SharedTaskDetailRoute = RouteProp<RootStackParamList, 'SharedTaskDetail'>;
@@ -60,6 +69,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
   const [acknowledging, setAcknowledging] = useState(false);
   const [optimisticApprovalStatus, setOptimisticApprovalStatus] = useState<'approved' | 'rejected' | null>(null);
   const [optimisticAcknowledgedShareIds, setOptimisticAcknowledgedShareIds] = useState<Set<string>>(() => new Set());
+  const [imageViewerUri, setImageViewerUri] = useState<string | null>(null);
   const toastRef = useRef<ToastRef>(null);
 
   const decideMutation = useOfflineMutation(api.approvals.decideByTask, 'approvals.decideByTask');
@@ -87,6 +97,58 @@ export const SharedTaskDetailScreen: React.FC = () => {
       acknowledgedByUserName?: string | null;
     }>;
   } | null | undefined;
+
+  const taskNotes = useQuery(
+    api.taskResources.listTaskNotes,
+    tenantId && taskConvexId
+      ? { tenantId, taskId: taskConvexId as Id<'tasks'> }
+      : 'skip',
+  ) as Array<{ _id?: string; attachments?: NoteAttachmentData[]; note?: string; source?: string; _creationTime?: number }> | undefined;
+
+  const taskDocumentAssociableIds = useMemo(() => {
+    const ids = [
+      task.id != null ? String(task.id) : '',
+      (task as any).convexId ? String((task as any).convexId) : '',
+      taskConvexId ? String(taskConvexId) : '',
+    ].filter(Boolean);
+    return [...new Set(ids)];
+  }, [task.id, task, taskConvexId]);
+  const taskDocumentAssociations = useQuery(
+    api.documents.listAssociationsByEntityIds,
+    tenantId && taskDocumentAssociableIds.length > 0
+      ? { tenantId, associableType: 'task', associableIds: taskDocumentAssociableIds }
+      : 'skip',
+  ) as Array<{ _id: string; document?: { _id: string; title?: string; fileName?: string; fileSize?: number; fileExtension?: string; fileUrl?: string | null } }> | undefined;
+
+  const taskDocuments = useMemo(() => {
+    const seen = new Set<string>();
+    const documents: Array<NonNullable<NonNullable<typeof taskDocumentAssociations>[number]['document']>> = [];
+    for (const association of taskDocumentAssociations ?? []) {
+      const document = association.document;
+      if (!document) continue;
+      const key = String(document._id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      documents.push(document);
+    }
+    return documents;
+  }, [taskDocumentAssociations]);
+
+  const taskFileAttachments = useMemo(() => {
+    const attachments: Array<NoteAttachmentData & { key: string; createdAt: number }> = [];
+    for (const note of taskNotes ?? []) {
+      if (!isTaskAttachmentNote(note)) continue;
+      for (const [index, attachment] of (note.attachments ?? []).entries()) {
+        if (!attachment?.storageId) continue;
+        attachments.push({
+          ...attachment,
+          key: `${note._id ?? 'note'}-${attachment.storageId}-${index}`,
+          createdAt: note._creationTime ?? 0,
+        });
+      }
+    }
+    return attachments.sort((left, right) => right.createdAt - left.createdAt);
+  }, [taskNotes]);
 
   // Build lookup maps
   const { userMap, approvalMap, teamMap } = useMemo(() => {
@@ -446,6 +508,60 @@ export const SharedTaskDetailScreen: React.FC = () => {
           </View>
         )}
 
+        {/* Attachments */}
+        {(taskDocuments.length > 0 || taskFileAttachments.length > 0) && (
+          <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('sharedTask.sectionAttachments')}</Text>
+            {taskDocuments.map((document, index) => {
+              const fileUrl = document.fileUrl ? fixConvexStorageUrl(document.fileUrl) : null;
+              const fileName = document.title || document.fileName || `Document ${index + 1}`;
+              const extension = document.fileExtension?.toLowerCase() ?? '';
+              const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'heic'].includes(extension);
+              return (
+                <TouchableOpacity
+                  key={document._id || `${fileName}-${index}`}
+                  style={[styles.documentRow, { backgroundColor: isDarkMode ? 'rgba(255,255,255,0.06)' : '#F5F5F7' }]}
+                  activeOpacity={0.75}
+                  disabled={!fileUrl}
+                  onPress={() => {
+                    if (!fileUrl) return;
+                    if (isImage) {
+                      setImageViewerUri(fileUrl);
+                    } else {
+                      Linking.openURL(fileUrl).catch(() => {});
+                    }
+                  }}
+                >
+                  <MaterialIcons name="insert-drive-file" size={18} color={tertiaryText} />
+                  <View style={styles.documentTextWrap}>
+                    <Text style={[styles.documentName, { color: colors.text }]} numberOfLines={1}>
+                      {fileName}
+                    </Text>
+                    {!!document.fileSize && (
+                      <Text style={[styles.documentMeta, { color: tertiaryText }]}>
+                        {(document.fileSize / (1024 * 1024)).toFixed(document.fileSize >= 1024 * 1024 ? 1 : 2)} MB
+                      </Text>
+                    )}
+                  </View>
+                  <MaterialIcons name="open-in-new" size={16} color={tertiaryText} />
+                </TouchableOpacity>
+              );
+            })}
+            {taskFileAttachments.map((attachment) => (
+              <NoteAttachmentView
+                key={attachment.key}
+                attachment={attachment}
+                taskId={taskConvexId ? String(taskConvexId) : null}
+                colors={colors}
+                isDarkMode={isDarkMode}
+                isMe={false}
+                onImagePress={setImageViewerUri}
+                primaryColor="#4F46E5"
+              />
+            ))}
+          </View>
+        )}
+
         {/* Approvers Section */}
         {approverDetails.length > 0 && (
           <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
@@ -562,8 +678,17 @@ export const SharedTaskDetailScreen: React.FC = () => {
           </View>
         )}
 
+        {/* Comments */}
+        <View style={[styles.card, { backgroundColor: colors.surface, borderColor }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('sharedTask.sectionComments')}</Text>
+          <TaskCommentsSection
+            taskConvexId={taskConvexId ? String(taskConvexId) : null}
+            onImagePress={setImageViewerUri}
+          />
+        </View>
+
         {/* Bottom padding for footer */}
-        {canAct && <View style={{ height: 112 + insets.bottom }} />}
+        <View style={{ height: (canAct ? 112 : 24) + insets.bottom }} />
       </ScrollView>
 
       {/* Sticky Footer: Approve/Reject */}
@@ -616,6 +741,7 @@ export const SharedTaskDetailScreen: React.FC = () => {
           submitDecision('rejected', undefined, comment);
         }}
       />
+      <ImageViewerModal uri={imageViewerUri} onClose={() => setImageViewerUri(null)} />
       <Toast ref={toastRef} />
     </SafeAreaView>
   );
@@ -945,6 +1071,27 @@ const styles = StyleSheet.create({
   ackRecipientStatus: {
     fontSize: 11,
     fontFamily: fontFamilies.bodyMedium,
+  },
+  documentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 6,
+  },
+  documentTextWrap: {
+    flex: 1,
+  },
+  documentName: {
+    fontSize: 13,
+    fontFamily: fontFamilies.bodyMedium,
+  },
+  documentMeta: {
+    fontSize: 11,
+    fontFamily: fontFamilies.bodyRegular,
+    marginTop: 1,
   },
   ackButton: {
     flexDirection: 'row',
