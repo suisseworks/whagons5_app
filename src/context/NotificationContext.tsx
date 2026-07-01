@@ -38,7 +38,7 @@ import {
   NotificationTapPayload,
 } from '../firebase/notificationService';
 import { useOfflineMutation } from '../hooks/useOfflineMutation';
-import { sanitizeNotificationMessage } from '../utils/notificationText';
+import { resolvePushDisplayText } from '../utils/pushDisplayText';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -300,10 +300,11 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
         // Also add to notifications list
         if (payload.type && !getServerNotificationId(payload as Record<string, unknown>)) {
           const meta = getNotificationMeta(payload.type);
+          const tapText = resolvePushDisplayText({ data: payload as Record<string, unknown> });
           const notif: AppNotification = {
             id: String(Date.now()),
-            title: (payload as any).title || 'Notification',
-            message: sanitizeNotificationMessage((payload as any).body || ''),
+            title: tapText?.title || 'Notification',
+            message: tapText?.body || '',
             timestamp: new Date(),
             isRead: false,
             icon: meta.icon,
@@ -402,16 +403,20 @@ export const NotificationProvider: React.FC<{ children: ReactNode }> = ({ childr
       const messaging = getMessaging(getApp());
 
       unsubscribe = onMessage(messaging, (remoteMessage: any) => {
-        const { notification, data } = remoteMessage;
+        const { data } = remoteMessage;
         if (getServerNotificationId(data)) return;
+
+        // Silent signals carry no display text — don't add empty rows.
+        const displayText = resolvePushDisplayText(remoteMessage);
+        if (!displayText) return;
 
         const type = data?.type as string | undefined;
         const meta = getNotificationMeta(type);
 
         const notif: AppNotification = {
           id: remoteMessage.messageId || String(Date.now()),
-          title: notification?.title || data?.title || 'Notification',
-          message: sanitizeNotificationMessage(notification?.body || data?.body || ''),
+          title: displayText.title,
+          message: displayText.body,
           timestamp: new Date(),
           isRead: false,
           icon: meta.icon,

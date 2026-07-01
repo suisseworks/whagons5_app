@@ -32,7 +32,7 @@ import {
   getChannelIdForTone,
   getIosSoundForTone,
 } from '../utils/notificationTones';
-import { sanitizeNotificationMessage } from '../utils/notificationText';
+import { resolvePushDisplayText } from '../utils/pushDisplayText';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -251,7 +251,16 @@ export function setupForegroundMessageHandler(): () => void {
   return onMessage(messaging, async (remoteMessage) => {
     console.log('[Notifications] Foreground message:', JSON.stringify(remoteMessage.data));
 
-    const { notification, data } = remoteMessage;
+    const { data } = remoteMessage;
+
+    // Backend duplicates the visible text into data.notification_title/_body;
+    // a message with no resolvable text is a silent signal — showing it would
+    // render an empty "Whagons" notification.
+    const displayText = resolvePushDisplayText(remoteMessage);
+    if (!displayText) {
+      console.log('[Notifications] Skipping foreground message without display text');
+      return;
+    }
 
     // Determine which channel to use.
     // Priority: category notification_tone → message-type channel → default
@@ -262,8 +271,8 @@ export function setupForegroundMessageHandler(): () => void {
 
     try {
       await notifee.displayNotification({
-        title: notification?.title || data?.title as string || 'Whagons',
-        body: sanitizeNotificationMessage(notification?.body || data?.body as string || ''),
+        title: displayText.title,
+        body: displayText.body,
         data: data as Record<string, string> | undefined,
         android: {
           channelId,
@@ -308,6 +317,14 @@ export function registerBackgroundMessageHandler(): void {
     if (!remoteMessage.notification) {
       const { data } = remoteMessage;
 
+      // No resolvable text (checks data.notification_title/_body too) means a
+      // silent signal — displaying it would show an empty "Whagons" card.
+      const displayText = resolvePushDisplayText(remoteMessage);
+      if (!displayText) {
+        console.log('[Notifications] Skipping background message without display text');
+        return;
+      }
+
       // Determine channel: category tone → type-based → default
       const notificationTone = data?.notification_tone as string | undefined;
       const type = data?.type as string | undefined;
@@ -316,8 +333,8 @@ export function registerBackgroundMessageHandler(): void {
 
       try {
         await notifee.displayNotification({
-          title: data?.title as string || 'Whagons',
-          body: sanitizeNotificationMessage(data?.body as string || ''),
+          title: displayText.title,
+          body: displayText.body,
           data: data as Record<string, string> | undefined,
           android: {
             channelId,

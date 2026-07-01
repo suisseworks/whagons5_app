@@ -9,6 +9,8 @@
     "web": "expo start --web",
     "i18n:check": "tsx scripts/i18n-check.ts",
     "i18n:scan": "tsx scripts/i18n-check.ts --hardcoded",
+    "test:create-workspaces": "tsx src/utils/createTaskWorkspaces.test.ts",
+    "test:push-display": "tsx src/utils/pushDisplayText.test.ts",
     "test:findings": "tsx src/utils/taskFindings.test.ts",
     "test:gamification": "tsx src/utils/gamification.test.ts",
     "test:nfc": "tsx src/utils/nfc.test.ts",
