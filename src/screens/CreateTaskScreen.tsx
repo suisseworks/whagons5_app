@@ -36,6 +36,12 @@ import { UserPickerSheet, type UserPickerItem } from '../components/UserPickerSh
 import { Toast, ToastRef } from '../components/Toast';
 import { parseWorkspaceIcon } from '../utils/helpers';
 import { getUserTeamIdSet } from '../utils/userTeams';
+import {
+  buildCreatableWorkspaces,
+  findCreatableWorkspaceById,
+  findWorkspaceForCategory,
+  getCategoryWorkspaceId,
+} from '../utils/createTaskWorkspaces';
 import { fontFamilies, fontSizes, radius, shadows, spacing } from '../config/designTokens';
 import { GPS_CAPTURE_STORAGE_KEY } from './SettingsScreen';
 
@@ -204,7 +210,6 @@ const categoryMatchesRef = (category: any, categoryRef: any): boolean =>
   );
 
 const getCategoryTeamId = (category: any) => category?.team_id ?? category?.teamId ?? null;
-const getCategoryWorkspaceId = (category: any) => category?.workspace_id ?? category?.workspaceId ?? null;
 
 const parseReportingTeamIds = (category: any): string[] => {
   let reportingTeamIds = category?.reportingTeamIds ?? category?.reporting_team_ids;
@@ -343,15 +348,22 @@ export const CreateTaskScreen: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Resolve current workspace
   // ---------------------------------------------------------------------------
+  // Browsable workspaces plus the ones the user can only report tasks into
+  // (via category.reportingTeamIds) — the create target may be either.
+  const creatableWorkspaces = useMemo(
+    () => buildCreatableWorkspaces(data.workspaces, data.reportingWorkspaces),
+    [data.workspaces, data.reportingWorkspaces],
+  );
+
   const currentWorkspace = useMemo(() => {
     if (chosenWorkspaceId) {
-      return data.workspaces.find((w: any) => w._id === chosenWorkspaceId) as any;
+      return findCreatableWorkspaceById(chosenWorkspaceId, creatableWorkspaces) as any;
     }
     if (selectedWorkspace === 'Everything' || selectedWorkspace === 'Shared') {
       return null;
     }
     return data.workspaces.find((w: any) => w.name === selectedWorkspace) as any;
-  }, [selectedWorkspace, data.workspaces, chosenWorkspaceId]);
+  }, [selectedWorkspace, data.workspaces, creatableWorkspaces, chosenWorkspaceId]);
 
   const workspaceConvexId = currentWorkspace?._id ?? null;
   const workspaceColor = currentWorkspace?.color ?? primaryColor;
@@ -400,15 +412,10 @@ export const CreateTaskScreen: React.FC = () => {
     return new Set(workspaceCategories.map((c: any) => String(c.id)));
   }, [workspaceCategories]);
 
-  const findWorkspaceByCategory = useCallback((category: any) => {
-    const workspaceId = getCategoryWorkspaceId(category);
-    if (workspaceId == null || workspaceId === '') return null;
-    return data.workspaces.find((workspace: any) =>
-      String(workspace._id) === String(workspaceId)
-      || String(workspace.id) === String(workspaceId)
-      || String(workspace.pgId) === String(workspaceId)
-    ) ?? null;
-  }, [data.workspaces]);
+  const findWorkspaceByCategory = useCallback(
+    (category: any) => findWorkspaceForCategory(category, creatableWorkspaces),
+    [creatableWorkspaces],
+  );
 
   const everythingAccessibleCategoryIds = useMemo(() => {
     const ids = new Set<string>();
@@ -628,12 +635,12 @@ export const CreateTaskScreen: React.FC = () => {
   }, [priorityOptions, selectedTemplateRecord]);
 
   const workspaceItems = useMemo(() => {
-    return data.workspaces.map((w: any) => ({
+    return creatableWorkspaces.map((w: any) => ({
       _id: w._id,
       name: w.name,
       color: w.color ?? null,
     }));
-  }, [data.workspaces]);
+  }, [creatableWorkspaces]);
 
   useEffect(() => {
     if (isEverythingCreate) return;

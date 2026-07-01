@@ -343,6 +343,12 @@ export interface SyncedPlugin {
 export interface SyncedData {
   tasks: SyncedTask[];
   workspaces: SyncedWorkspace[];
+  /**
+   * Workspaces the user cannot browse but can create ("report") tasks into via
+   * category.reportingTeamIds. Only used to resolve create targets — never
+   * merged into the browsable workspace list.
+   */
+  reportingWorkspaces: SyncedWorkspace[];
   statuses: SyncedStatus[];
   priorities: SyncedPriority[];
   categories: SyncedCategory[];
@@ -414,6 +420,7 @@ const EMPTY: any[] = [];
 const EMPTY_DATA: SyncedData = {
   tasks: [],
   workspaces: [],
+  reportingWorkspaces: [],
   statuses: [],
   priorities: [],
   categories: [],
@@ -1093,6 +1100,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       tasks: rawTasks ? rawTasks.map((t: any) => mapTask(t, fk)) : EMPTY,
 
       workspaces: refData ? mapIds(refData.workspaces) : EMPTY,
+      reportingWorkspaces: refData ? mapIds((refData as any).reportingWorkspaces ?? []) : EMPTY,
       statuses: refData ? refData.statuses.map((d: any) => mapStatus(d, fk)) : EMPTY,
       priorities: refData ? refData.priorities.map((d: any) => mapPriority(d, fk)) : EMPTY,
       categories: refData ? refData.categories.map((d: any) => mapCategory(d, fk)) : EMPTY,
