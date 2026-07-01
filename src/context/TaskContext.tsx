@@ -1983,6 +1983,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     api.bulk.taskSummaryCounts,
     effectiveTenantId ? { tenantId: effectiveTenantId, mode: countsMode, preferEstimated: true } : 'skip',
     'bulk.taskSummaryCounts',
+    taskCacheVersion,
   );
 
   const scopedWorkspaceCountId = useMemo(() => {
@@ -1998,6 +1999,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       ? { tenantId: effectiveTenantId, workspaceId: scopedWorkspaceCountId, mode: countsMode, preferEstimated: true }
       : 'skip',
     'bulk.taskSummaryCounts',
+    taskCacheVersion,
   );
 
   // Status pills describe the visible task list, so they include finalized
@@ -2014,6 +2016,7 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       : 'skip',
     'bulk.taskSummaryCounts',
+    taskCacheVersion,
   );
 
   const serverViewSummary = scopedWorkspaceCountId ? serverScopedSummary : serverAllSummary;

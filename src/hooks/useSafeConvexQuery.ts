@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useConvex } from 'convex/react';
+import { getFunctionName } from 'convex/server';
 import type { FunctionArgs, FunctionReference, FunctionReturnType } from 'convex/server';
 import { addSupportBreadcrumb, captureSupportError } from '../services/supportDiagnostics';
 import { getConvexErrorDiagnostics } from '../services/convexErrorDiagnostics';
@@ -19,23 +20,43 @@ export function useSafeConvexQuery<Query extends FunctionReference<'query'>>(
   queryRef: Query,
   args: QueryArgs<Query>,
   apiPath: string,
+  refreshKey?: unknown,
 ): FunctionReturnType<Query> | undefined {
   const convex = useConvex();
   const argsKey = useMemo(() => stableArgsKey(args), [args]);
   const [data, setData] = useState<FunctionReturnType<Query> | undefined>(undefined);
 
+  // `api.*` proxies produce a new object identity on every property access, so
+  // the effect must key on the stable function name, never on `queryRef` itself
+  // (an identity dep re-runs the effect on every render — an endless refetch loop).
+  const queryName = getFunctionName(queryRef);
+  const queryRefRef = useRef(queryRef);
+  queryRefRef.current = queryRef;
+  const argsRef = useRef(args);
+  argsRef.current = args;
+  const lastArgsKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
 
-    if (args === 'skip') {
+    const currentArgs = argsRef.current;
+    if (currentArgs === 'skip') {
+      lastArgsKeyRef.current = null;
       setData(undefined);
       return () => {
         cancelled = true;
       };
     }
 
-    setData(undefined);
-    void convex.query(queryRef, args)
+    // Clear only when the query scope changes (different args); on a plain
+    // refresh (same args, new refreshKey) keep the previous result so consumers
+    // (e.g. workspace counts) don't flash through undefined.
+    if (lastArgsKeyRef.current !== argsKey) {
+      lastArgsKeyRef.current = argsKey;
+      setData(undefined);
+    }
+
+    void convex.query(queryRefRef.current, currentArgs)
       .then((result) => {
         if (!cancelled) setData(result as FunctionReturnType<Query>);
       })
@@ -53,7 +74,7 @@ export function useSafeConvexQuery<Query extends FunctionReference<'query'>>(
           category: 'convex',
           metadata: {
             apiPath,
-            args,
+            args: currentArgs,
             errorMessage: message,
             convex: convexDiagnostics,
           },
@@ -64,7 +85,7 @@ export function useSafeConvexQuery<Query extends FunctionReference<'query'>>(
     return () => {
       cancelled = true;
     };
-  }, [apiPath, argsKey, convex, queryRef]);
+  }, [apiPath, argsKey, convex, queryName, refreshKey]);
 
   return data;
 }
